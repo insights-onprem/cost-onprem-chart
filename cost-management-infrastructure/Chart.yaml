@@ -1,0 +1,13 @@
+apiVersion: v2
+name: cost-management-infrastructure
+description: Infrastructure components for Cost Management (PostgreSQL)
+type: application
+version: 0.1.0
+appVersion: "1.0"
+keywords:
+  - cost-management
+  - postgresql
+  - database
+maintainers:
+  - name: Cost Management Team
+

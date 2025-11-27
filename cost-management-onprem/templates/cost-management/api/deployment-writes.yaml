@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cost-mgmt.koku.api.writes.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-mgmt.koku.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cost-management-api
+    api-type: writes
+spec:
+  replicas: {{ .Values.costManagement.api.writes.replicas }}
+  selector:
+    matchLabels:
+      {{- include "cost-mgmt.koku.api.writes.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cost-mgmt.koku.labels" . | nindent 8 }}
+        app.kubernetes.io/component: cost-management-api
+        api-type: writes
+    spec:
+      serviceAccountName: {{ include "cost-mgmt.koku.serviceAccountName" . }}
+
+      securityContext:
+        {{- include "cost-mgmt.securityContext.pod" . | nindent 8 }}
+
+      initContainers:
+      {{- include "cost-mgmt.koku.initContainer.combineCA" . | nindent 6 }}
+
+      containers:
+      - name: koku-api
+        image: "{{ include "cost-mgmt.koku.image" . }}"
+        imagePullPolicy: {{ .Values.costManagement.api.image.pullPolicy }}
+
+        # Use image's default entrypoint (./scripts/entrypoint.sh)
+
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+
+        env:
+        {{- include "cost-mgmt.koku.commonEnv" . | nindent 8 }}
+        {{- range $key, $value := .Values.costManagement.api.writes.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+
+        livenessProbe:
+          {{- toYaml .Values.costManagement.api.writes.livenessProbe | nindent 10 }}
+
+        readinessProbe:
+          {{- toYaml .Values.costManagement.api.writes.readinessProbe | nindent 10 }}
+
+        resources:
+          {{- toYaml .Values.costManagement.api.writes.resources | nindent 10 }}
+
+        volumeMounts:
+        {{- include "cost-mgmt.koku.volumeMounts" . | nindent 8 }}
+
+        securityContext:
+          {{- include "cost-mgmt.securityContext.container" . | nindent 10 }}
+
+      volumes:
+      {{- include "cost-mgmt.koku.volumes" . | nindent 6 }}
+

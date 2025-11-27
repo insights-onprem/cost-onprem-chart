@@ -1,0 +1,14 @@
+{{- if eq (include "cost-management-onprem.isOpenShift" $) "true" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cost-mgmt.fullname" . }}-service-ca
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-mgmt.labels" . | nindent 4 }}
+  annotations:
+    # Auto-inject OpenShift Service CA bundle (signs *.svc certificates)
+    service.beta.openshift.io/inject-cabundle: "true"
+data: {}
+{{- end }}
+

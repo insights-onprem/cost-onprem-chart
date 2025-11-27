@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-mgmt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/name: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "cost-mgmt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: cache
+      app.kubernetes.io/name: redis
+  template:
+    metadata:
+      labels:
+        {{- include "cost-mgmt.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: cache
+        app.kubernetes.io/name: redis
+    spec:
+      securityContext:
+        {{- include "cost-mgmt.securityContext.pod" . | nindent 8 }}
+      containers:
+      - name: redis
+        image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+        imagePullPolicy: {{ .Values.redis.image.pullPolicy | default "IfNotPresent" }}
+        securityContext:
+          {{- include "cost-mgmt.securityContext.container" . | nindent 10 }}
+        ports:
+        - name: redis
+          containerPort: 6379
+          protocol: TCP
+        command:
+          - valkey-server
+        args:
+          - --bind
+          - {{ .Values.redis.bindAddress | default "0.0.0.0" | quote }}
+          - --port
+          - "6379"
+          - --protected-mode
+          - "no"
+          # RDB persistence for Celery chord callback reliability
+          # Snapshots: save if 1 key changed in 900s, 10 keys in 300s, or 10000 keys in 60s
+          - --save
+          - "900 1 300 10 60 10000"
+          - --dir
+          - "/data"
+          - --dbfilename
+          - "dump.rdb"
+          # AOF persistence for additional durability
+          - --appendonly
+          - "yes"
+          - --appendfsync
+          - "everysec"
+          - --maxmemory
+          - {{ .Values.redis.maxMemory | default "512mb" | quote }}
+          - --maxmemory-policy
+          - {{ .Values.redis.maxMemoryPolicy | default "allkeys-lru" | quote }}
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        livenessProbe:
+          exec:
+            command:
+              - valkey-cli
+              - ping
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+              - valkey-cli
+              - ping
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          {{- toYaml .Values.redis.resources | nindent 10 }}
+      volumes:
+      - name: data
+        {{- if .Values.redis.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: redis-data
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+

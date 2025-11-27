@@ -1,0 +1,19 @@
+{{- if .Values.infrastructure.kafka.externalBootstrapServers }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-mgmt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kafka-alias
+spec:
+  type: ExternalName
+  externalName: cost-onprem-kafka-kafka-bootstrap.kafka.svc.cluster.local
+  ports:
+  - port: 9092
+    targetPort: 9092
+    protocol: TCP
+    name: kafka
+{{- end }}
+

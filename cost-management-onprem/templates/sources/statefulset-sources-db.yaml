@@ -1,0 +1,85 @@
+{{- if .Values.sourcesApi.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "cost-management-onprem.fullname" . }}-sources-db
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-management-onprem.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+    app.kubernetes.io/name: db-sources
+spec:
+  serviceName: {{ include "cost-management-onprem.fullname" . }}-db-sources
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "cost-management-onprem.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: database
+      app.kubernetes.io/name: db-sources
+  template:
+    metadata:
+      labels:
+        {{- include "cost-management-onprem.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: database
+        app.kubernetes.io/name: db-sources
+    spec:
+      {{- if and .Values.global .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: postgres
+          image: "{{ .Values.sourcesApi.database.image.repository }}:{{ .Values.sourcesApi.database.image.tag }}"
+          imagePullPolicy: {{ if and .Values.global .Values.global.pullPolicy }}{{ .Values.global.pullPolicy }}{{ else }}Always{{ end }}
+          ports:
+            - name: postgres
+              containerPort: {{ .Values.sourcesApi.database.port }}
+              protocol: TCP
+          env:
+            - name: POSTGRESQL_DATABASE # Red Hat SCL PostgreSQL uses POSTGRESQL_* variables
+              value: {{ .Values.sourcesApi.database.name | quote }}
+            - name: POSTGRESQL_USER # Red Hat SCL PostgreSQL uses POSTGRESQL_* variables
+              value: {{ .Values.sourcesApi.database.user | quote }}
+            - name: POSTGRESQL_PASSWORD # Red Hat SCL PostgreSQL uses POSTGRESQL_* variables
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cost-management-onprem.fullname" . }}-sources-credentials
+                  key: database-password
+          volumeMounts:
+            - name: postgres-storage
+              mountPath: /var/lib/pgsql/data
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.sourcesApi.database.user }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.sourcesApi.database.user }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.sourcesApi.database.resources | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-storage
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        {{- if .Values.sourcesApi.database.storage.storageClass }}
+        storageClassName: {{ .Values.sourcesApi.database.storage.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.sourcesApi.database.storage.size }}
+{{- end }}
+

@@ -1,0 +1,155 @@
+# Redis High Availability Configuration for Cost Management
+#
+# This configuration deploys Redis in Sentinel mode for high availability,
+# which ensures reliable Celery chord callbacks and result backend persistence.
+#
+# Usage:
+#   helm upgrade cost-mgmt-infra ./cost-management-infrastructure \
+#     -f cost-management-infrastructure/values-redis-ha.yaml \
+#     -n cost-mgmt
+
+redis:
+  # Enable Redis deployment
+  enabled: true
+
+  # High Availability Mode
+  # Options: standalone, sentinel, cluster
+  # Sentinel recommended for on-prem (simpler than cluster, more reliable than standalone)
+  architecture: sentinel
+
+  # Number of Redis replicas
+  # Sentinel requires at least 3 nodes (1 master + 2 replicas)
+  replica:
+    replicaCount: 2
+
+  # Sentinel configuration
+  sentinel:
+    enabled: true
+    # At least 2 sentinels required (3 recommended)
+    replicaCount: 3
+    # Quorum: number of sentinels that need to agree for failover
+    # Formula: (total_sentinels / 2) + 1
+    quorum: 2
+
+  # Persistence Configuration
+  # Both RDB (snapshots) and AOF (append-only file) enabled for durability
+  master:
+    persistence:
+      enabled: true
+      # Storage class for persistent volumes
+      # ODF/OCS: ocs-storagecluster-ceph-rbd
+      # NFS: nfs-client
+      storageClass: "ocs-storagecluster-ceph-rbd"
+      # Size of persistent volume
+      size: 10Gi
+      # Access mode
+      accessModes:
+        - ReadWriteOnce
+
+    # Resource limits for master
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+
+  # Replica configuration (same persistence settings)
+  replica:
+    persistence:
+      enabled: true
+      storageClass: "ocs-storagecluster-ceph-rbd"
+      size: 10Gi
+      accessModes:
+        - ReadWriteOnce
+
+    # Resource limits for replicas
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+
+  # Redis Configuration
+  # Fine-tune for Celery workload
+  master:
+    configuration: |-
+      # Memory management
+      maxmemory 768mb
+      maxmemory-policy allkeys-lru
+
+      # Persistence (RDB + AOF)
+      save 900 1
+      save 300 10
+      save 60 10000
+      appendonly yes
+      appendfsync everysec
+
+      # Replication
+      min-replicas-to-write 1
+      min-replicas-max-lag 10
+
+      # Timeouts
+      timeout 300
+      tcp-keepalive 60
+
+      # Celery-specific tuning
+      # Result backend TTL (8 hours for chord callbacks)
+      # This is controlled by Koku's CELERY_RESULT_EXPIRES setting
+      # Redis just needs to store results long enough
+
+  replica:
+    configuration: |-
+      # Same configuration as master
+      maxmemory 768mb
+      maxmemory-policy allkeys-lru
+      appendonly yes
+      appendfsync everysec
+      timeout 300
+      tcp-keepalive 60
+
+  # Security
+  auth:
+    enabled: true
+    # Password should be stored in secret
+    # Will be auto-generated if not specified
+    existingSecret: "redis-password"
+    existingSecretPasswordKey: "redis-password"
+
+  # Network Policy
+  # Allow connections from cost-management pods only
+  networkPolicy:
+    enabled: true
+    allowExternal: false
+    ingressNSMatchLabels:
+      name: cost-mgmt
+
+  # Metrics (Prometheus)
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      namespace: cost-mgmt
+
+# Pod Disruption Budget
+# Ensure at least 2 Redis pods are always available
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+# Anti-affinity rules
+# Spread Redis pods across different nodes
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+                - redis
+        topologyKey: kubernetes.io/hostname
+

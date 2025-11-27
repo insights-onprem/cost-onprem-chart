@@ -1,0 +1,74 @@
+{{- include "cost-mgmt.koku.celery.beat.validateReplicas" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cost-mgmt.koku.celery.beat.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-mgmt.koku.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cost-management-celery
+    celery-type: beat
+spec:
+  replicas: {{ .Values.costManagement.celery.beat.replicas }}
+  selector:
+    matchLabels:
+      {{- include "cost-mgmt.koku.celery.beat.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cost-mgmt.koku.labels" . | nindent 8 }}
+        app.kubernetes.io/component: cost-management-celery
+        celery-type: beat
+    spec:
+      serviceAccountName: {{ include "cost-mgmt.koku.serviceAccountName" . }}
+
+      securityContext:
+        {{- include "cost-mgmt.securityContext.pod" . | nindent 8 }}
+
+      initContainers:
+      {{- include "cost-mgmt.koku.initContainer.combineCA" . | nindent 6 }}
+
+      containers:
+      - name: celery-beat
+        image: "{{ include "cost-mgmt.koku.image" . }}"
+        imagePullPolicy: {{ .Values.costManagement.api.image.pullPolicy }}
+
+        command:
+          - /bin/sh
+          - -c
+          - |
+            # Start Celery Beat scheduler (Koku format)
+            cd $APP_HOME
+            PYTHONPATH=$APP_HOME celery -A koku beat -l ${CELERY_LOG_LEVEL:-info}
+
+        env:
+        - name: CELERY_LOG_LEVEL
+          value: "info"
+        {{- include "cost-mgmt.koku.commonEnv" . | nindent 8 }}
+        {{- range $key, $value := .Values.costManagement.celery.beat.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+
+        resources:
+          {{- toYaml .Values.costManagement.celery.beat.resources | nindent 10 }}
+
+        {{- if .Values.costManagement.celery.beat.livenessProbe }}
+        livenessProbe:
+          {{- toYaml .Values.costManagement.celery.beat.livenessProbe | nindent 10 }}
+        {{- end }}
+
+        {{- if .Values.costManagement.celery.beat.readinessProbe }}
+        readinessProbe:
+          {{- toYaml .Values.costManagement.celery.beat.readinessProbe | nindent 10 }}
+        {{- end }}
+
+        volumeMounts:
+        {{- include "cost-mgmt.koku.volumeMounts" . | nindent 8 }}
+
+        securityContext:
+          {{- include "cost-mgmt.securityContext.container" . | nindent 10 }}
+
+      volumes:
+      {{- include "cost-mgmt.koku.volumes" . | nindent 6 }}
+

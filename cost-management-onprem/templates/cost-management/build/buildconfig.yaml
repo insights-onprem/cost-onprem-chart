@@ -1,0 +1,22 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: {{ include "cost-mgmt.koku.api.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-mgmt.koku.labels" . | nindent 4 }}
+    app.kubernetes.io/component: koku-build
+spec:
+  output:
+    to:
+      kind: ImageStreamTag
+      name: {{ include "cost-mgmt.koku.api.name" . }}:{{ .Values.costManagement.api.image.tag }}
+  source:
+    type: Binary
+    binary: {}
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+  triggers: []
+

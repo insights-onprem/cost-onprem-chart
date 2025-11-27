@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cost-mgmt.fullname" . }}-trino-ca-convert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-mgmt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: trino
+data:
+  convert-ca.sh: |
+    #!/bin/bash
+    set -e
+
+    echo "🔧 Combining CA certificates for Trino/Java SSL..."
+
+    # Start with system CA bundle
+    if [ -f /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem ]; then
+        echo "📋 Adding system CA bundle..."
+        cat /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem > /tmp/combined-ca.crt
+    elif [ -f /etc/ssl/certs/ca-bundle.crt ]; then
+        echo "📋 Adding system CA bundle..."
+        cat /etc/ssl/certs/ca-bundle.crt > /tmp/combined-ca.crt
+    elif [ -f /etc/ssl/certs/ca-certificates.crt ]; then
+        echo "📋 Adding system CA certificates..."
+        cat /etc/ssl/certs/ca-certificates.crt > /tmp/combined-ca.crt
+    else
+        echo "⚠️ No system CA bundle found, starting with empty bundle"
+        touch /tmp/combined-ca.crt
+    fi
+
+    echo "" >> /tmp/combined-ca.crt
+
+    # Add OpenShift cluster root CA (Kubernetes service account CA)
+    if [ -f /var/run/secrets/kubernetes.io/serviceaccount/ca.crt ]; then
+        echo "📋 Adding OpenShift cluster root CA..."
+        cat /var/run/secrets/kubernetes.io/serviceaccount/ca.crt >> /tmp/combined-ca.crt
+        echo "" >> /tmp/combined-ca.crt
+    fi
+
+    # Add OpenShift Service CA (signs *.svc certificates like s3.openshift-storage.svc)
+    if [ -f /ca-source/service-ca.crt ] && [ -s /ca-source/service-ca.crt ]; then
+        echo "📋 Adding OpenShift Service CA..."
+        cat /ca-source/service-ca.crt >> /tmp/combined-ca.crt
+        echo "" >> /tmp/combined-ca.crt
+    fi
+
+    NUM_CERTS=$(grep -c 'BEGIN CERTIFICATE' /tmp/combined-ca.crt)
+    echo "✅ Combined CA bundle created with $NUM_CERTS certificates"
+
+    # Convert PEM to JKS for Java - import each certificate separately
+    echo "🔄 Converting PEM to JKS format for Java..."
+    echo "   Importing $NUM_CERTS certificates individually..."
+
+    # Split combined PEM into individual certificates and import each
+    CERT_NUM=0
+    mkdir -p /tmp/certs
+    csplit -s -z -f /tmp/certs/cert- /tmp/combined-ca.crt '/-----BEGIN CERTIFICATE-----/' '{*}'
+
+    for cert_file in /tmp/certs/cert-*; do
+      if [ -s "$cert_file" ] && grep -q 'BEGIN CERTIFICATE' "$cert_file"; then
+        CERT_NUM=$((CERT_NUM + 1))
+        keytool -importcert \
+          -noprompt \
+          -trustcacerts \
+          -alias "ca-cert-$CERT_NUM" \
+          -file "$cert_file" \
+          -keystore /ca-output/truststore.jks \
+          -storepass changeit 2>&1 | grep -v "Certificate already exists" || true
+        echo "   ✓ Imported certificate $CERT_NUM"
+      fi
+    done
+
+    echo "✅ Java truststore created with $CERT_NUM certificates at /ca-output/truststore.jks"
+    keytool -list -keystore /ca-output/truststore.jks -storepass changeit | grep "trustedCertEntry" | wc -l | xargs echo "   Verified:"
+    ls -lh /ca-output/truststore.jks
+

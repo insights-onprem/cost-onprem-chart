@@ -1,0 +1,65 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migration
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-mgmt-infra.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "cost-mgmt-infra.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "cost-mgmt-infra.serviceAccountName" . }}
+      containers:
+      - name: migration
+        image: "{{ .Values.migration.image.repository }}:{{ .Values.migration.image.tag }}"
+        imagePullPolicy: {{ .Values.migration.image.pullPolicy | default "IfNotPresent" }}
+        command:
+        - bash
+        - -c
+        - |
+          set -e
+
+          echo "=== Running Django Migrations ==="
+          export DATABASE_SERVICE_NAME='DATABASE'
+          export DATABASE_SERVICE_HOST='{{ include "cost-mgmt-infra.postgresql.serviceName" . }}'
+          export DATABASE_SERVICE_PORT='5432'
+          export DATABASE_ENGINE='postgresql'
+          export DATABASE_NAME='{{ .Values.postgresql.auth.database }}'
+          export DATABASE_USER='{{ .Values.postgresql.auth.username }}'
+          export DATABASE_PASSWORD="${DATABASE_PASSWORD}"
+          export DJANGO_SECRET_KEY='migration-temp-key'
+          export CLOWDER_ENABLED=False
+          export DEVELOPMENT=False
+          export PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
+
+          mkdir -p /tmp/prometheus
+          cd /opt/koku/koku
+
+          python manage.py migrate --noinput
+
+          echo "✅ Migrations completed successfully"
+        env:
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "cost-mgmt-infra.postgresql.secretName" . }}
+              key: password
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+

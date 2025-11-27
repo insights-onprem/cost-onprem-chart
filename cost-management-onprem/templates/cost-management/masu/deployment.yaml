@@ -1,0 +1,91 @@
+{{- if .Values.costManagement.masu.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cost-mgmt.koku.api.reads.name" . | replace "reads" "masu" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-mgmt.koku.labels" . | nindent 4 }}
+    app.kubernetes.io/component: masu
+spec:
+  replicas: {{ .Values.costManagement.masu.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "cost-mgmt.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: masu
+  template:
+    metadata:
+      labels:
+        {{- include "cost-mgmt.koku.labels" . | nindent 8 }}
+        app.kubernetes.io/component: masu
+    spec:
+      serviceAccountName: {{ .Values.costManagement.serviceAccount.name }}
+      initContainers:
+      {{- include "cost-mgmt.koku.initContainer.combineCA" . | nindent 6 }}
+      containers:
+      - name: masu
+        image: "{{ include "cost-mgmt.koku.image" . }}"
+        imagePullPolicy: {{ .Values.costManagement.api.image.pullPolicy }}
+
+        ports:
+        - containerPort: 8000
+          protocol: TCP
+
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /livez
+            port: 9000
+          initialDelaySeconds: 30
+          periodSeconds: 20
+          timeoutSeconds: 3
+          failureThreshold: 5
+          successThreshold: 1
+
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 9000
+          initialDelaySeconds: 30
+          periodSeconds: 20
+          timeoutSeconds: 3
+          failureThreshold: 5
+          successThreshold: 1
+
+        # Resource limits and requests
+        resources:
+          {{- toYaml .Values.costManagement.masu.resources | nindent 10 }}
+
+        # Environment variables
+        env:
+        # Common Koku environment variables (includes DB, Redis, S3, Trino, etc.)
+        {{- include "cost-mgmt.koku.commonEnv" . | nindent 8 }}
+
+        # MASU-specific environment variables
+        - name: MASU
+          value: "true"
+        - name: API_PATH_PREFIX
+          value: /api/cost-management
+        - name: KAFKA_CONNECT
+          value: "true"
+
+        {{- range $key, $value := .Values.costManagement.masu.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+
+        volumeMounts:
+        {{- include "cost-mgmt.koku.volumeMounts" . | nindent 8 }}
+
+        # Command to run MASU server
+        command:
+        - /bin/bash
+        - -c
+        - |
+          cd $APP_HOME
+          exec gunicorn -c gunicorn_conf.py --max-requests=1000 koku.wsgi
+
+      volumes:
+      {{- include "cost-mgmt.koku.volumes" . | nindent 6 }}
+{{- end }}

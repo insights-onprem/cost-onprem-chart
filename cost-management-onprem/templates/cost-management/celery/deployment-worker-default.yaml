@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cost-mgmt.koku.celery.worker.name" (dict "context" . "type" "default") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-mgmt.koku.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cost-management-celery
+    celery-type: worker
+    worker-queue: default
+spec:
+  replicas: {{ .Values.costManagement.celery.workers.default.replicas }}
+  selector:
+    matchLabels:
+      {{- include "cost-mgmt.koku.celery.worker.selectorLabels" (dict "context" . "type" "default") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cost-mgmt.koku.labels" . | nindent 8 }}
+        app.kubernetes.io/component: cost-management-celery
+        celery-type: worker
+        worker-queue: default
+    spec:
+      serviceAccountName: {{ include "cost-mgmt.koku.serviceAccountName" . }}
+
+      securityContext:
+        {{- include "cost-mgmt.securityContext.pod" . | nindent 8 }}
+
+      initContainers:
+      {{- include "cost-mgmt.koku.initContainer.combineCA" . | nindent 6 }}
+
+      containers:
+      - name: celery-worker
+        image: "{{ include "cost-mgmt.koku.image" . }}"
+        imagePullPolicy: {{ .Values.costManagement.api.image.pullPolicy }}
+
+        command:
+          - /bin/sh
+          - -c
+          - |
+            # Start Celery Worker (Koku format)
+            cd $APP_HOME
+            PYTHONPATH=$APP_HOME celery -A koku worker --without-gossip -E -l ${CELERY_LOG_LEVEL:-info} -Q ${WORKER_QUEUES}
+
+        env:
+        - name: CELERY_LOG_LEVEL
+          value: "info"
+        - name: WORKER_QUEUES
+          value: {{ .Values.costManagement.celery.workers.default.queue | quote }}
+        {{- include "cost-mgmt.koku.commonEnv" . | nindent 8 }}
+        {{- range $key, $value := .Values.costManagement.celery.workers.commonEnv }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+
+        resources:
+          {{- toYaml .Values.costManagement.celery.workers.default.resources | nindent 10 }}
+
+        volumeMounts:
+        {{- include "cost-mgmt.koku.volumeMounts" . | nindent 8 }}
+
+        securityContext:
+          {{- include "cost-mgmt.securityContext.container" . | nindent 10 }}
+
+      volumes:
+      {{- include "cost-mgmt.koku.volumes" . | nindent 6 }}
+

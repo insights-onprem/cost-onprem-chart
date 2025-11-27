@@ -1,0 +1,28 @@
+apiVersion: v2
+name: cost-management-onprem
+description: Cost Management On-Premise - Koku + Trino Analytics for OpenShift
+type: application
+version: 0.1.0
+appVersion: "latest"
+
+keywords:
+  - cost-management
+  - koku
+  - trino
+  - analytics
+  - openshift
+  - red-hat
+
+home: https://github.com/insights-onprem/ros-helm-chart
+sources:
+  - https://github.com/project-koku/koku
+  - https://github.com/trinodb/trino
+
+maintainers:
+  - name: Cost Management Team
+    email: cost-mgmt@redhat.com
+
+annotations:
+  category: Analytics
+  licenses: Apache-2.0
+

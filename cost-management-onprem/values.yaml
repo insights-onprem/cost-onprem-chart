@@ -1,0 +1,1289 @@
+# values.yaml
+# Koku Cost Management Configuration for cost-management-onprem Chart
+#
+# This is the default configuration file for the Cost Management on-premise deployment.
+#
+# Usage:
+#   helm install cost-mgmt ./cost-management-onprem --namespace cost-mgmt
+#
+# Helm automatically loads values.yaml from the chart directory.
+#
+# Platform: OpenShift 4.10+ ONLY
+# Profile: Minimal (for development and integration testing)
+
+# =============================================================================
+# Global Configuration
+# =============================================================================
+
+# Override the full name to avoid redundant prefixes (cost-mgmt-cost-management-onprem)
+# Results in clean pod names like: koku-api-masu, koku-celery-beat, etc.
+fullnameOverride: "koku"
+
+global:
+  pullPolicy: Always
+
+  initContainers:
+    waitFor:
+      repository: registry.access.redhat.com/ubi9/ubi-minimal
+      tag: "latest"
+
+# =============================================================================
+# Database Configuration
+# =============================================================================
+database:
+  sources:
+    host: internal
+    port: 5432
+    name: sources_api_development
+    user: postgres
+    password: postgres
+
+# =============================================================================
+# Kafka Configuration
+# =============================================================================
+kafka:
+  bootstrapServers: ""  # Set if using external Kafka, empty for internal
+
+# =============================================================================
+# Probes Configuration
+# =============================================================================
+probes:
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# =============================================================================
+# Resources Configuration
+# =============================================================================
+resources:
+  application:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# =============================================================================
+# Infrastructure Dependencies Configuration
+# =============================================================================
+
+infrastructure:
+  # S3-compatible object storage configuration
+  storage:
+    # Endpoint for S3-compatible storage
+    # ODF (OpenShift Data Foundation): http://s3.openshift-storage.svc:80
+    # MinIO (self-hosted): http://minio:9000
+    # AWS S3: https://s3.amazonaws.com (or regional endpoint)
+    endpoint: "http://s3.openshift-storage.svc:80"
+
+    # Credentials secret for S3 access
+    # ODF uses 'noobaa-admin' secret from openshift-storage namespace
+    credentialsSecret:
+      name: "noobaa-admin"
+      namespace: "openshift-storage"
+      accessKeyKey: "AWS_ACCESS_KEY_ID"
+      secretKeyKey: "AWS_SECRET_ACCESS_KEY"
+
+  # Redis configuration (cache for Celery broker/backend and API)
+  redis:
+    # Connection settings (referenced by helpers)
+    host: "redis"
+    port: 6379
+
+    # Deployment settings
+    image:
+      repository: "registry.redhat.io/rhel10/valkey-8"
+      tag: "latest"
+      pullPolicy: IfNotPresent
+
+    # Persistence configuration for Celery chord callback reliability
+    # IMPORTANT: Enable this for production to prevent data loss on pod restarts
+    persistence:
+      enabled: true  # Set to false for ephemeral testing
+      size: 5Gi      # Adjust based on workload
+      storageClassName: ""  # Use default storage class (adjust for ODF/NFS)
+
+    # Valkey configuration
+    bindAddress: "0.0.0.0"
+    maxMemory: "512mb"
+    maxMemoryPolicy: "allkeys-lru"
+
+    # Resource allocation
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+  # Kafka configuration (shared with ROS)
+  kafka:
+    bootstrapServers: "kafka:9092"
+    externalBootstrapServers: "cost-onprem-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
+
+# =============================================================================
+# Koku Cost Management Configuration
+# =============================================================================
+
+costManagement:
+  # ---------------------------------------------------------------------------
+  # Celery Beat Scheduler Configuration
+  # ---------------------------------------------------------------------------
+  # Enable scheduled report checks (CRITICAL for production)
+  # When enabled, Celery beat will automatically scan for new cost reports
+  scheduleReportChecks: true
+
+  # Cron schedule for report downloads (every 5 minutes by default)
+  # Format: "minute hour day month day_of_week"
+  # Examples:
+  #   "*/5 * * * *"  = Every 5 minutes
+  #   "0 * * * *"    = Every hour
+  #   "0 */6 * * *"  = Every 6 hours
+  reportDownloadSchedule: "*/5 * * * *"
+
+  # ---------------------------------------------------------------------------
+  # S3 Configuration
+  # ---------------------------------------------------------------------------
+  # SSL verification for S3 connections
+  # Set to false for on-prem S3 with self-signed certificates (ODF/Ceph/MinIO)
+  # Set to true for production AWS S3 or S3 with valid certificates
+  s3VerifySSL: false
+
+  # S3 endpoint for on-prem S3-compatible storage (ODF/Ceph/MinIO)
+  # Leave empty or comment out for AWS S3
+  s3Endpoint: "https://s3.openshift-storage.svc:443"
+
+  # ---------------------------------------------------------------------------
+  # S3 Storage Configuration
+  # ---------------------------------------------------------------------------
+  storage:
+    # Bucket name for cost reports (REQUIRED)
+    # On-prem deployments: typically "cost-data"
+    # Production AWS: typically "koku-report" or customer-specific bucket
+    # Chart will fail to install if this is not set
+    bucketName: "cost-data"
+
+  # ---------------------------------------------------------------------------
+  # Koku API Configuration
+  # ---------------------------------------------------------------------------
+  api:
+    enabled: true  # Enable API pods and migration job
+
+    # Image configuration
+    image:
+      # Use ImageStream for in-cluster builds (set to false to use external registry)
+      # Disabled for now to use quay.io directly with fixes
+      useImageStream: false
+      repository: quay.io/jordigilh/koku
+      tag: "latest-clean-head"  # Clean HEAD state with all reverts applied
+      pullPolicy: Always  # Always pull to ensure latest AMD64 build
+
+    # API Reads Deployment (read-only queries)
+    reads:
+      replicas: 2
+
+      resources:
+        requests:
+          cpu: 300m
+          memory: 500Mi
+        limits:
+          cpu: 600m
+          memory: 1Gi
+
+      # Health checks
+      livenessProbe:
+        httpGet:
+          path: /livez
+          port: 9000
+          scheme: HTTP
+        initialDelaySeconds: 30
+        periodSeconds: 20
+        timeoutSeconds: 3
+        failureThreshold: 5
+        successThreshold: 1
+
+      readinessProbe:
+        httpGet:
+          path: /readyz
+          port: 9000
+          scheme: HTTP
+        initialDelaySeconds: 30
+        periodSeconds: 20
+        timeoutSeconds: 3
+        failureThreshold: 5
+        successThreshold: 1
+
+      # Environment variables
+      env:
+        API_PATH_PREFIX: /api/cost-management
+        DEVELOPMENT: "True"  # Enable on-prem mode (bypass RBAC service)
+        GUNICORN_LOG_LEVEL: INFO
+        KOKU_LOG_LEVEL: INFO
+        DJANGO_LOG_LEVEL: INFO
+        DJANGO_LOG_FORMATTER: simple
+        DJANGO_LOG_HANDLERS: console
+        PROMETHEUS_MULTIPROC_DIR: /tmp
+        REQUESTED_ROS_BUCKET: ros-report
+        KOKU_ENABLE_SENTRY: "False"
+        CACHED_VIEWS_DISABLED: "False"
+        RETAIN_NUM_MONTHS: "3"
+        NOTIFICATION_CHECK_TIME: "24"  # Hours (integer), not time string
+        ENHANCED_ORG_ADMIN: "True"
+        RBAC_CACHE_TIMEOUT: "300"
+        CACHE_TIMEOUT: "3600"
+        TAG_ENABLED_LIMIT: "200"
+        USE_READREPLICA: "False"
+        GUNICORN_WORKERS: "2"
+        GUNICORN_THREADS: "4"
+
+    # API Writes Deployment (write operations)
+    writes:
+      replicas: 1
+
+      resources:
+        requests:
+          cpu: 300m
+          memory: 500Mi
+        limits:
+          cpu: 600m
+          memory: 1Gi
+
+      # Health checks (same as reads)
+      livenessProbe:
+        httpGet:
+          path: /livez
+          port: 9000
+          scheme: HTTP
+        initialDelaySeconds: 30
+        periodSeconds: 20
+        timeoutSeconds: 3
+        failureThreshold: 5
+        successThreshold: 1
+
+      readinessProbe:
+        httpGet:
+          path: /readyz
+          port: 9000
+          scheme: HTTP
+        initialDelaySeconds: 30
+        periodSeconds: 20
+        timeoutSeconds: 3
+        failureThreshold: 5
+        successThreshold: 1
+
+      # Environment variables (same as reads)
+      env:
+        API_PATH_PREFIX: /api/cost-management
+        DEVELOPMENT: "True"  # Enable on-prem mode (bypass RBAC service)
+        GUNICORN_LOG_LEVEL: INFO
+        KOKU_LOG_LEVEL: INFO
+        DJANGO_LOG_LEVEL: INFO
+        DJANGO_LOG_FORMATTER: simple
+        DJANGO_LOG_HANDLERS: console
+        PROMETHEUS_MULTIPROC_DIR: /tmp
+        REQUESTED_ROS_BUCKET: ros-report
+        KOKU_ENABLE_SENTRY: "False"
+        GUNICORN_WORKERS: "1"
+        GUNICORN_THREADS: "4"
+
+    # Service configuration
+    service:
+      type: ClusterIP
+      port: 8000
+      targetPort: 8000
+      name: koku-api
+
+  # ---------------------------------------------------------------------------
+  # Kafka Listener (Data Ingestion)
+  # ---------------------------------------------------------------------------
+  # The listener consumes messages from Kafka topics and triggers Celery tasks
+  # for processing cost data payloads uploaded to the platform
+  listener:
+    replicas: 1
+    logLevel: "DEBUG"
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+
+    # Environment variables for listener (MASU endpoints)
+    env:
+      MASU: "true"
+      KOKU_LOG_LEVEL: DEBUG
+
+  # ---------------------------------------------------------------------------
+  # MASU (Data Processing Service)
+  # ---------------------------------------------------------------------------
+  # MASU handles data ingestion, processing, and download triggers
+  masu:
+    enabled: true
+    replicas: 1
+
+    resources:
+      requests:
+        cpu: 300m
+        memory: 1Gi
+      limits:
+        cpu: 1000m
+        memory: 8Gi
+
+    # Environment variables specific to MASU
+    env:
+      KOKU_LOG_LEVEL: DEBUG
+      DJANGO_LOG_LEVEL: INFO
+      GUNICORN_LOG_LEVEL: INFO
+      PROMETHEUS_MULTIPROC_DIR: /tmp
+      REQUESTED_ROS_BUCKET: ros-report
+
+  # ---------------------------------------------------------------------------
+  # Kafka Listener (Event-Driven Processing)
+  # ---------------------------------------------------------------------------
+  # Listener consumes Kafka messages for reliable manifest completion
+  # Handles ALL provider types (OCP, AWS, Azure, GCP)
+  listener:
+    enabled: true
+    replicas: 1
+
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+
+    # Environment variables specific to Listener
+    env:
+      KOKU_LOG_LEVEL: INFO
+      DJANGO_LOG_LEVEL: INFO
+      PROMETHEUS_MULTIPROC_DIR: /tmp
+      REQUESTED_ROS_BUCKET: ros-report
+
+  # ---------------------------------------------------------------------------
+  # Kafka Configuration
+  # ---------------------------------------------------------------------------
+  kafka:
+    enabled: true
+    # Kafka service in separate namespace
+    host: cost-onprem-kafka-kafka-bootstrap.kafka.svc.cluster.local
+    port: 9092
+    consumerGroupId: cost-mgmt-listener-group
+    # Topic for cost management report processing
+    topic: platform.upload.announce
+
+  # ---------------------------------------------------------------------------
+  # Celery Configuration
+  # ---------------------------------------------------------------------------
+  celery:
+    # Provider polling interval in seconds
+    # Default: 300 (5 minutes) - suitable for testing/development
+    # Production: 86400 (24 hours) - recommended for production deployments
+    # This controls how frequently Beat checks for new cost reports to download
+    pollingTimer: 300
+
+    # Celery result expiration time in seconds (default: 28800 = 8 hours)
+    # CRITICAL: This must be long enough for Celery chord callbacks to complete
+    # If chord tasks take longer than this, callbacks will fail and manifests won't auto-complete
+    # SaaS uses 8 hours to handle slow processing with worker restarts
+    # Requires Redis persistence to be effective (see infrastructure.redis.persistence.enabled)
+    resultExpires: 28800  # 8 hours
+
+    # Celery Beat Scheduler (must be exactly 1 replica)
+    beat:
+      replicas: 1  # MUST be exactly 1
+
+      resources:
+        requests:
+          cpu: 100m
+          memory: 512Mi  # Increased from 200Mi to prevent OOM
+        limits:
+          cpu: 200m
+          memory: 1Gi    # Increased from 400Mi to prevent OOM
+
+      # Beat is a scheduler - no health probes needed
+      # It runs continuously once started; no requests to handle
+      # Kubernetes will restart if container crashes
+      # No readiness probe: Beat is "ready" as soon as it starts
+      # No liveness probe: If Beat crashes, container exits
+
+      env:
+        KOKU_LOG_LEVEL: INFO
+        DJANGO_LOG_LEVEL: INFO
+        PROMETHEUS_MULTIPROC_DIR: /tmp
+
+    # Celery Workers
+    workers:
+      # Common environment variables for all workers
+      commonEnv:
+        KOKU_LOG_LEVEL: INFO
+        DJANGO_LOG_LEVEL: INFO
+        PROMETHEUS_MULTIPROC_DIR: /tmp
+        REQUESTED_ROS_BUCKET: ros-report
+
+      # Essential Workers
+      default:
+        replicas: 1
+        queue: celery
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 200Mi
+          limits:
+            cpu: 200m
+            memory: 400Mi
+
+      priority:
+        replicas: 1
+        queue: priority
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 200Mi
+          limits:
+            cpu: 200m
+            memory: 400Mi
+
+      refresh:
+        replicas: 1
+        queue: refresh
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 200Mi
+          limits:
+            cpu: 200m
+            memory: 400Mi
+
+      summary:
+        replicas: 1
+        queue: summary
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 200Mi
+          limits:
+            cpu: 200m
+            memory: 400Mi
+
+      hcs:
+        replicas: 1
+        queue: hcs
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 200Mi
+          limits:
+            cpu: 200m
+            memory: 400Mi
+
+      # Download Workers
+      # Note: Higher memory limits to prevent OOM during large file downloads
+      # AWS CUR files can be large when decompressed and loaded into memory
+      download:
+        replicas: 1
+        queue: download
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 512Mi
+          limits:
+            cpu: 200m
+            memory: 1Gi
+
+      # XL Workers (minimal for dev - same resources as essential)
+      priorityXl:
+        replicas: 1
+        queue: priority,priority_xl
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 200Mi
+          limits:
+            cpu: 200m
+            memory: 400Mi
+
+      refreshXl:
+        replicas: 1
+        queue: refresh,refresh_xl
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 200Mi
+          limits:
+            cpu: 200m
+            memory: 400Mi
+
+      summaryXl:
+        replicas: 1
+        queue: summary,summary_xl
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 200Mi
+          limits:
+            cpu: 200m
+            memory: 400Mi
+
+      downloadXl:
+        replicas: 1
+        queue: download,download_xl
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 512Mi
+          limits:
+            cpu: 200m
+            memory: 1Gi
+
+      # Penalty Workers
+      priorityPenalty:
+        replicas: 1
+        queue: priority,priority_penalty
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 200Mi
+          limits:
+            cpu: 200m
+            memory: 400Mi
+
+      refreshPenalty:
+        replicas: 1
+        queue: refresh,refresh_penalty
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 200Mi
+          limits:
+            cpu: 200m
+            memory: 400Mi
+
+      summaryPenalty:
+        replicas: 1
+        queue: summary,summary_penalty
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 200Mi
+          limits:
+            cpu: 200m
+            memory: 400Mi
+
+      downloadPenalty:
+        replicas: 1
+        queue: download,download_penalty
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 512Mi
+          limits:
+            cpu: 200m
+            memory: 1Gi
+
+      # OCP Workers
+      # OCP processing uses a separate worker pool to isolate OpenShift-specific workloads
+      # Note: These workers are CRITICAL for OCP data processing
+      ocp:
+        replicas: 1
+        queue: ocp
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+
+      ocpXl:
+        replicas: 1
+        queue: ocp_xl
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+
+      ocpPenalty:
+        replicas: 1
+        queue: ocp_penalty
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+
+      # Cost Model Workers
+      # Cost models allow custom pricing rules and markup/markdown calculations
+      # Set replicas to 0 if not using custom cost models
+      costModel:
+        replicas: 1
+        queue: cost_model
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+
+      costModelXl:
+        replicas: 1
+        queue: cost_model_xl
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+
+      costModelPenalty:
+        replicas: 1
+        queue: cost_model_penalty
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+
+      # Subscription Workers
+      # These are for Red Hat Subscription data extraction and transmission (SaaS feature)
+      # For on-prem: Tasks are feature-flag gated and skip processing by default
+      # Set replicas to 0 to completely disable if not needed
+      subsExtraction:
+        replicas: 1
+        queue: subs_extraction
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+
+      subsTransmission:
+        replicas: 1
+        queue: subs_transmission
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+
+  # ---------------------------------------------------------------------------
+  # Database Configuration
+  # ---------------------------------------------------------------------------
+  # PostgreSQL is deployed via the cost-management-infrastructure chart
+  # Run scripts/bootstrap-infrastructure.sh before deploying the application
+  database:
+    # Connection details for external PostgreSQL
+    host: "postgres"  # Service name from infrastructure chart
+    port: 5432
+    name: koku
+    user: koku
+    sslMode: disable
+    # Secret containing credentials (created by infrastructure chart)
+    secretName: "postgres-credentials"
+
+  # ---------------------------------------------------------------------------
+  # Django Configuration
+  # ---------------------------------------------------------------------------
+  django:
+    # Secret key auto-generated (50 alphanumeric characters)
+    secretKeyLength: 50
+
+  # ---------------------------------------------------------------------------
+  # Service Account Configuration
+  # ---------------------------------------------------------------------------
+  serviceAccount:
+    create: true
+    name: koku
+    annotations: {}
+
+  # ---------------------------------------------------------------------------
+  # NetworkPolicy Configuration (always enabled for OpenShift)
+  # ---------------------------------------------------------------------------
+  networkPolicies:
+    # Ingress rules for Koku API
+    api:
+      ingress:
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: ingress
+          ports:
+            - protocol: TCP
+              port: 8000
+      egress:
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: postgresql
+          ports:
+            - protocol: TCP
+              port: 5432
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: redis
+          ports:
+            - protocol: TCP
+              port: 6379
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: kafka
+          ports:
+            - protocol: TCP
+              port: 9092
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: minio
+          ports:
+            - protocol: TCP
+              port: 9000
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: trino-coordinator
+          ports:
+            - protocol: TCP
+              port: 8080
+
+    # Celery workers and beat
+    celery:
+      egress:
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: postgresql
+          ports:
+            - protocol: TCP
+              port: 5432
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: redis
+          ports:
+            - protocol: TCP
+              port: 6379
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: kafka
+          ports:
+            - protocol: TCP
+              port: 9092
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: minio
+          ports:
+            - protocol: TCP
+              port: 9000
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: trino-coordinator
+          ports:
+            - protocol: TCP
+              port: 8080
+
+    # DNS egress for all pods
+    dnsEgress:
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                name: openshift-dns
+        ports:
+          - protocol: UDP
+            port: 53
+
+# =============================================================================
+# Trino Analytics Engine Configuration (Minimal Profile)
+# =============================================================================
+
+trino:
+  profile: minimal  # minimal, dev, or production
+
+  # ---------------------------------------------------------------------------
+  # Trino Coordinator
+  # ---------------------------------------------------------------------------
+  coordinator:
+    # Host override - set this to use external Trino from infrastructure chart
+    # If not set, defaults to {fullname}-trino-coordinator
+    host: "trino-coordinator"  # Use service name from infrastructure chart
+
+    replicas: 1
+
+    # Image configuration
+    image:
+      repository: quay.io/insights-onprem/trino  # Mirrored from Docker Hub to avoid rate limits
+      tag: "latest"
+      pullPolicy: IfNotPresent
+
+    # Resources (minimal profile)
+    resources:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+      limits:
+        cpu: 500m
+        memory: 2Gi
+
+    # Storage for query spill
+    storage:
+      size: 5Gi
+      storageClassName: ""  # Use default storage class in cluster
+      accessModes:
+        - ReadWriteOnce
+
+    # Service configuration
+    service:
+      type: ClusterIP
+      port: 8080
+      targetPort: 8080
+      name: trino-coordinator
+
+    # Health checks
+    livenessProbe:
+      httpGet:
+        path: /v1/info
+        port: 8080
+        scheme: HTTP
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 3
+
+    readinessProbe:
+      httpGet:
+        path: /v1/info/state
+        port: 8080
+        scheme: HTTP
+      initialDelaySeconds: 60
+      periodSeconds: 15
+      timeoutSeconds: 10
+      failureThreshold: 6
+
+    # JVM configuration (minimal)
+    config:
+      jvm:
+        maxHeapSize: "1G"
+        gcMethod: "G1GC"  # Template already has -XX:+Use prefix
+
+      # Coordinator configuration
+      coordinator: true
+      nodeScheduler:
+        includeCoordinator: false
+
+      # Catalogs
+      catalogs:
+        # Hive catalog for Parquet files in MinIO
+        hive:
+          connector: hive-hadoop2
+          metastoreUri: ""  # Auto-resolved: thrift://hive-metastore:9083
+          s3:
+            endpoint: ""  # Auto-resolved from MinIO
+            accessKey: ""  # Auto-resolved from MinIO
+            secretKey: ""  # Auto-resolved from MinIO
+            pathStyleAccess: true
+
+        # PostgreSQL catalog for Koku database
+        postgresql:
+          connector: postgresql
+          connectionUrl: ""  # Auto-resolved: jdbc:postgresql://koku-db:5432/koku
+          user: ""  # Auto-resolved from Koku DB
+          password: ""  # Auto-resolved from Koku DB
+
+  # ---------------------------------------------------------------------------
+  # Trino Workers
+  # ---------------------------------------------------------------------------
+  worker:
+    replicas: 1  # Minimal: 1 worker for dev
+
+    # Image configuration
+    image:
+      repository: quay.io/insights-onprem/trino  # Mirrored from Docker Hub to avoid rate limits
+      tag: "latest"
+      pullPolicy: IfNotPresent
+
+    # Resources (minimal profile)
+    resources:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+      limits:
+        cpu: 500m
+        memory: 2Gi
+
+    # Storage for query spill
+    storage:
+      size: 5Gi
+      storageClassName: ""  # Use default storage class in cluster
+      accessModes:
+        - ReadWriteOnce
+
+    # JVM configuration (minimal)
+    config:
+      jvm:
+        maxHeapSize: "1G"
+        gcMethod: "G1GC"  # Template already has -XX:+Use prefix
+
+      # Worker configuration
+      coordinator: false
+
+  # ---------------------------------------------------------------------------
+  # Hive Metastore
+  # ---------------------------------------------------------------------------
+  metastore:
+    replicas: 1
+
+    # Image configuration
+    image:
+      repository: quay.io/insights-onprem/hive  # Mirrored from Docker Hub to avoid rate limits
+      tag: "3.1.3"
+      pullPolicy: IfNotPresent
+
+    # Resources
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+
+    # Storage for warehouse directory (persistent across restarts)
+    storage:
+      size: 5Gi
+      accessModes:
+        - ReadWriteOnce
+      # storageClassName: ""  # Uses default storage class if not specified
+
+    # Service configuration
+    service:
+      type: ClusterIP
+      port: 9083
+      targetPort: 9083
+      name: hive-metastore
+
+    # Database configuration
+    database:
+      # Database connection
+      host: ""  # Auto-resolved: hive-metastore-db
+      port: 5432
+      name: metastore
+      user: metastore
+
+      # PostgreSQL image
+      image:
+        repository: quay.io/sclorg/postgresql-13-c9s  # Public, no rate limits
+        tag: "latest"
+        pullPolicy: IfNotPresent
+
+      # Resources
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 100m
+          memory: 256Mi
+
+      # Storage
+      storage:
+        size: 2Gi
+        storageClassName: ""  # Use default storage class in cluster
+        accessModes:
+          - ReadWriteOnce
+
+      # Environment variables
+      env:
+        POSTGRES_DB: metastore
+        POSTGRES_USER: metastore
+        # POSTGRES_PASSWORD: Auto-generated in secret
+
+  # ---------------------------------------------------------------------------
+  # Service Account Configuration
+  # ---------------------------------------------------------------------------
+  serviceAccount:
+    create: true
+    name: trino
+    annotations: {}
+
+  # ---------------------------------------------------------------------------
+  # NetworkPolicy Configuration (always enabled for OpenShift)
+  # ---------------------------------------------------------------------------
+  networkPolicies:
+    # Trino Coordinator
+    coordinator:
+      ingress:
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: cost-management-api
+          ports:
+            - protocol: TCP
+              port: 8080
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: cost-management-celery
+          ports:
+            - protocol: TCP
+              port: 8080
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: trino-worker
+          ports:
+            - protocol: TCP
+              port: 8080
+      egress:
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: hive-metastore
+          ports:
+            - protocol: TCP
+              port: 9083
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: minio
+          ports:
+            - protocol: TCP
+              port: 9000
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: postgresql
+          ports:
+            - protocol: TCP
+              port: 5432
+
+    # Trino Workers
+    worker:
+      egress:
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: trino-coordinator
+          ports:
+            - protocol: TCP
+              port: 8080
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: minio
+          ports:
+            - protocol: TCP
+              port: 9000
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: postgresql
+          ports:
+            - protocol: TCP
+              port: 5432
+
+    # Hive Metastore
+    metastore:
+      ingress:
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: trino-coordinator
+          ports:
+            - protocol: TCP
+              port: 9083
+      egress:
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: hive-metastore-db
+          ports:
+            - protocol: TCP
+              port: 5432
+
+# =============================================================================
+# Unleash Feature Flagging Configuration
+# =============================================================================
+# Unleash is DISABLED for on-prem deployments
+# Koku uses DisabledUnleashClient (zero network calls) when UNLEASH_DISABLED=true
+# This flag is injected into all Koku pods via commonEnv helper
+
+unleashDisabled: true
+
+# ==============================================================================
+# Mock RBAC Service Configuration (Production-Safe RBAC Alternative)
+# ==============================================================================
+# This provides a lightweight RBAC service for onprem environments where
+# the full Red Hat RBAC service is not available.
+# This is a production-safe alternative to DEVELOPMENT mode.
+
+mockRbac:
+  # Enable the mock RBAC service for onprem deployments
+  enabled: true
+
+  # Replica configuration
+  replicaCount: 1
+
+  # Image configuration
+  image:
+    repository: python
+    tag: "3.11-slim"
+    pullPolicy: IfNotPresent
+
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 8111
+    # annotations: {}
+
+  # Debug mode (for development only)
+  debug: false
+
+  # Resource limits and requests
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  # Security and deployment options
+  # nodeSelector: {}
+  # tolerations: []
+  # affinity: {}
+  # serviceAccount: ""
+
+  # Network policy (if networkPolicies.enabled)
+  networkPolicy:
+    # Allow ingress from Koku API pods
+    ingress:
+      - from:
+          - podSelector:
+              matchLabels:
+                app.kubernetes.io/component: koku-api-reads
+        ports:
+          - protocol: TCP
+            port: 8111
+      - from:
+          - podSelector:
+              matchLabels:
+                app.kubernetes.io/component: koku-api-writes
+        ports:
+          - protocol: TCP
+            port: 8111
+      - from:
+          - podSelector:
+              matchLabels:
+                app.kubernetes.io/component: koku-api-listener
+        ports:
+          - protocol: TCP
+            port: 8111
+
+
+# =============================================================================
+# Sources API Configuration
+# =============================================================================
+# Sources API manages provider configurations and communicates them to Koku.
+# This is the proper architectural way to create and manage providers.
+
+sourcesApi:
+  enabled: true  # Enable Sources API for provider management
+
+  replicas: 1
+
+  image:
+    repository: quay.io/insights-onprem/sources-api-go
+    tag: "latest"
+    pullPolicy: Always
+
+  port: 8000
+  logLevel: DEBUG
+
+  # Bypass RBAC for on-prem deployments (no Red Hat SSO integration)
+  bypassRbac: true
+
+  # Sources environment (prod for production-like behavior)
+  sourcesEnv: prod
+
+  # Encryption key for sensitive data (change in production!)
+  encryptionKey: YWFhYWFhYWFhYWFhYWFhYQ  # base64: aaaaaaaaaaaaaaa
+
+  # Kafka topic for Sources events
+  platformSourcesEventStreamTopic: platform.sources.event-stream
+
+  # Database configuration
+  database:
+    image:
+      repository: registry.redhat.io/rhel9/postgresql-16
+      tag: "latest"
+
+    host: internal  # Uses the StatefulSet deployed by this chart
+    port: 5432
+    name: sources_api_development
+    user: postgres
+    password: postgres  # Change in production!
+
+    storage:
+      size: 5Gi
+      storageClass: ""  # Uses default storage class if empty
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+  # Sources API resources
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi

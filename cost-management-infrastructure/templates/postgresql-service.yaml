@@ -1,0 +1,27 @@
+{{- if .Values.postgresql.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cost-mgmt-infra.postgresql.serviceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-mgmt-infra.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+    app.kubernetes.io/part-of: cost-management
+    database.cost-management/role: primary
+  annotations:
+    service.cost-management/type: "database"
+    service.cost-management/discovery: "app.kubernetes.io/component=postgresql"
+spec:
+  type: {{ .Values.postgresql.service.type }}
+  clusterIP: None
+  ports:
+  - name: postgresql
+    port: {{ .Values.postgresql.service.port }}
+    targetPort: 5432
+    protocol: TCP
+  selector:
+    {{- include "cost-mgmt-infra.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+{{- end }}
+

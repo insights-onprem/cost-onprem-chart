@@ -1,0 +1,113 @@
+{{- if and .Values.costManagement.listener.enabled .Values.costManagement.kafka.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cost-mgmt.koku.api.reads.name" . | replace "reads" "listener" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-mgmt.koku.labels" . | nindent 4 }}
+    app.kubernetes.io/component: listener
+spec:
+  replicas: {{ .Values.costManagement.listener.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "cost-mgmt.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: listener
+  template:
+    metadata:
+      labels:
+        {{- include "cost-mgmt.koku.labels" . | nindent 8 }}
+        app.kubernetes.io/component: listener
+    spec:
+      serviceAccountName: {{ .Values.costManagement.serviceAccount.name }}
+      initContainers:
+      {{- include "cost-mgmt.koku.initContainer.combineCA" . | nindent 6 }}
+      containers:
+      - name: listener
+        image: "{{ include "cost-mgmt.koku.image" . }}"
+        imagePullPolicy: {{ .Values.costManagement.api.image.pullPolicy }}
+
+        ports:
+        - containerPort: 9000
+          protocol: TCP
+          name: probes
+
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /livez
+            port: 9000
+          initialDelaySeconds: 30
+          periodSeconds: 20
+          timeoutSeconds: 3
+          failureThreshold: 5
+          successThreshold: 1
+
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 9000
+          initialDelaySeconds: 30
+          periodSeconds: 20
+          timeoutSeconds: 3
+          failureThreshold: 5
+          successThreshold: 1
+
+        # Resource limits and requests
+        resources:
+          {{- toYaml .Values.costManagement.listener.resources | nindent 10 }}
+
+        # Environment variables
+        env:
+        # Listener-specific environment variables (must come first)
+        - name: MASU
+          value: "true"
+        - name: KAFKA_CONNECT
+          value: "true"
+        - name: API_PATH_PREFIX
+          value: /api/cost-management
+
+        # Kafka consumer configuration
+        - name: KAFKA_CONSUMER_GROUP_ID
+          value: {{ .Values.costManagement.kafka.consumerGroupId | default "cost-mgmt-listener-group" | quote }}
+
+        # Kafka topic configuration
+        {{- if .Values.costManagement.kafka.topic }}
+        - name: KAFKA_TOPIC
+          value: {{ .Values.costManagement.kafka.topic | quote }}
+        {{- end }}
+
+        # Common Koku environment variables (includes DB, Redis, S3, Trino, Kafka, etc.)
+        {{- include "cost-mgmt.koku.commonEnv" . | nindent 8 }}
+
+        # Override Kafka host/port for cross-namespace communication (AFTER commonEnv)
+        {{- if .Values.costManagement.kafka.enabled }}
+        - name: INSIGHTS_KAFKA_HOST
+          value: {{ .Values.costManagement.kafka.host | quote }}
+        - name: INSIGHTS_KAFKA_PORT
+          value: {{ .Values.costManagement.kafka.port | quote }}
+        {{- end }}
+
+        {{- range $key, $value := .Values.costManagement.listener.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+
+        volumeMounts:
+        {{- include "cost-mgmt.koku.volumeMounts" . | nindent 8 }}
+
+        # Command to run Kafka listener
+        command:
+        - /bin/bash
+        - -c
+        - |
+          cd $APP_HOME
+          echo "Starting Kafka listener..."
+          echo "Kafka host: $INSIGHTS_KAFKA_HOST:$INSIGHTS_KAFKA_PORT"
+          exec python manage.py listener
+
+      volumes:
+      {{- include "cost-mgmt.koku.volumes" . | nindent 6 }}
+{{- end }}
+

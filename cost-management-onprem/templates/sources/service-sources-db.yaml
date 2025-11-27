@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cost-management-onprem.fullname" . }}-db-sources
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-management-onprem.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+    app.kubernetes.io/name: db-sources
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.database.sources.port }}
+      targetPort: postgres
+      protocol: TCP
+      name: postgres
+  selector:
+    {{- include "cost-management-onprem.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+    app.kubernetes.io/name: db-sources

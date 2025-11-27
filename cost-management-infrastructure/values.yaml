@@ -1,0 +1,321 @@
+# =============================================================================
+# Cost Management Infrastructure Chart Values
+# =============================================================================
+# This chart deploys the infrastructure components (PostgreSQL) separately
+# from the application to allow for independent lifecycle management.
+#
+# Customers can point to their own existing PostgreSQL instead of using this.
+# =============================================================================
+
+# S3 Configuration (for Hive Metastore warehouse)
+s3:
+  bucket: cost-data  # S3 bucket for Hive warehouse location
+
+# PostgreSQL Configuration
+postgresql:
+  # Enable/disable PostgreSQL deployment
+  # Set to false if using external PostgreSQL
+  enabled: true
+
+  # Image configuration
+  image:
+    repository: registry.redhat.io/rhel8/postgresql-13
+    tag: "1-109"
+    pullPolicy: IfNotPresent
+
+  # Database authentication
+  auth:
+    database: koku
+    username: koku
+    # Password will be auto-generated and stored in secret
+    # You can override by setting existingSecret
+    existingSecret: ""
+
+  # Admin user for database initialization
+  adminUser: postgres
+
+  # Storage configuration
+  persistence:
+    enabled: true
+    storageClassName: ""  # Use default storage class
+    size: 20Gi
+    accessModes:
+      - ReadWriteOnce
+
+  # Resource limits
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 5432
+
+  # Security context
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+
+# Database Migration Job
+# Runs Django migrations after PostgreSQL is ready
+migration:
+  image:
+    repository: quay.io/jordigilh/koku
+    tag: latest-with-ca-bundle-support
+    pullPolicy: Always
+
+# =============================================================================
+# Storage (S3/ODF) Configuration
+# =============================================================================
+storage:
+  # S3 endpoint
+  endpoint: "http://s3.openshift-storage.svc:80"
+
+  # Credentials secret reference (should exist in the cluster)
+  credentialsSecret:
+    # Namespace where the source secret is located (typically openshift-storage for ODF)
+    namespace: "openshift-storage"
+    # Name of the source secret containing S3 credentials
+    name: "noobaa-admin"
+    # Key names in the source secret
+    accessKeyKey: "AWS_ACCESS_KEY_ID"
+    secretKeyKey: "AWS_SECRET_ACCESS_KEY"
+
+# =============================================================================
+# Redis Configuration (Celery broker/backend + caching)
+# =============================================================================
+redis:
+  enabled: true
+
+  # Image configuration (Valkey - Redis fork)
+  image:
+    repository: "registry.redhat.io/rhel10/valkey-8"
+    tag: "latest"
+    pullPolicy: IfNotPresent
+
+  # Connection settings
+  host: "redis"
+  port: 6379
+
+  # Persistence configuration for Celery chord callback reliability
+  # IMPORTANT: Enable this for production to prevent data loss on pod restarts
+  persistence:
+    enabled: true  # Set to false for ephemeral testing
+    size: 5Gi      # Adjust based on workload
+    storageClassName: ""  # Use default storage class (adjust for ODF/NFS)
+
+  # Valkey configuration
+  bindAddress: "0.0.0.0"
+  maxMemory: "512mb"
+  maxMemoryPolicy: "allkeys-lru"
+
+  # Resource allocation
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# =============================================================================
+# Trino & Hive Metastore Configuration
+# =============================================================================
+trino:
+  enabled: true
+  profile: minimal  # minimal, dev, or production
+
+  # ---------------------------------------------------------------------------
+  # Trino Coordinator
+  # ---------------------------------------------------------------------------
+  coordinator:
+    replicas: 1
+
+    # Image configuration
+    image:
+      repository: quay.io/insights-onprem/trino
+      tag: "latest"
+      pullPolicy: IfNotPresent
+
+    # Resources (minimal profile)
+    resources:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+      limits:
+        cpu: 500m
+        memory: 2Gi
+
+    # Storage for query spill
+    storage:
+      size: 5Gi
+      storageClassName: ""  # Use default storage class in cluster
+      accessModes:
+        - ReadWriteOnce
+
+    # Service configuration
+    service:
+      type: ClusterIP
+      port: 8080
+      targetPort: 8080
+      name: trino-coordinator
+
+    # Health checks
+    livenessProbe:
+      httpGet:
+        path: /v1/info
+        port: 8080
+        scheme: HTTP
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 3
+
+    readinessProbe:
+      httpGet:
+        path: /v1/info/state
+        port: 8080
+        scheme: HTTP
+      initialDelaySeconds: 60
+      periodSeconds: 15
+      timeoutSeconds: 10
+      failureThreshold: 6
+
+    # JVM configuration (minimal)
+    config:
+      jvm:
+        maxHeapSize: "1G"
+        gcMethod: "G1GC"
+
+      # Coordinator configuration
+      coordinator: true
+      nodeScheduler:
+        includeCoordinator: false
+
+  # ---------------------------------------------------------------------------
+  # Trino Workers
+  # ---------------------------------------------------------------------------
+  worker:
+    replicas: 1  # Minimal: 1 worker for dev
+
+    # Image configuration
+    image:
+      repository: quay.io/insights-onprem/trino
+      tag: "latest"
+      pullPolicy: IfNotPresent
+
+    # Resources (minimal profile)
+    resources:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+      limits:
+        cpu: 500m
+        memory: 2Gi
+
+    # Storage for query spill
+    storage:
+      size: 5Gi
+      storageClassName: ""  # Use default storage class in cluster
+      accessModes:
+        - ReadWriteOnce
+
+    # JVM configuration (minimal)
+    config:
+      jvm:
+        maxHeapSize: "1G"
+        gcMethod: "G1GC"
+
+      # Worker configuration
+      coordinator: false
+
+  # ---------------------------------------------------------------------------
+  # Hive Metastore
+  # ---------------------------------------------------------------------------
+  metastore:
+    replicas: 1
+
+    # Image configuration
+    image:
+      repository: quay.io/insights-onprem/hive
+      tag: "3.1.3"
+      pullPolicy: IfNotPresent
+
+    # Resources
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+
+    # Storage for warehouse directory
+    storage:
+      size: 5Gi
+      accessModes:
+        - ReadWriteOnce
+
+    # Service configuration
+    service:
+      type: ClusterIP
+      port: 9083
+      targetPort: 9083
+      name: hive-metastore
+
+    # Database configuration
+    database:
+      # Database connection
+      host: ""  # Auto-resolved: hive-metastore-db
+      port: 5432
+      name: metastore
+      user: metastore
+
+      # PostgreSQL image
+      image:
+        repository: quay.io/sclorg/postgresql-13-c9s
+        tag: "latest"
+        pullPolicy: IfNotPresent
+
+      # Resources
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 100m
+          memory: 256Mi
+
+      # Storage
+      storage:
+        size: 2Gi
+        storageClassName: ""  # Use default storage class in cluster
+        accessModes:
+          - ReadWriteOnce
+
+      # Environment variables
+      env:
+        POSTGRES_DB: metastore
+        POSTGRES_USER: metastore
+
+  # ---------------------------------------------------------------------------
+  # Service Account Configuration
+  # ---------------------------------------------------------------------------
+  serviceAccount:
+    create: true
+    name: ""  # Auto-generated if empty
