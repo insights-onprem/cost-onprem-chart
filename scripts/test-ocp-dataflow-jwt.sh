@@ -40,7 +40,7 @@ CLIENT_ID=""
 CLIENT_SECRET=""
 
 # OAuth2 for backend API (cluster-internal access via user's session token)
-OAUTH2_TOKEN=""
+OAUTH2_TOKEN="${OAUTH2_TOKEN:-}"
 PORT_FORWARD_PID=""
 
 # Check prerequisites
