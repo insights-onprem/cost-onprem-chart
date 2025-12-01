@@ -290,6 +290,20 @@ get_jwt_token() {
 get_oauth2_token() {
     echo_info "=== Getting OAuth2 Token from User Session ==="
 
+    # Check if token is already provided via environment variable
+    if [ -n "${OAUTH2_TOKEN:-}" ]; then
+        echo_info "Using token from OAUTH2_TOKEN environment variable"
+        echo_success "OAuth2 token obtained from environment variable"
+        echo_info "Token length: ${#OAUTH2_TOKEN} characters"
+        echo_info "Token preview: ${OAUTH2_TOKEN:0:50}..."
+        echo_info ""
+        echo_info "Note: Using pre-configured OAuth2 token from environment."
+        echo_info "      This is useful for service accounts, automation, and CI/CD."
+        echo_info "      The backend validates tokens via Kubernetes TokenReview API."
+        echo_info "      Accepted tokens: user tokens with audience 'https://kubernetes.default.svc'"
+        return 0
+    fi
+
     # Use the current user's session token (from 'oc whoami -t')
     # This simulates how the OpenShift Console UI will authenticate
     echo_info "Using token from current user session (oc whoami -t)..."
@@ -298,6 +312,7 @@ get_oauth2_token() {
     if [ -z "$OAUTH2_TOKEN" ]; then
         echo_error "Failed to get user session token"
         echo_error "Make sure you are logged into OpenShift with 'oc login'"
+        echo_error "Or export OAUTH2_TOKEN environment variable with a valid token"
         return 1
     fi
 
@@ -1036,11 +1051,13 @@ case "${1:-}" in
         echo "  NAMESPACE              Target namespace (default: cost-onprem)"
         echo "  HELM_RELEASE_NAME      Helm release name (default: cost-onprem)"
         echo "  KEYCLOAK_NAMESPACE     Keycloak namespace (default: keycloak)"
+        echo "  OAUTH2_TOKEN           Optional OAuth2 token for backend API authentication"
+        echo "                         If not set, will use current user session (oc whoami -t)"
         echo ""
         echo "This script tests both authentication mechanisms:"
         echo ""
         echo "OAuth2 TokenReview (Backend API):"
-        echo "  1. Uses your current user session token (oc whoami -t)"
+        echo "  1. Uses OAuth2 token from OAUTH2_TOKEN env var or session (oc whoami -t)"
         echo "  2. Tests backend API authentication (Envoy + Authorino + TokenReview)"
         echo "  3. Queries backend REST endpoints with user token"
         echo "  4. Simulates how OpenShift Console UI will authenticate"
@@ -1057,11 +1074,19 @@ case "${1:-}" in
         echo "      - Keycloak JWT for external Cost Management Operator uploads"
         echo ""
         echo "Requirements:"
-        echo "  - Active OpenShift session (oc login completed)"
+        echo "  - Active OpenShift session (oc login) OR OAUTH2_TOKEN environment variable"
         echo "  - Keycloak deployed with cost-management-operator client"
         echo "  - ROS ingress with JWT authentication enabled"
         echo "  - ROS backend API with OAuth2 TokenReview (Envoy+Authorino)"
         echo "  - User must have access to the cost-onprem namespace"
+        echo ""
+        echo "Examples:"
+        echo "  # Using current user session:"
+        echo "  ./test-ocp-dataflow-jwt.sh"
+        echo ""
+        echo "  # Using service account token:"
+        echo "  export OAUTH2_TOKEN=\$(oc create token my-service-account -n my-namespace)"
+        echo "  ./test-ocp-dataflow-jwt.sh"
         exit 0
         ;;
     "")
