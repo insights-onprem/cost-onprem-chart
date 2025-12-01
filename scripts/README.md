@@ -224,7 +224,11 @@ End-to-end test of JWT authentication flow with sample cost data.
 
 **Usage:**
 ```bash
-# Test JWT authentication
+# Test JWT authentication with current user session
+./test-ocp-dataflow-jwt.sh
+
+# Use service account token for automation/CI/CD
+export OAUTH2_TOKEN=$(oc create token my-service-account -n my-namespace)
 ./test-ocp-dataflow-jwt.sh
 
 # Custom namespace
@@ -234,11 +238,15 @@ End-to-end test of JWT authentication flow with sample cost data.
 ./test-ocp-dataflow-jwt.sh --verbose
 ```
 
+**Environment variables:**
+- `OAUTH2_TOKEN`: Optional OAuth2 token for backend API authentication. If not set, uses current user session (`oc whoami -t`)
+
 **Requirements:**
 - JWT authentication enabled in ROS deployment
 - Red Hat Build of Keycloak (RHBK) with `cost-management-operator` client
+- Active OpenShift session (`oc login`) OR `OAUTH2_TOKEN` environment variable
 
-**Best for:** CI/CD pipelines, complete E2E validation including recommendations
+**Best for:** CI/CD pipelines, complete E2E validation including recommendations, service account authentication
 
 ---
 
