@@ -10,6 +10,7 @@ Automation scripts for deploying, configuring, and testing the Resource Optimiza
 | `install-helm-chart.sh` | Deploy ROS Helm chart | All environments |
 | `deploy-rhbk.sh` | Deploy Red Hat Build of Keycloak | OpenShift |
 | `setup-cost-mgmt-tls.sh` | Configure TLS certificates | OpenShift |
+| `cost-mgmt-ocp-dataflow.sh` | **E2E Cost Management test** | All environments |
 | `test-ocp-dataflow-jwt.sh` | Test JWT + recommendations | JWT-enabled clusters |
 | `query-kruize.sh` | Query Kruize database | All environments |
 | `deploy-kind.sh` | Create test cluster | CI/CD, Local dev |
@@ -25,10 +26,13 @@ Automation scripts for deploying, configuring, and testing the Resource Optimiza
 # 2. Deploy Kafka infrastructure
 ./deploy-strimzi.sh
 
-# 3. Deploy ROS
+# 3. Deploy Cost Management
 ./install-helm-chart.sh
 
-# 4. Test the deployment (if JWT enabled)
+# 4. Validate the deployment (E2E test)
+./cost-mgmt-ocp-dataflow.sh
+
+# 5. (Optional) Test JWT authentication if Keycloak enabled
 ./test-ocp-dataflow-jwt.sh
 ```
 
@@ -210,6 +214,90 @@ KAFKA_BOOTSTRAP_SERVERS=my-kafka:9092 ./deploy-strimzi.sh
 
 ---
 
+### `cost-mgmt-ocp-dataflow.sh`
+End-to-end validation of Cost Management data pipeline (OCP provider).
+
+**Test flow:**
+1. Preflight checks (database, S3, Kafka connectivity)
+2. Database migrations verification
+3. Kafka cluster health validation
+4. Provider setup (creates OCP provider via Sources API → Kafka → Listener)
+5. Data generation with nise + upload to S3
+6. Kafka message triggers MASU processing
+7. Trino table validation (Parquet data accessible)
+8. Cost validation (PostgreSQL summary tables match expected values)
+
+**Usage:**
+```bash
+# Run smoke test (recommended - ~3 minutes)
+./cost-mgmt-ocp-dataflow.sh
+
+# Run with diagnostics on failure
+./cost-mgmt-ocp-dataflow.sh --diagnose
+
+# Custom namespace
+NAMESPACE=my-cost-mgmt ./cost-mgmt-ocp-dataflow.sh
+```
+
+**Expected Output (Success):**
+```
+======================================================================
+  ✅ SMOKE VALIDATION PASSED
+======================================================================
+
+  📊 DATA PROOF - Actual rows from PostgreSQL:
+  ------------------------------------------------------------------
+  Date         Namespace            CPU(h)     CPU Req    Mem(GB)
+  ------------------------------------------------------------------
+  2025-12-01   test-namespace           6.00     12.00     12.00
+  ------------------------------------------------------------------
+  TOTALS       (1 rows)                 6.00     12.00     12.00
+  ------------------------------------------------------------------
+
+  📋 EXPECTED vs ACTUAL (from nise YAML):
+  --------------------------------------------------
+  Metric                      Expected     Actual Match
+  --------------------------------------------------
+  CPU Request (hours)            12.00      12.00 ✅
+  Memory Request (GB-hrs)        24.00      24.00 ✅
+  --------------------------------------------------
+
+  ✅ File Processing: 3 checks passed
+  ✅ Cost: 2 checks passed
+======================================================================
+
+Phases: 8/8 passed
+  ✅ preflight
+  ✅ migrations
+  ✅ kafka_validation
+  ✅ provider
+  ✅ data_upload
+  ✅ processing
+  ✅ trino
+  ✅ validation
+
+✅ E2E SMOKE TEST PASSED
+
+╔═══════════════════════════════════════════════════════════════╗
+║  ✓ OCP E2E Validation PASSED                                  ║
+║  Total time: 3m 19s                                          ║
+╚═══════════════════════════════════════════════════════════════╝
+```
+
+**Key Validation Points:**
+- **Data Proof**: Shows actual rows from PostgreSQL `reporting_ocpusagelineitem_daily_summary`
+- **Expected vs Actual**: Compares nise-generated values against PostgreSQL aggregates
+- **Match Icons**: ✅ indicates values match within 5% tolerance
+
+**Requirements:**
+- Cost Management deployed with `cost-onprem` or `cost-onprem-infra` charts
+- Kafka cluster running (Strimzi)
+- S3/ODF storage accessible
+
+**Best for:** CI/CD pipelines, deployment validation, data flow verification
+
+---
+
 ### `test-ocp-dataflow-jwt.sh`
 End-to-end test of JWT authentication flow with sample cost data.
 
@@ -289,17 +377,31 @@ Query Kruize database for experiments and recommendations.
 ## 🧪 Test Strategy
 
 ### For CI/CD Pipelines
-Use the JWT test script for comprehensive E2E validation:
 
-**Recommended CI/CD workflow:**
+**Cost Management Validation (recommended):**
 ```bash
 # 1. Deploy Kafka infrastructure
 ./deploy-strimzi.sh
 
-# 2. Deploy environment
+# 2. Deploy Cost Management
 ./install-helm-chart.sh
 
-# 3. Validate full E2E (quick synthetic test)
+# 3. Validate Cost Management data flow (~3 minutes)
+./cost-mgmt-ocp-dataflow.sh || exit 1
+```
+
+The `cost-mgmt-ocp-dataflow.sh` script validates:
+- ✅ Sources API → Kafka → Sources Listener integration
+- ✅ OCP provider creation via production flow
+- ✅ S3 upload → Kafka → MASU processing
+- ✅ CSV → Parquet conversion (Trino tables)
+- ✅ PostgreSQL summary aggregation
+- ✅ Cost calculations match expected values
+- ✅ **Shows actual data proof** (not just PASSED/FAILED)
+
+**JWT Authentication Validation (if Keycloak enabled):**
+```bash
+# Validate JWT authentication flow
 ./test-ocp-dataflow-jwt.sh || exit 1
 ```
 
