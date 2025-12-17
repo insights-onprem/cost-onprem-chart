@@ -1,0 +1,111 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migration
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-mgmt-infra.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "cost-mgmt-infra.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "cost-mgmt-infra.serviceAccountName" . }}
+      containers:
+      - name: migration
+        image: "{{ .Values.migration.image.repository }}:{{ .Values.migration.image.tag }}"
+        imagePullPolicy: {{ .Values.migration.image.pullPolicy | default "IfNotPresent" }}
+        command:
+        - bash
+        - -c
+        - |
+          set -e
+
+          echo "=========================================="
+          echo "Koku Django Migrations - Debug Mode"
+          echo "=========================================="
+          echo "Timestamp: $(date)"
+          echo "Pod: $(hostname)"
+          echo ""
+
+          echo "=== Environment Configuration ==="
+          export DATABASE_SERVICE_NAME='DATABASE'
+          export DATABASE_SERVICE_HOST='{{ include "cost-mgmt-infra.postgresql.serviceName" . }}'
+          export DATABASE_SERVICE_PORT='5432'
+          export DATABASE_ENGINE='postgresql'
+          export DATABASE_NAME='{{ .Values.postgresql.auth.database }}'
+          export DATABASE_USER='{{ .Values.postgresql.auth.username }}'
+          export DATABASE_PASSWORD="${DATABASE_PASSWORD}"
+          export DJANGO_SECRET_KEY='migration-temp-key'
+          export CLOWDER_ENABLED=False
+          export DEVELOPMENT=False
+          export PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
+
+          echo "Database Host: ${DATABASE_SERVICE_HOST}"
+          echo "Database Port: ${DATABASE_SERVICE_PORT}"
+          echo "Database Name: ${DATABASE_NAME}"
+          echo "Database User: ${DATABASE_USER}"
+          echo "Password Length: ${#DATABASE_PASSWORD} chars"
+          echo ""
+
+          echo "=== Testing Database Connectivity ==="
+          echo "Attempting TCP connection to ${DATABASE_SERVICE_HOST}:${DATABASE_SERVICE_PORT}..."
+          timeout 10 bash -c "cat < /dev/null > /dev/tcp/${DATABASE_SERVICE_HOST}/${DATABASE_SERVICE_PORT}" \
+            && echo "✅ TCP connection successful" \
+            || { echo "❌ TCP connection failed"; exit 1; }
+          echo ""
+
+          echo "=== Preparing Migration Environment ==="
+          mkdir -p /tmp/prometheus
+          cd /opt/koku/koku
+          echo "Working directory: $(pwd)"
+          echo ""
+
+          echo "=== Running Django Migrations ==="
+          python manage.py migrate --noinput
+          migration_exit=$?
+          echo ""
+
+          if [ $migration_exit -eq 0 ]; then
+            echo "=== Migration Summary ==="
+            python manage.py showmigrations | head -20
+            echo "..."
+            echo ""
+
+            echo "=== Verifying Database ==="
+            python manage.py check --database default
+            echo ""
+          fi
+
+          echo "=========================================="
+          if [ $migration_exit -eq 0 ]; then
+            echo "✅ Migrations completed successfully!"
+          else
+            echo "❌ Migrations failed with exit code: $migration_exit"
+          fi
+          echo "=========================================="
+
+          exit $migration_exit
+        env:
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "cost-mgmt-infra.postgresql.secretName" . }}
+              key: password
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+

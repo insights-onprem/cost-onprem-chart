@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-mgmt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/name: redis
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+    targetPort: redis
+    protocol: TCP
+    name: redis
+  selector:
+    {{- include "cost-mgmt.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/name: redis
+
