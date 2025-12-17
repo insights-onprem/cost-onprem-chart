@@ -1,0 +1,21 @@
+{{- if .Values.costManagement.masu.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cost-onprem.koku.api.reads.name" . | replace "reads" "masu" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-onprem.koku.labels" . | nindent 4 }}
+    app.kubernetes.io/component: masu
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+    name: http
+  selector:
+    app.kubernetes.io/name: {{ include "cost-onprem.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: masu
+{{- end }}

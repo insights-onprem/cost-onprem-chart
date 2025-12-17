@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cost-onprem.koku.celery.worker.name" (dict "context" . "type" "subs-transmission") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-onprem.koku.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cost-management-celery
+    celery-type: worker
+    worker-queue: subs-transmission
+spec:
+  replicas: {{ .Values.costManagement.celery.workers.subsTransmission.replicas }}
+  selector:
+    matchLabels:
+      {{- include "cost-onprem.koku.celery.worker.selectorLabels" (dict "context" . "type" "subs-transmission") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cost-onprem.koku.labels" . | nindent 8 }}
+        app.kubernetes.io/component: cost-management-celery
+        celery-type: worker
+        worker-queue: subs-transmission
+    spec:
+      serviceAccountName: {{ include "cost-onprem.koku.serviceAccountName" . }}
+
+      securityContext:
+        {{- include "cost-onprem.securityContext.pod" . | nindent 8 }}
+
+      initContainers:
+      {{- include "cost-onprem.koku.initContainer.combineCA" . | nindent 6 }}
+
+      containers:
+      - name: celery-worker
+        image: "{{ include "cost-onprem.koku.image" . }}"
+        imagePullPolicy: {{ .Values.costManagement.api.image.pullPolicy }}
+
+        command:
+          - /bin/sh
+          - -c
+          - |
+            cd $APP_HOME
+            PYTHONPATH=$APP_HOME celery -A koku worker --without-gossip -E -l ${CELERY_LOG_LEVEL:-info} -Q ${WORKER_QUEUES}
+
+        env:
+        - name: CELERY_LOG_LEVEL
+          value: "info"
+        - name: WORKER_QUEUES
+          value: {{ .Values.costManagement.celery.workers.subsTransmission.queue | quote }}
+        {{- include "cost-onprem.koku.commonEnv" . | nindent 8 }}
+        {{- range $key, $value := .Values.costManagement.celery.workers.commonEnv }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+
+        resources:
+          {{- toYaml .Values.costManagement.celery.workers.subsTransmission.resources | nindent 10 }}
+
+        volumeMounts:
+        {{- include "cost-onprem.koku.volumeMounts" . | nindent 8 }}
+
+        securityContext:
+          {{- include "cost-onprem.securityContext.container" . | nindent 10 }}
+
+      volumes:
+      {{- include "cost-onprem.koku.volumes" . | nindent 6 }}
+
+
