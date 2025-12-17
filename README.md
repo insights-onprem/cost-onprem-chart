@@ -1,6 +1,43 @@
-# Cost Management On-Premise Helm Chart
+# Cost Management On-Premise Helm Charts
 
-Kubernetes Helm chart for deploying the complete Cost Management On-Premise solution, including Resource Optimization Service (ROS) and future cost management capabilities.
+This repository contains Helm charts for deploying cost management solutions on-premise:
+
+1. **`cost-onprem/`** - Main application chart containing ROS, Kruize, Sources API, and Koku (Cost Management) components
+2. **`cost-onprem-infra/`** - Infrastructure chart (PostgreSQL, Trino, Hive Metastore) deployed before the main chart
+
+---
+
+## 📊 Cost Management (Koku) Deployment ⭐ NEW
+
+Complete Helm charts for deploying the full Cost Management stack with OCP cost analytics capabilities.
+
+**🚀 Quick Start:**
+```bash
+# Automated deployment (recommended) - deploys both infra + main chart
+./scripts/install-helm-chart.sh
+
+# Or deploy components separately
+./scripts/bootstrap-infrastructure.sh --namespace cost-onprem  # Infrastructure (PostgreSQL, Trino, Hive)
+./scripts/install-helm-chart.sh                                 # Application (uses infra deployed above)
+```
+
+**📖 Documentation:**
+- **[Cost Management Installation Guide](docs/cost-management-installation.md)** - Complete deployment guide
+- **Prerequisites**: OpenShift 4.18+, ODF (150GB+), Kafka/Strimzi
+- **Architecture**: 2-chart deployment (`cost-onprem-infra` → `cost-onprem`)
+- **E2E Testing**: Automated validation with `./scripts/cost-mgmt-ocp-dataflow.sh`
+
+**Key Features:**
+- 📊 Complete OCP cost data pipeline (Kafka → CSV → Parquet → Trino → PostgreSQL)
+- 🔄 37 Kubernetes resources with optimized resource requests/limits
+- 🧪 Python-based E2E validation framework
+- 📦 Modular deployment (infrastructure and application separately or together)
+
+---
+
+## 🎯 Resource Optimization Service (ROS)
+
+Kubernetes Helm chart for deploying the Resource Optimization Service (ROS) with Kruize integration and future cost management capabilities.
 
 ## 🚀 Quick Start
 
@@ -53,7 +90,7 @@ helm install cost-onprem cost-onprem/cost-onprem --namespace cost-onprem --creat
 
 **Need more?** Configuration, security, templates, and specialized guides are available in the [Complete Documentation Index](docs/README.md).
 
-## 🏗️ Chart Structure
+## 🏗️ Repository Structure
 
 ```
 cost-onprem-chart/
@@ -106,9 +143,18 @@ cost-onprem-chart/
 ## ⚙️ Configuration
 
 ### Resource Requirements
-- **Memory**: 8GB+ (12GB+ recommended)
-- **CPU**: 4+ cores
-- **Storage**: 30GB+ persistent storage
+
+Complete Cost Management deployment requires significant cluster resources:
+
+| Resource | Minimum | Recommended |
+|----------|---------|-------------|
+| **CPU** | 10 cores | 12-14 cores |
+| **Memory** | 24 Gi | 32-40 Gi |
+| **Worker Nodes** | 3 × 8 Gi | 3 × 16 Gi |
+| **Storage** | 300 Gi | 400+ Gi |
+| **Pods** | ~55 | - |
+
+**📖 See [Resource Requirements Guide](docs/resource-requirements.md) for detailed breakdown by component.**
 
 ### Storage Options
 - **Kubernetes/KIND**: MinIO (automatically deployed)
