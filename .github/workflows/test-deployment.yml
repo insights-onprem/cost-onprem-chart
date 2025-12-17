@@ -1,5 +1,24 @@
 name: Helm Chart Quality Test
 
+# ============================================================================
+# ⚠️  WORKFLOW DISABLED - Insufficient GitHub Runner Resources
+# ============================================================================
+#
+# This workflow is disabled because the Cost Management stack requires more
+# resources than GitHub-hosted runners provide:
+#
+#   Required:  ~14 Gi memory (OCP-Only minimal), ~24 Gi (full stack)
+#   Available: 7 Gi memory (ubuntu-latest)
+#
+# To run E2E tests, you need one of:
+#   1. GitHub Large Runners (16-core with 64 GB RAM) - requires GitHub Enterprise
+#   2. Self-hosted runner with 32+ GB RAM
+#   3. Manual testing on OpenShift/Kubernetes cluster
+#
+# See docs/resource-requirements.md for full resource breakdown.
+# ============================================================================
+#
+# Original workflow description:
 # This workflow tests the Cost Management On-Premise Helm chart deployment on Kind using the local chart
 # Deployment flow:
 #   1. Setup KIND cluster
@@ -14,14 +33,16 @@ name: Helm Chart Quality Test
 # Chart Source: Uses local cost-onprem/ directory instead of GitHub releases
 
 on:
-  pull_request:
-    paths:
-      - 'cost-onprem/**'
-      - 'scripts/install-helm-chart.sh'
-      - 'scripts/deploy-strimzi.sh'
-      - 'scripts/deploy-kind.sh'
+  # DISABLED: Uncomment to re-enable when larger runners are available
+  # pull_request:
+  #   paths:
+  #     - 'cost-onprem/**'
+  #     - 'scripts/install-helm-chart.sh'
+  #     - 'scripts/deploy-strimzi.sh'
+  #     - 'scripts/deploy-kind.sh'
 
   workflow_dispatch:
+    # Manual trigger only - for use with self-hosted runners or larger runners
 
 jobs:
   helm-chart-test:

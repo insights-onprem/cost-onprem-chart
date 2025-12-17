@@ -5,11 +5,13 @@ on:
     branches: [ main, master ]
     paths:
       - 'cost-onprem/**'
+      - 'cost-onprem-infra/**'
 
   push:
     branches: [ main, master ]
     paths:
       - 'cost-onprem/**'
+      - 'cost-onprem-infra/**'
 
   workflow_dispatch:
 
@@ -35,11 +37,28 @@ jobs:
           # Verify installation
           semver --version
 
-      - name: Get current chart version
+      - name: Get current chart versions
         id: current_version
         run: |
-          CURRENT_VERSION=$(grep '^version:' cost-onprem/Chart.yaml | sed 's/version: *//' | tr -d '"' | tr -d "'")
-          echo "Current chart version: $CURRENT_VERSION"
+          # Get cost-onprem version
+          COST_ONPREM_VERSION=$(grep '^version:' cost-onprem/Chart.yaml | sed 's/version: *//' | tr -d '"' | tr -d "'")
+          echo "cost-onprem version: $COST_ONPREM_VERSION"
+          
+          # Get cost-onprem-infra version
+          COST_ONPREM_INFRA_VERSION=$(grep '^version:' cost-onprem-infra/Chart.yaml | sed 's/version: *//' | tr -d '"' | tr -d "'")
+          echo "cost-onprem-infra version: $COST_ONPREM_INFRA_VERSION"
+          
+          # Verify both charts have matching versions
+          if [ "$COST_ONPREM_VERSION" != "$COST_ONPREM_INFRA_VERSION" ]; then
+            echo "❌ Chart versions do not match!"
+            echo "   cost-onprem:       $COST_ONPREM_VERSION"
+            echo "   cost-onprem-infra: $COST_ONPREM_INFRA_VERSION"
+            echo "Both charts must have the same version."
+            exit 1
+          fi
+          echo "✅ Both charts have matching version: $COST_ONPREM_VERSION"
+          
+          CURRENT_VERSION=$COST_ONPREM_VERSION
           echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
 
           # Validate current version is valid semver
@@ -152,10 +171,9 @@ jobs:
             echo "  Minor: $(semver bump minor $LATEST_VERSION)"
             echo "  Major: $(semver bump major $LATEST_VERSION)"
             echo ""
-            echo "Update cost-onprem/Chart.yaml with one of the suggested versions:"
-            echo "  version: $(semver bump patch $LATEST_VERSION)  # For bug fixes"
-            echo "  version: $(semver bump minor $LATEST_VERSION)  # For new features"
-            echo "  version: $(semver bump major $LATEST_VERSION)  # For breaking changes"
+            echo "Update BOTH Chart.yaml files with the same version:"
+            echo "  cost-onprem/Chart.yaml:       version: $(semver bump patch $LATEST_VERSION)"
+            echo "  cost-onprem-infra/Chart.yaml: version: $(semver bump patch $LATEST_VERSION)"
           fi
 
       - name: Create version check summary
@@ -181,7 +199,7 @@ jobs:
               echo "📝 **Details**: $MESSAGE" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
               echo "### 💡 How to Fix" >> $GITHUB_STEP_SUMMARY
-              echo "Update the \`version\` field in \`cost-onprem/Chart.yaml\` to a higher semantic version." >> $GITHUB_STEP_SUMMARY
+              echo "Update the \`version\` field in BOTH \`cost-onprem/Chart.yaml\` and \`cost-onprem-infra/Chart.yaml\` to the same higher semantic version." >> $GITHUB_STEP_SUMMARY
               ;;
             "warning")
               echo "⚠️ **Status**: Version check completed with warnings" >> $GITHUB_STEP_SUMMARY
@@ -205,13 +223,15 @@ jobs:
           script: |
             const message = `## ❌ Version Check Failed
 
-            The Helm chart version in \`cost-onprem/Chart.yaml\` must be semantically higher than the latest release.
+            The Helm chart versions in \`cost-onprem/Chart.yaml\` and \`cost-onprem-infra/Chart.yaml\` must:
+            1. Be semantically higher than the latest release
+            2. Match each other (both charts must have the same version)
 
             **Current version**: \`${{ steps.current_version.outputs.version }}\`
             **Latest release**: \`${{ steps.latest_release.outputs.version }}\`
 
             ### 💡 Suggested fixes:
-            Update the \`version\` field in \`cost-onprem/Chart.yaml\` to one of:
+            Update the \`version\` field in BOTH Chart.yaml files to the same version:
             - \`$(semver bump patch ${{ steps.latest_release.outputs.version }})\` for bug fixes
             - \`$(semver bump minor ${{ steps.latest_release.outputs.version }})\` for new features
             - \`$(semver bump major ${{ steps.latest_release.outputs.version }})\` for breaking changes
