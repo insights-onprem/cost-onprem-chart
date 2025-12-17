@@ -45,7 +45,7 @@
 | **Redis** | 1 | 200m | 400m | 256Mi | 512Mi |
 | **Subtotal** | **6** | **3.45 cores** | **6.9 cores** | **6.75 GB** | **13.5 GB** |
 
-#### Application Chart (cost-management-onprem)
+#### Application Chart (cost-onprem)
 
 | Component | Pods | CPU Request | CPU Limit | Memory Request | Memory Limit |
 |-----------|------|-------------|-----------|----------------|--------------|
@@ -128,7 +128,7 @@ oc get csv -A | grep strimzi
 oc get kafka -n kafka
 
 # Verify Kafka is ready
-oc wait kafka/cost-mgmt-kafka --for=condition=Ready --timeout=300s -n kafka
+oc wait kafka/cost-onprem-kafka --for=condition=Ready --timeout=300s -n kafka
 ```
 
 **Required Kafka Topics:**
@@ -159,7 +159,7 @@ jq --version
 └─────────────────────────────────────────────────────────────────────────┘
 
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃  APPLICATION LAYER (cost-management-onprem chart)                      ┃
+┃  APPLICATION LAYER (cost-onprem chart)                      ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
     ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
@@ -240,7 +240,7 @@ jq --version
 
 ```bash
 # Create namespace for Cost Management
-export NAMESPACE=cost-mgmt
+export NAMESPACE=cost-onprem
 oc new-project $NAMESPACE
 
 # Verify namespace
@@ -276,21 +276,21 @@ This script deploys **only the infrastructure chart** with automated setup and m
 - 🔄 Automatic database migration execution
 - ✅ Component health verification
 
-**Note:** This script is also used internally by `install-cost-management-complete.sh` (Option C) for infrastructure deployment.
+**Note:** This script is also used internally by `install-helm-chart.sh` (Option C) for infrastructure deployment.
 
 ```bash
 # Deploy only infrastructure
-./scripts/bootstrap-infrastructure.sh --namespace cost-mgmt
+./scripts/bootstrap-infrastructure.sh --namespace cost-onprem
 
 # With custom release name
-./scripts/bootstrap-infrastructure.sh --namespace cost-mgmt --release-name my-infra
+./scripts/bootstrap-infrastructure.sh --namespace cost-onprem --release-name my-infra
 
 # Skip migrations (run manually later)
-./scripts/bootstrap-infrastructure.sh --namespace cost-mgmt --skip-migrations
+./scripts/bootstrap-infrastructure.sh --namespace cost-onprem --skip-migrations
 ```
 
 **Option C: Use automated script (recommended - see Step 4)**
-Skip to Step 4 for automated deployment of **both** infrastructure and application charts using `install-cost-management-complete.sh`.
+Skip to Step 4 for automated deployment of **both** infrastructure and application charts using `install-helm-chart.sh`.
 
 **Expected Pods:**
 - `postgres-0` (StatefulSet, Ready 1/1)
@@ -319,11 +319,11 @@ The application chart deploys Koku (API, listeners, workers).
 **Option A: Using Helm directly (manual control)**
 ```bash
 # Deploy cost management application chart
-helm install cost-management-onprem ./cost-management-onprem \
+helm install cost-onprem ./cost-onprem \
   --namespace $NAMESPACE \
   --wait \
   --timeout 10m \
-  --set kafka.bootstrap_servers="cost-mgmt-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
+  --set kafka.bootstrap_servers="cost-onprem-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
 
 # Verify application pods
 oc get pods -n $NAMESPACE | grep koku
@@ -341,24 +341,24 @@ This script deploys **only the Cost Management application chart** (Koku API, MA
 - ✅ Chart validation and linting before deployment
 - 🎯 Pod readiness checks and status reporting
 
-**Note:** This script is also used internally by `install-cost-management-complete.sh` (Option C) for application deployment.
+**Note:** This script is also used internally by `install-helm-chart.sh` (Option C) for application deployment.
 
 ```bash
 # Deploy only the application chart
-./scripts/install-cost-helm-chart.sh
+./scripts/install-helm-chart.sh
 
 # With custom namespace
-NAMESPACE=my-namespace ./scripts/install-cost-helm-chart.sh
+NAMESPACE=my-namespace ./scripts/install-helm-chart.sh
 
 # Show deployment status
-./scripts/install-cost-helm-chart.sh status
+./scripts/install-helm-chart.sh status
 
 # Clean uninstall
-./scripts/install-cost-helm-chart.sh cleanup
+./scripts/install-helm-chart.sh cleanup
 ```
 
 **Option C: Use automated script (recommended - see Step 4)**
-Skip to Step 4 for automated deployment of **both** infrastructure and application charts using `install-cost-management-complete.sh`.
+Skip to Step 4 for automated deployment of **both** infrastructure and application charts using `install-helm-chart.sh`.
 
 **Expected Pods:**
 - `koku-koku-api-*` (Deployment, multiple replicas)
@@ -383,7 +383,7 @@ oc logs -n $NAMESPACE $(oc get pod -n $NAMESPACE -l app=koku-api-listener -o nam
 cd /path/to/ros-helm-chart/scripts
 
 # Run automated installation (recommended)
-./install-cost-management-complete.sh
+./install-helm-chart.sh
 ```
 
 **What the script does:**
@@ -391,14 +391,14 @@ cd /path/to/ros-helm-chart/scripts
 2. ✅ Auto-discovers ODF S3 credentials
 3. ✅ Creates namespace if needed
 4. ✅ Deploys infrastructure chart via `bootstrap-infrastructure.sh` (PostgreSQL, Hive, Trino, Redis)
-5. ✅ Deploys cost management chart via `install-cost-helm-chart.sh` (Koku API, listeners, workers)
+5. ✅ Deploys cost management chart via `install-helm-chart.sh` (Koku API, listeners, workers)
 6. ✅ Runs database migrations automatically
 7. ✅ Verifies all components are healthy
 
 **Architecture:**
 This script orchestrates the complete deployment by calling:
 - **Phase 1:** `bootstrap-infrastructure.sh` (infrastructure chart)
-- **Phase 2:** `install-cost-helm-chart.sh` (application chart)
+- **Phase 2:** `install-helm-chart.sh` (application chart)
 
 This modular approach allows you to run each phase independently if needed (see Steps 2 and 3).
 
@@ -412,18 +412,18 @@ This modular approach allows you to run each phase independently if needed (see 
 **Customization with Environment Variables:**
 ```bash
 # Custom namespace
-NAMESPACE=my-namespace ./install-cost-management-complete.sh
+NAMESPACE=my-namespace ./install-helm-chart.sh
 
 # Custom Kafka configuration
 KAFKA_NAMESPACE=my-kafka \
 KAFKA_CLUSTER=my-cluster \
-./install-cost-management-complete.sh
+./install-helm-chart.sh
 
 # All options
 NAMESPACE=my-namespace \
 KAFKA_NAMESPACE=my-kafka \
 KAFKA_CLUSTER=my-cluster \
-./install-cost-management-complete.sh
+./install-helm-chart.sh
 ```
 
 **When to use manual deployment (Steps 2-3):**
@@ -539,13 +539,13 @@ The E2E test validates the entire data pipeline:
 cd /path/to/ros-helm-chart/scripts
 
 # Run E2E test (smoke test mode - ~3 minutes)
-./cost-mgmt-ocp-dataflow.sh
+./cost-onprem-ocp-dataflow.sh
 
 # Re-run with force cleanup (recommended for repeated runs)
-./cost-mgmt-ocp-dataflow.sh --force
+./cost-onprem-ocp-dataflow.sh --force
 
 # Run with diagnostics (shows infrastructure health on failure)
-./cost-mgmt-ocp-dataflow.sh --diagnose
+./cost-onprem-ocp-dataflow.sh --diagnose
 ```
 
 ### Expected Output
@@ -685,7 +685,7 @@ Once the E2E test completes, verify the aggregated data:
 
 ```bash
 # Port-forward to PostgreSQL
-oc port-forward -n cost-mgmt pod/postgres-0 5432:5432 &
+oc port-forward -n cost-onprem pod/postgres-0 5432:5432 &
 
 # Connect and query
 psql -h localhost -U koku -d koku << 'SQL'
@@ -831,7 +831,7 @@ oc delete pod -n $NAMESPACE trino-worker-0
 oc get kafka -n kafka
 
 # Verify topic exists
-oc exec -n kafka cost-mgmt-kafka-kafka-0 -- bin/kafka-topics.sh \
+oc exec -n kafka cost-onprem-kafka-kafka-0 -- bin/kafka-topics.sh \
   --bootstrap-server localhost:9092 \
   --list | grep platform.upload.announce
 
@@ -848,7 +848,7 @@ oc logs -n $NAMESPACE $(oc get pod -n $NAMESPACE -l app=koku-api-listener -o nam
 **Solution:**
 ```bash
 # Run test with force cleanup
-./cost-mgmt-ocp-dataflow.sh --force
+./cost-onprem-ocp-dataflow.sh --force
 
 # Or manually clear summary table
 oc exec -n $NAMESPACE postgres-0 -- psql -U koku -d koku -c \
@@ -890,7 +890,7 @@ helm upgrade cost-onprem-infra ./cost-onprem-infra \
   --reuse-values
 
 # Upgrade application
-helm upgrade cost-management-onprem ./cost-management-onprem \
+helm upgrade cost-onprem ./cost-onprem \
   --namespace $NAMESPACE \
   --reuse-values
 ```
