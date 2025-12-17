@@ -81,10 +81,11 @@ Get the kruize database host - returns unified database service name (alias for 
 {{- end }}
 
 {{/*
-Get the sources database host - returns unified database service name (alias for backward compatibility)
+Get the sources database host - now returns infra chart's PostgreSQL host
+Sources API shares the koku database with Koku because Sources provisions tables that Koku uses
 */}}
 {{- define "cost-onprem.sources.databaseHost" -}}
-{{- include "cost-onprem.database.host" . -}}
+{{- include "cost-onprem.koku.database.host" . -}}
 {{- end }}
 
 {{/*
@@ -132,20 +133,10 @@ Usage: {{ include "cost-onprem.database.kruize.password" . }}
 {{- end }}
 
 {{/*
-Get Sources database username - returns value from values.yaml (used for both secret generation and ConfigMap)
-Usage: {{ include "cost-onprem.database.sources.user" . }}
+NOTE: Sources API now uses the infra chart's PostgreSQL (shares koku database)
+because Sources API provisions tables that Koku uses.
+Sources credentials are in the postgres-credentials secret from the infra chart.
 */}}
-{{- define "cost-onprem.database.sources.user" -}}
-{{- .Values.database.sources.user -}}
-{{- end }}
-
-{{/*
-Get Sources database password - returns value from values.yaml (used for both secret generation and ConfigMap)
-Usage: {{ include "cost-onprem.database.sources.password" . }}
-*/}}
-{{- define "cost-onprem.database.sources.password" -}}
-{{- .Values.database.sources.password -}}
-{{- end }}
 
 {{/*
 Detect if running on OpenShift by checking for OpenShift-specific API resources
@@ -664,7 +655,7 @@ Storage endpoint (MinIO service or ODF endpoint)
 {{- define "cost-onprem.storage.endpoint" -}}
 {{- if eq (include "cost-onprem.platform.isOpenShift" .) "true" -}}
 {{- if and .Values.odf .Values.odf.endpoint -}}
-{{- .Values.odf.endpoint | quote -}}
+{{- .Values.odf.endpoint -}}
 {{- else -}}
 {{- /* Dynamic ODF S3 service discovery using NooBaa CRD status */ -}}
 {{- $noobaaList := lookup "noobaa.io/v1alpha1" "NooBaa" "" "" -}}
@@ -688,13 +679,13 @@ Storage endpoint (MinIO service or ODF endpoint)
   {{- end -}}
 {{- end -}}
 {{- if $s3Endpoint -}}
-{{- $s3Endpoint | quote -}}
+{{- $s3Endpoint -}}
 {{- else -}}
 {{- fail "Unable to discover ODF S3 service endpoint. Please ensure OpenShift Data Foundation is installed and specify 'odf.endpoint' in values.yaml" -}}
 {{- end -}}
 {{- end -}}
 {{- else -}}
-{{- printf "%s-minio:%v" (include "cost-onprem.fullname" .) .Values.minio.ports.api | quote -}}
+{{- printf "%s-minio:%v" (include "cost-onprem.fullname" .) .Values.minio.ports.api -}}
 {{- end -}}
 {{- end }}
 

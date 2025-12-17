@@ -95,5 +95,28 @@ spec:
       interval: {{ .Values.monitoring.scrapeInterval }}
       path: /q/metrics
       scheme: http
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "cost-onprem.fullname" . }}-koku-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-onprem.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cost-management-api
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "cost-onprem.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: cost-management-api
+  endpoints:
+    - port: http
+      interval: {{ .Values.monitoring.scrapeInterval }}
+      path: /metrics
+      scheme: http
+      scrapeTimeout: 10s
 {{- end }}
 
