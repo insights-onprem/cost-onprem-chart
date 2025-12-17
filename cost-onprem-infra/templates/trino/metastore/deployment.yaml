@@ -1,0 +1,192 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "cost-mgmt.trino.metastore.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-mgmt.trino.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hive-metastore
+spec:
+  serviceName: {{ include "cost-mgmt.trino.metastore.name" . }}
+  replicas: {{ .Values.trino.metastore.replicas }}
+  selector:
+    matchLabels:
+      {{- include "cost-mgmt.trino.metastore.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cost-mgmt.trino.labels" . | nindent 8 }}
+        app.kubernetes.io/component: hive-metastore
+    spec:
+      serviceAccountName: {{ include "cost-mgmt.trino.serviceAccountName" . }}
+
+      securityContext:
+        {{- include "cost-mgmt.securityContext.pod" . | nindent 8 }}
+        seccompProfile:
+          type: RuntimeDefault
+
+      initContainers:
+      - name: prepare-hive-ca-bundle
+        image: "{{ .Values.trino.metastore.image.repository }}:{{ .Values.trino.metastore.image.tag }}"
+        command: ['bash', '/scripts/convert-ca.sh']
+        volumeMounts:
+          - name: hive-ca-scripts
+            mountPath: /scripts
+            readOnly: true
+          - name: ca-source
+            mountPath: /ca-source
+            readOnly: true
+          - name: hive-ca-certs
+            mountPath: /ca-output
+        securityContext:
+          {{- include "cost-mgmt.securityContext.container" . | nindent 10 }}
+      - name: wait-for-database
+        image: postgres:15-alpine
+        command:
+          - /bin/sh
+          - -c
+          - |
+            until pg_isready -h {{ include "cost-mgmt.trino.metastore.database.host" . }} -p {{ .Values.trino.metastore.database.port }} -U {{ .Values.trino.metastore.database.user }}; do
+              echo "Waiting for metastore database..."
+              sleep 2
+            done
+            echo "Metastore database is ready!"
+        securityContext:
+          {{- include "cost-mgmt.securityContext.container" . | nindent 10 }}
+
+      containers:
+      - name: metastore
+        image: "{{ .Values.trino.metastore.image.repository }}:{{ .Values.trino.metastore.image.tag }}"
+        imagePullPolicy: {{ .Values.trino.metastore.image.pullPolicy }}
+
+        command:
+          - /bin/sh
+          - -c
+          - |
+            # Create writable config directory
+            mkdir -p /tmp/hive-conf
+
+            # Process config template (replace password placeholder)
+            # Use | delimiter and proper escaping for special characters in password
+            sed "s|METASTORE_DB_PASSWORD|${METASTORE_DB_PASSWORD}|g" \
+              /config-template/metastore-site.xml > /tmp/hive-conf/metastore-site.xml
+
+            # Copy to hive-site.xml as well (schematool looks for this)
+            cp /tmp/hive-conf/metastore-site.xml /tmp/hive-conf/hive-site.xml
+
+            # Set Hive to use our config directory
+            export HIVE_CONF_DIR=/tmp/hive-conf
+            export HIVE_HOME=/opt/hive
+
+            # Enable S3 filesystem support by adding AWS libraries to Hive auxiliary jars path
+            # Set both as environment variable (from K8s) and explicitly in shell
+            echo "Enabling S3 filesystem support..."
+            export HIVE_AUX_JARS_PATH=/opt/hadoop/share/hadoop/tools/lib/hadoop-aws-3.1.0.jar:/opt/hadoop/share/hadoop/tools/lib/aws-java-sdk-bundle-1.11.271.jar
+            export HADOOP_CLASSPATH="${HADOOP_CLASSPATH}:${HIVE_AUX_JARS_PATH}"
+            echo "✅ HIVE_AUX_JARS_PATH set to: $HIVE_AUX_JARS_PATH"
+            echo "✅ HADOOP_CLASSPATH includes S3 libraries"
+
+            # Verify config was created
+            echo "Config file check:"
+            ls -la /tmp/hive-conf/metastore-site.xml
+            echo "PostgreSQL driver check:"
+            grep -A 2 "ConnectionDriverName" /tmp/hive-conf/metastore-site.xml
+
+            # Check if schema is already initialized
+            echo "Checking Hive Metastore schema status..."
+            if /opt/hive/bin/schematool -dbType postgres -info 2>&1 | grep -q "schemaTool completed"; then
+              echo "✅ Schema already initialized - skipping initialization"
+            else
+              echo "⚙️  Initializing Hive Metastore schema..."
+              if /opt/hive/bin/schematool -dbType postgres -initSchema; then
+                echo "✅ Schema initialization successful"
+              else
+                echo "❌ Schema initialization failed"
+                exit 1
+              fi
+            fi
+
+            # Start metastore service with Java truststore configuration
+            echo "Starting Hive Metastore service with SSL truststore..."
+            export HADOOP_OPTS="${HADOOP_OPTS} -Djavax.net.ssl.trustStore=/etc/hive/certs/truststore.jks -Djavax.net.ssl.trustStorePassword=changeit"
+            /opt/hive/bin/hive --service metastore
+
+        ports:
+        - name: thrift
+          containerPort: 9083
+          protocol: TCP
+
+        env:
+        - name: METASTORE_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "cost-mgmt.trino.metastore.database.secretName" . }}
+              key: password
+        - name: HIVE_CONF_DIR
+          value: "/tmp/hive-conf"
+        - name: HIVE_AUX_JARS_PATH
+          value: "/opt/hadoop/share/hadoop/tools/lib/hadoop-aws-3.1.0.jar:/opt/hadoop/share/hadoop/tools/lib/aws-java-sdk-bundle-1.11.271.jar"
+        # S3 credentials for metastore-site.xml environment variable substitution
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "cost-mgmt.storage.secretName" . }}
+              key: access-key
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "cost-mgmt.storage.secretName" . }}
+              key: secret-key
+
+        resources:
+          {{- toYaml .Values.trino.metastore.resources | nindent 10 }}
+
+        volumeMounts:
+        - name: config
+          mountPath: /config-template
+        - name: tmp
+          mountPath: /tmp
+        - name: warehouse
+          mountPath: /warehouse
+        - name: hive-ca-certs
+          mountPath: /etc/hive/certs
+          readOnly: true
+
+        securityContext:
+          {{- include "cost-mgmt.securityContext.container" . | nindent 10 }}
+
+      volumes:
+      - name: config
+        configMap:
+          name: {{ include "cost-mgmt.trino.metastore.name" . }}-config
+      - name: tmp
+        emptyDir: {}
+      - name: hive-ca-scripts
+        configMap:
+          name: {{ include "cost-mgmt.fullname" . }}-trino-ca-convert
+          items:
+            - key: convert-ca.sh
+              path: convert-ca.sh
+              mode: 0755
+      - name: ca-source
+        configMap:
+          name: {{ include "cost-mgmt.fullname" . }}-service-ca
+      - name: hive-ca-certs
+        emptyDir: {}
+
+  volumeClaimTemplates:
+  - metadata:
+      name: warehouse
+      labels:
+        {{- include "cost-mgmt.trino.labels" . | nindent 8 }}
+        app.kubernetes.io/component: hive-metastore
+    spec:
+      accessModes:
+        {{- toYaml .Values.trino.metastore.storage.accessModes | nindent 8 }}
+      {{- if .Values.trino.metastore.storage.storageClassName }}
+      storageClassName: {{ .Values.trino.metastore.storage.storageClassName }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.trino.metastore.storage.size }}
+

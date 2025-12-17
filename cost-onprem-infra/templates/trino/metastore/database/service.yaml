@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cost-mgmt.trino.metastore.database.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-mgmt.trino.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hive-metastore-db
+spec:
+  type: ClusterIP
+  clusterIP: None  # Headless service for StatefulSet
+  ports:
+  - name: postgresql
+    port: {{ .Values.trino.metastore.database.port }}
+    targetPort: 5432
+    protocol: TCP
+  selector:
+    {{- include "cost-mgmt.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: hive-metastore-db
+

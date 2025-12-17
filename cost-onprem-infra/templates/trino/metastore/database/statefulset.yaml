@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "cost-mgmt.trino.metastore.database.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-mgmt.trino.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hive-metastore-db
+spec:
+  serviceName: {{ include "cost-mgmt.trino.metastore.database.name" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "cost-mgmt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: hive-metastore-db
+  template:
+    metadata:
+      labels:
+        {{- include "cost-mgmt.trino.labels" . | nindent 8 }}
+        app.kubernetes.io/component: hive-metastore-db
+    spec:
+      serviceAccountName: {{ include "cost-mgmt.trino.serviceAccountName" . }}
+
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+      - name: postgresql
+        image: "{{ .Values.trino.metastore.database.image.repository }}:{{ .Values.trino.metastore.database.image.tag }}"
+        imagePullPolicy: {{ .Values.trino.metastore.database.image.pullPolicy }}
+
+        ports:
+        - name: postgresql
+          containerPort: 5432
+          protocol: TCP
+
+        env:
+        - name: POSTGRESQL_DATABASE
+          value: {{ .Values.trino.metastore.database.env.POSTGRES_DB | quote }}
+        - name: POSTGRESQL_USER
+          value: {{ .Values.trino.metastore.database.env.POSTGRES_USER | quote }}
+        - name: POSTGRESQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "cost-mgmt.trino.metastore.database.secretName" . }}
+              key: password
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+
+        livenessProbe:
+          exec:
+            command:
+              - /bin/sh
+              - -c
+              - pg_isready -U {{ .Values.trino.metastore.database.env.POSTGRES_USER }}
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+
+        readinessProbe:
+          exec:
+            command:
+              - /bin/sh
+              - -c
+              - pg_isready -U {{ .Values.trino.metastore.database.env.POSTGRES_USER }}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        resources:
+          {{- toYaml .Values.trino.metastore.database.resources | nindent 10 }}
+
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+      labels:
+        {{- include "cost-mgmt.trino.labels" . | nindent 8 }}
+    spec:
+      accessModes:
+        {{- toYaml .Values.trino.metastore.database.storage.accessModes | nindent 8 }}
+      {{- if .Values.trino.metastore.database.storage.storageClassName }}
+      storageClassName: {{ .Values.trino.metastore.database.storage.storageClassName }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.trino.metastore.database.storage.size }}
+
