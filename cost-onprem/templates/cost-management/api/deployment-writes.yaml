@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cost-onprem.koku.api.writes.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-onprem.koku.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cost-management-api
+    api-type: writes
+spec:
+  replicas: {{ .Values.costManagement.api.writes.replicas }}
+  selector:
+    matchLabels:
+      {{- include "cost-onprem.koku.api.writes.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cost-onprem.koku.labels" . | nindent 8 }}
+        app.kubernetes.io/component: cost-management-api
+        api-type: writes
+    spec:
+      serviceAccountName: {{ include "cost-onprem.koku.serviceAccountName" . }}
+
+      securityContext:
+        {{- include "cost-onprem.securityContext.pod" . | nindent 8 }}
+
+      initContainers:
+      {{- include "cost-onprem.koku.initContainer.combineCA" . | nindent 6 }}
+
+      containers:
+      - name: koku-api
+        image: "{{ include "cost-onprem.koku.image" . }}"
+        imagePullPolicy: {{ .Values.costManagement.api.image.pullPolicy }}
+
+        # Use image's default entrypoint (./scripts/entrypoint.sh)
+
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+
+        env:
+        {{- include "cost-onprem.koku.commonEnv" . | nindent 8 }}
+        # POD_CPU_LIMIT is required for gunicorn worker calculation
+        # Without it, gunicorn spawns workers based on host CPU count, causing OOM
+        - name: POD_CPU_LIMIT
+          valueFrom:
+            resourceFieldRef:
+              containerName: koku-api
+              resource: limits.cpu
+        {{- range $key, $value := .Values.costManagement.api.writes.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+
+        livenessProbe:
+          {{- toYaml .Values.costManagement.api.writes.livenessProbe | nindent 10 }}
+
+        readinessProbe:
+          {{- toYaml .Values.costManagement.api.writes.readinessProbe | nindent 10 }}
+
+        resources:
+          {{- toYaml .Values.costManagement.api.writes.resources | nindent 10 }}
+
+        volumeMounts:
+        {{- include "cost-onprem.koku.volumeMounts" . | nindent 8 }}
+
+        securityContext:
+          {{- include "cost-onprem.securityContext.container" . | nindent 10 }}
+
+      volumes:
+      {{- include "cost-onprem.koku.volumes" . | nindent 6 }}
+

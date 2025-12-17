@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cost-onprem.koku.api.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-onprem.koku.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cost-management-api
+spec:
+  type: {{ .Values.costManagement.api.service.type }}
+  ports:
+  - name: http
+    port: {{ .Values.costManagement.api.service.port }}
+    targetPort: {{ .Values.costManagement.api.service.targetPort }}
+    protocol: TCP
+  selector:
+    {{- include "cost-onprem.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: cost-management-api
+
