@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cost-mgmt.trino.metastore.name" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-mgmt.trino.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hive-metastore
+data:
+  metastore-site.xml: |
+    <?xml version="1.0"?>
+    <?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+    <configuration>
+      <property>
+        <name>metastore.thrift.uris</name>
+        <value>thrift://{{ include "cost-mgmt.trino.metastore.name" . }}:{{ .Values.trino.metastore.service.port }}</value>
+      </property>
+      <property>
+        <name>metastore.task.threads.always</name>
+        <value>org.apache.hadoop.hive.metastore.events.EventCleanerTask</value>
+      </property>
+      <property>
+        <name>metastore.expression.proxy</name>
+        <value>org.apache.hadoop.hive.metastore.DefaultPartitionExpressionProxy</value>
+      </property>
+      <property>
+        <name>javax.jdo.option.ConnectionDriverName</name>
+        <value>org.postgresql.Driver</value>
+      </property>
+      <property>
+        <name>javax.jdo.option.ConnectionURL</name>
+        <value>{{ include "cost-mgmt.trino.metastore.database.url" . }}</value>
+      </property>
+      <property>
+        <name>javax.jdo.option.ConnectionUserName</name>
+        <value>{{ .Values.trino.metastore.database.user }}</value>
+      </property>
+      <property>
+        <name>javax.jdo.option.ConnectionPassword</name>
+        <value>METASTORE_DB_PASSWORD</value>
+      </property>
+      <property>
+        <name>metastore.warehouse.dir</name>
+        <value>s3a://{{ .Values.s3.bucket | default "cost-data" }}/warehouse</value>
+        <description>Default warehouse location for managed tables (uses S3 for Trino compatibility)</description>
+      </property>
+      <!-- S3 Filesystem Configuration (aligned with SaaS dev/containers/hive-metastore/metastore-site.xml) -->
+      <property>
+        <name>fs.s3a.endpoint</name>
+        <value>{{ include "cost-mgmt.koku.s3.endpoint" . }}</value>
+        <description>S3 endpoint to connect to</description>
+      </property>
+      <property>
+        <name>fs.s3a.access.key</name>
+        <value>${env.AWS_ACCESS_KEY_ID}</value>
+        <description>S3 access key ID</description>
+      </property>
+      <property>
+        <name>fs.s3a.secret.key</name>
+        <value>${env.AWS_SECRET_ACCESS_KEY}</value>
+        <description>S3 secret key</description>
+      </property>
+      <property>
+        <name>fs.s3a.path.style.access</name>
+        <value>true</value>
+        <description>Enable S3 path style access</description>
+      </property>
+      <property>
+        <name>fs.s3a.connection.ssl.enabled</name>
+        <value>false</value>
+        <description>Disable SSL validation for S3 connections (self-signed certs)</description>
+      </property>
+      <property>
+        <name>fs.s3a.impl</name>
+        <value>org.apache.hadoop.fs.s3a.S3AFileSystem</value>
+        <description>S3A filesystem implementation</description>
+      </property>
+      <!-- Also configure s3:// scheme (for Trino native S3) to use S3AFileSystem -->
+      <property>
+        <name>fs.s3.impl</name>
+        <value>org.apache.hadoop.fs.s3a.S3AFileSystem</value>
+        <description>Map s3:// scheme to S3AFileSystem for Trino compatibility</description>
+      </property>
+      <property>
+        <name>datanucleus.autoCreateSchema</name>
+        <value>true</value>
+        <description>Auto-create the schema if it doesn't exist</description>
+      </property>
+      <property>
+        <name>datanucleus.fixedDatastore</name>
+        <value>true</value>
+        <description>Don't try to auto-detect schema changes</description>
+      </property>
+      <property>
+        <name>datanucleus.autoCreateTables</name>
+        <value>true</value>
+        <description>Auto-create tables if they don't exist</description>
+      </property>
+    </configuration>
+

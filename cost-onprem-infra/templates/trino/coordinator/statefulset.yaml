@@ -1,0 +1,145 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "cost-mgmt.trino.coordinator.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-mgmt.trino.labels" . | nindent 4 }}
+    app.kubernetes.io/component: trino-coordinator
+spec:
+  serviceName: {{ include "cost-mgmt.trino.coordinator.name" . }}
+  replicas: {{ .Values.trino.coordinator.replicas }}
+  selector:
+    matchLabels:
+      {{- include "cost-mgmt.trino.coordinator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cost-mgmt.trino.labels" . | nindent 8 }}
+        app.kubernetes.io/component: trino-coordinator
+    spec:
+      serviceAccountName: {{ include "cost-mgmt.trino.serviceAccountName" . }}
+
+      securityContext:
+        {{- include "cost-mgmt.securityContext.pod" . | nindent 8 }}
+
+      initContainers:
+      - name: prepare-trino-ca-bundle
+        image: "{{ .Values.trino.coordinator.image.repository }}:{{ .Values.trino.coordinator.image.tag }}"
+        command: ['bash', '/scripts/convert-ca.sh']
+        volumeMounts:
+          - name: trino-ca-scripts
+            mountPath: /scripts
+            readOnly: true
+          - name: ca-source
+            mountPath: /ca-source
+            readOnly: true
+          - name: trino-ca-certs
+            mountPath: /ca-output
+        securityContext:
+          {{- include "cost-mgmt.securityContext.container" . | nindent 10 }}
+
+      containers:
+      - name: trino
+        image: "{{ .Values.trino.coordinator.image.repository }}:{{ .Values.trino.coordinator.image.tag }}"
+        imagePullPolicy: {{ .Values.trino.coordinator.image.pullPolicy }}
+
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+
+        env:
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "cost-mgmt.storage.secretName" . }}
+              key: access-key
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "cost-mgmt.storage.secretName" . }}
+              key: secret-key
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "cost-mgmt.koku.database.secretName" . }}
+              key: password
+        - name: METASTORE_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "cost-mgmt.trino.metastore.database.secretName" . }}
+              key: password
+        # AWS region required for native S3 support
+        - name: AWS_REGION
+          value: "us-east-1"
+
+        livenessProbe:
+          {{- toYaml .Values.trino.coordinator.livenessProbe | nindent 10 }}
+
+        readinessProbe:
+          {{- toYaml .Values.trino.coordinator.readinessProbe | nindent 10 }}
+
+        resources:
+          {{- toYaml .Values.trino.coordinator.resources | nindent 10 }}
+
+        volumeMounts:
+        - name: config
+          mountPath: /etc/trino/config.properties
+          subPath: config.properties
+        - name: config
+          mountPath: /etc/trino/jvm.config
+          subPath: jvm.config
+        - name: config
+          mountPath: /etc/trino/node.properties
+          subPath: node.properties
+        - name: config
+          mountPath: /etc/trino/log.properties
+          subPath: log.properties
+        - name: config
+          mountPath: /etc/trino/catalog/hive.properties
+          subPath: hive.properties
+        - name: config
+          mountPath: /etc/trino/catalog/postgres.properties
+          subPath: postgres.properties
+        - name: data
+          mountPath: /data/trino
+        - name: trino-ca-certs
+          mountPath: /etc/trino/certs
+          readOnly: true
+
+        securityContext:
+          {{- include "cost-mgmt.securityContext.container" . | nindent 10 }}
+
+      volumes:
+      - name: config
+        configMap:
+          name: {{ include "cost-mgmt.trino.coordinator.name" . }}-config
+      - name: trino-ca-scripts
+        configMap:
+          name: {{ include "cost-mgmt.fullname" . }}-trino-ca-convert
+          items:
+            - key: convert-ca.sh
+              path: convert-ca.sh
+              mode: 0755
+      - name: ca-source
+        configMap:
+          name: {{ include "cost-mgmt.fullname" . }}-service-ca
+      - name: trino-ca-certs
+        emptyDir: {}
+
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+      labels:
+        {{- include "cost-mgmt.trino.labels" . | nindent 8 }}
+    spec:
+      accessModes:
+        {{- toYaml .Values.trino.coordinator.storage.accessModes | nindent 8 }}
+      {{- if .Values.trino.coordinator.storage.storageClassName }}
+      storageClassName: {{ .Values.trino.coordinator.storage.storageClassName }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.trino.coordinator.storage.size }}
+
