@@ -5,7 +5,7 @@
 
 ## Test Objective
 Validate that Cost Management can be deployed from scratch and all data flows work end-to-end after:
-1. Completely deleting the `cost-mgmt` namespace
+1. Completely deleting the `cost-onprem` namespace
 2. Cleaning all S3 storage (ODF/NooBaa)
 3. Following the installation guide
 4. Running the E2E validation script
@@ -15,7 +15,7 @@ Validate that Cost Management can be deployed from scratch and all data flows wo
 ### ✅ Installation: **PASSED**
 
 **Steps Executed:**
-1. Deleted `cost-mgmt` namespace
+1. Deleted `cost-onprem` namespace
 2. Cleaned all S3 storage (`cost-data` bucket): ~444KB of data deleted
 3. Ran `scripts/install-cost-management-complete.sh`
    - Kafka/Strimzi deployed successfully
@@ -29,7 +29,7 @@ Validate that Cost Management can be deployed from scratch and all data flows wo
 
 **Test Command:**
 ```bash
-cd scripts && ./cost-mgmt-ocp-dataflow.sh --force
+cd scripts && ./cost-onprem-ocp-dataflow.sh --force
 ```
 
 **Phase Results:**
@@ -125,7 +125,7 @@ This is **correct behavior** - Cost Management tracks both allocated and unalloc
 **Cluster:**
 - Platform: OpenShift 4.18+
 - Storage: OpenShift Data Foundation (ODF/NooBaa)
-- Namespace: `cost-mgmt`
+- Namespace: `cost-onprem`
 
 **Infrastructure Components:**
 - PostgreSQL: 1 pod (koku database)
