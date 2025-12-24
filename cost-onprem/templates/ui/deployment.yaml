@@ -49,6 +49,7 @@ spec:
         - --provider=keycloak-oidc
         - --oidc-issuer-url={{ include "cost-onprem.keycloak.issuerUrl" . }}
         - --redirect-url=https://{{ include "cost-onprem.fullname" . }}-ui-{{ .Release.Namespace }}.{{ include "cost-onprem.platform.clusterDomain" . }}/oauth2/callback
+        - --backend-logout-url={{ include "cost-onprem.keycloak.issuerUrl" . }}/protocol/openid-connect/logout?id_token_hint={id_token}
         - --tls-cert-file=/etc/tls/private/tls.crt
         - --tls-key-file=/etc/tls/private/tls.key
         - --upstream=http://localhost:{{ .Values.ui.app.port }}
