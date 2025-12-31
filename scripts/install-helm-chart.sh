@@ -968,7 +968,7 @@ run_health_checks() {
             kubectl port-forward -n "$NAMESPACE" pod/"$ingress_pod" 18080:${ingress_internal_port} --request-timeout=90s >/dev/null 2>&1 &
             ingress_pf_pid=$!
             sleep 3
-            if kill -0 "$ingress_pf_pid" 2>/dev/null && curl -f -s --connect-timeout 60 --max-time 90 http://localhost:18080/ready >/dev/null 2>&1; then
+            if kill -0 "$ingress_pf_pid" 2>/dev/null && curl -f -s --connect-timeout 60 --max-time 90 http://localhost:18080/ >/dev/null 2>&1; then
                 echo_success "✓ Ingress API service is healthy (port-forward, internal port ${ingress_internal_port})"
             else
                 echo_error "✗ Ingress API service is not responding (port-forward)"

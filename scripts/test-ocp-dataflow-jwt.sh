@@ -151,7 +151,7 @@ validate_jwt_authentication() {
     echo_info "Testing ingress at: $ingress_url"
 
     # Check if we can reach the service at all
-    local health_check=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$ingress_url/ready" 2>/dev/null || echo "000")
+    local health_check=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$ingress_url/" 2>/dev/null || echo "000")
     if [ "$health_check" = "000" ]; then
         echo_error "Cannot reach ingress service. Skipping JWT validation tests."
         echo_warning "Service may not be ready yet or port-forwarding is required"

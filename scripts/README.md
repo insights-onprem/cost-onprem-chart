@@ -1,13 +1,13 @@
-# ROS Helm Chart Scripts
+# Cost Management On-Premise Helm Chart Scripts
 
-Automation scripts for deploying, configuring, and testing the Resource Optimization Service (ROS) with JWT authentication and TLS certificate handling.
+Automation scripts for deploying, configuring, and testing the Cost Management On-Premise (CoP) with JWT authentication and TLS certificate handling.
 
 ## 📋 Available Scripts
 
 | Script | Purpose | Environment |
 |--------|---------|-------------|
 | `deploy-strimzi.sh` | Deploy Kafka infrastructure | All environments |
-| `install-helm-chart.sh` | Deploy ROS Helm chart | All environments |
+| `install-helm-chart.sh` | Deploy CoP Helm chart | All environments |
 | `deploy-rhbk.sh` | Deploy Red Hat Build of Keycloak | OpenShift |
 | `setup-cost-mgmt-tls.sh` | Configure TLS certificates | OpenShift |
 | `cost-mgmt-ocp-dataflow.sh` | **E2E Cost Management test** | All environments |
@@ -45,7 +45,7 @@ Automation scripts for deploying, configuring, and testing the Resource Optimiza
 # 2. Deploy Kafka infrastructure
 ./deploy-strimzi.sh
 
-# 3. Deploy ROS with JWT authentication
+# 3. Deploy CoP with JWT authentication
 export JWT_AUTH_ENABLED=true
 ./install-helm-chart.sh
 
@@ -64,7 +64,7 @@ export JWT_AUTH_ENABLED=true
 # 2. Deploy Kafka infrastructure
 ./deploy-strimzi.sh
 
-# 3. Deploy ROS from local chart
+# 3. Deploy CoP from local chart
 export USE_LOCAL_CHART=true
 ./install-helm-chart.sh
 
@@ -75,7 +75,7 @@ export USE_LOCAL_CHART=true
 ## 📖 Script Documentation
 
 ### `install-helm-chart.sh`
-Deploy or upgrade the ROS Helm chart with automatic configuration.
+Deploy or upgrade the CoP Helm chart with automatic configuration.
 
 **Key features:**
 - Installs from GitHub releases or local chart
@@ -101,7 +101,7 @@ export USE_LOCAL_CHART=true
 ./install-helm-chart.sh
 
 # Custom namespace
-export NAMESPACE=ros-production
+export NAMESPACE=cost-onprem
 ./install-helm-chart.sh
 
 # Check deployment status
@@ -121,7 +121,7 @@ export NAMESPACE=ros-production
 ---
 
 ### `deploy-rhbk.sh`
-Deploy Red Hat Build of Keycloak (RHBK) with ROS integration.
+Deploy Red Hat Build of Keycloak (RHBK) with CoP integration.
 
 **What it creates:**
 - RHBK Operator in target namespace
@@ -315,14 +315,14 @@ End-to-end test of JWT authentication flow with sample cost data.
 ./test-ocp-dataflow-jwt.sh
 
 # Custom namespace
-./test-ocp-dataflow-jwt.sh --namespace ros-production
+./test-ocp-dataflow-jwt.sh --namespace cost-onprem
 
 # Verbose output for troubleshooting
 ./test-ocp-dataflow-jwt.sh --verbose
 ```
 
 **Requirements:**
-- JWT authentication enabled in ROS deployment
+- JWT authentication enabled in CoP deployment
 - Red Hat Build of Keycloak (RHBK) with `cost-management-operator` client
 
 **Best for:** CI/CD pipelines, complete E2E validation including recommendations
@@ -363,7 +363,7 @@ Query Kruize database for experiments and recommendations.
 ./query-kruize.sh --schema
 
 # Custom namespace
-./query-kruize.sh --namespace ros-production --experiments
+./query-kruize.sh --namespace cost-onprem --experiments
 ```
 
 **Requirements:**
@@ -428,7 +428,7 @@ Create KIND (Kubernetes IN Docker) cluster for testing and development.
 ./deploy-kind.sh
 
 # Custom cluster name
-export KIND_CLUSTER_NAME=ros-test
+export KIND_CLUSTER_NAME=cop-test
 ./deploy-kind.sh
 
 # Use Docker instead of Podman
@@ -449,7 +449,7 @@ Clean up KIND clusters and related resources.
 ./cleanup-kind-artifacts.sh
 
 # Cleanup custom cluster
-export KIND_CLUSTER_NAME=ros-test
+export KIND_CLUSTER_NAME=cop-test
 ./cleanup-kind-artifacts.sh
 ```
 
@@ -530,6 +530,6 @@ All scripts use color-coded output:
 ---
 
 **Last Updated**: October 2025
-**Maintainer**: ROS Engineering Team
+**Maintainer**: CoP Engineering Team
 **Supported Platforms**: OpenShift 4.18+ (Kubernetes 1.31+), KIND (CI/CD)
 **Tested With**: OpenShift 4.18.24

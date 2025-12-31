@@ -13,7 +13,7 @@ spec:
   ports:
     {{- if eq (include "cost-onprem.jwt.shouldEnable" .) "true" }}
     # When JWT auth is enabled, expose Envoy proxy port for external traffic
-    - port: {{ .Values.ingress.port }}
+    - port: {{ .Values.ingress.server.port }}
       targetPort: http-proxy  # Route to Envoy sidecar
       protocol: TCP
       name: http
@@ -24,7 +24,7 @@ spec:
       name: envoy-admin
     {{- else }}
     # When JWT auth is disabled, expose ingress directly
-    - port: {{ .Values.ingress.port }}
+    - port: {{ .Values.ingress.server.port }}
       targetPort: http
       protocol: TCP
       name: http
