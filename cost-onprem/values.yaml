@@ -767,66 +767,55 @@ sourcesApi:
 # -----------------------------------------------------------------------------
 # Ingress Service (Shared entry point for uploads and routing)
 # -----------------------------------------------------------------------------
+# Uses insights-ingress-go which requires INGRESS_* prefixed environment variables
 ingress:
   serviceAccount:
     create: true
     name: insights-ros-ingress
 
   image:
-    repository: quay.io/insights-onprem/insights-ros-ingress
+    repository: quay.io/insights-onprem/insights-ingress-go
     tag: "latest"
     pullPolicy: Always
-
-  port: 8080
 
   # Server configuration
   server:
     port: 8080
-    readTimeout: 30
-    writeTimeout: 30
-    idleTimeout: 120
     debug: false
 
   # Upload handling
   upload:
-    maxUploadSize: 104857600  # 100MB
-    maxMemory: 33554432       # 32MB
-    tempDir: "/tmp"
-    allowedTypes:
-      - "application/vnd.redhat.hccm.upload"
-    requireAuth: true  # Overridden by platform detection
+    maxUploadSize: 104857600  # 100MB (INGRESS_DEFAULTMAXSIZE)
+    maxMemory: 33554432       # 32MB (INGRESS_MAXUPLOADMEM)
+    # Valid upload types - comma-separated list for INGRESS_VALID_UPLOAD_TYPES
+    # This is REQUIRED by insights-ingress-go
+    validTypes: "hccm"
 
-  # Storage backend configuration
+  # Storage backend configuration (MinIO/S3)
   storage:
     bucket: "ros-data"
     useSSL: false      # Overridden to true on OpenShift (ODF)
-    urlExpiration: 172800  # 48 hours
-    pathPrefix: "ros"
 
   # Kafka producer configuration
   kafka:
-    topic: "hccm.ros.events"
-    clientId: "insights-ros-ingress"
-    batchSize: 16384
-    retries: 3
+    topic: "hccm.ros.events"  # INGRESS_KAFKAANNOUNCETOPIC
+    groupId: "ingress"        # INGRESS_KAFKAGROUPID
 
   # Authentication (OpenShift only)
   # Note: Authentication is only available on OpenShift with Keycloak (RHBK).
   # On vanilla Kubernetes/KIND, authentication is automatically disabled.
+  # When JWT is enabled via Envoy sidecar, INGRESS_AUTH is set to false
+  # because the backend trusts the X-Rh-Identity header injected by Envoy.
   auth:
     enabled: true      # Auto-disabled on Kubernetes
 
   # Logging
   logging:
-    level: "info"
-    format: "json"
-    output: "stdout"
+    level: "INFO"      # INGRESS_LOGLEVEL (uppercase)
 
   # Metrics
   metrics:
-    enabled: true
-    path: "/metrics"
-    port: 8080
+    port: 9090         # INGRESS_METRICSPORT (separate from web port)
 
 # -----------------------------------------------------------------------------
 # Shared Infrastructure - Database (for ROS and Kruize only)
