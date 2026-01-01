@@ -601,29 +601,6 @@ Validate Celery Beat replicas (must be exactly 1)
 {{- end -}}
 
 {{/*
-=============================================================================
-Security Context Helpers
-=============================================================================
-*/}}
-
-{{/*
-Pod-level security context
-*/}}
-{{- define "cost-onprem.securityContext.pod" -}}
-runAsNonRoot: true
-{{- end -}}
-
-{{/*
-Container-level security context
-*/}}
-{{- define "cost-onprem.securityContext.container" -}}
-allowPrivilegeEscalation: false
-capabilities:
-  drop:
-  - ALL
-{{- end -}}
-
-{{/*
 Standard volumeMounts for Koku containers
 Includes tmp mount and combined CA bundle when on OpenShift
 */}}
