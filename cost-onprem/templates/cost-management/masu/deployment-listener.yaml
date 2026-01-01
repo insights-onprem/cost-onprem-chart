@@ -88,14 +88,6 @@ spec:
               containerName: listener
               resource: limits.cpu
 
-        # Override Kafka host/port for cross-namespace communication (AFTER commonEnv)
-        {{- if .Values.costManagement.kafka.enabled }}
-        - name: INSIGHTS_KAFKA_HOST
-          value: {{ .Values.costManagement.kafka.host | quote }}
-        - name: INSIGHTS_KAFKA_PORT
-          value: {{ .Values.costManagement.kafka.port | quote }}
-        {{- end }}
-
         {{- range $key, $value := .Values.costManagement.listener.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}
