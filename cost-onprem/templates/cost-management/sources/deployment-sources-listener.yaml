@@ -82,14 +82,6 @@ spec:
         # Common Koku environment variables (DB, Redis, S3, Trino, Kafka, etc.)
         {{- include "cost-onprem.koku.commonEnv" . | nindent 8 }}
 
-        # Override Kafka host/port for cross-namespace communication (AFTER commonEnv)
-        {{- if .Values.costManagement.kafka.enabled }}
-        - name: INSIGHTS_KAFKA_HOST
-          value: {{ .Values.costManagement.kafka.host | quote }}
-        - name: INSIGHTS_KAFKA_PORT
-          value: {{ .Values.costManagement.kafka.port | quote }}
-        {{- end }}
-
         volumeMounts:
         {{- include "cost-onprem.koku.volumeMounts" . | nindent 8 }}
 

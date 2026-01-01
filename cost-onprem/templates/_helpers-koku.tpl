@@ -208,9 +208,10 @@ Kafka Connection Helpers (uses shared Kafka from infrastructure)
 {{/*
 Kafka hostname (without port)
 INSIGHTS_KAFKA_HOST - Koku's EnvConfigurator concatenates this with port
+Uses configurable value from .Values.costManagement.kafka.host
 */}}
 {{- define "cost-onprem.koku.kafka.host" -}}
-{{- printf "kafka" -}}
+{{- .Values.costManagement.kafka.host | default "kafka" -}}
 {{- end -}}
 
 {{/*
@@ -222,9 +223,10 @@ Kafka bootstrap servers (uses shared Kafka from PR #27)
 
 {{/*
 Kafka port
+Uses configurable value from .Values.costManagement.kafka.port
 */}}
 {{- define "cost-onprem.koku.kafka.port" -}}
-{{- 9092 -}}
+{{- .Values.costManagement.kafka.port | default "9092" -}}
 {{- end -}}
 
 {{/*
