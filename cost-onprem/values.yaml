@@ -793,7 +793,7 @@ ingress:
 
   # Storage backend configuration (MinIO/S3)
   storage:
-    bucket: "ros-data"
+    bucket: "koku-bucket"
     useSSL: false      # Overridden to true on OpenShift (ODF)
 
   # Kafka producer configuration
