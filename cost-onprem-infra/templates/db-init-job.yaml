@@ -1,0 +1,123 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-mgmt-infra.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db-init
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "cost-mgmt-infra.labels" . | nindent 8 }}
+        app.kubernetes.io/component: db-init
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "cost-mgmt-infra.serviceAccountName" . }}
+      containers:
+      - name: db-init
+        image: bitnami/kubectl:latest
+        command:
+        - bash
+        - -c
+        - |
+          set -ex
+
+          echo "=== Database Initialization Job ==="
+          echo "Namespace: {{ .Release.Namespace }}"
+          echo "Timestamp: $(date)"
+          echo ""
+
+          echo "=== Waiting for PostgreSQL pod to be ready ==="
+          if ! kubectl wait --for=condition=ready pod/postgres-0 -n {{ .Release.Namespace }} --timeout=300s; then
+            echo "ERROR: PostgreSQL pod not ready after 300s"
+            kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/component=postgresql
+            kubectl describe pod postgres-0 -n {{ .Release.Namespace }} || true
+            exit 1
+          fi
+
+          echo "=== Database Initialization ==="
+
+          # Get database credentials
+          KOKU_DB_NAME=$(kubectl get secret {{ include "cost-mgmt-infra.postgresql.secretName" . }} -n {{ .Release.Namespace }} -o jsonpath='{.data.database}' | base64 -d)
+          KOKU_DB_USER=$(kubectl get secret {{ include "cost-mgmt-infra.postgresql.secretName" . }} -n {{ .Release.Namespace }} -o jsonpath='{.data.username}' | base64 -d)
+          KOKU_DB_PASSWORD=$(kubectl get secret {{ include "cost-mgmt-infra.postgresql.secretName" . }} -n {{ .Release.Namespace }} -o jsonpath='{.data.password}' | base64 -d)
+          SOURCES_DB_USER=$(kubectl get secret {{ include "cost-mgmt-infra.postgresql.secretName" . }} -n {{ .Release.Namespace }} -o jsonpath='{.data.sources-username}' | base64 -d)
+          SOURCES_DB_PASSWORD=$(kubectl get secret {{ include "cost-mgmt-infra.postgresql.secretName" . }} -n {{ .Release.Namespace }} -o jsonpath='{.data.sources-password}' | base64 -d)
+
+          # Note: With quay.io/insights-onprem/postgresql image, POSTGRES_USER is the superuser
+          # The koku user is created as superuser by the container initialization
+
+          # Create sources user (shares koku database with koku user)
+          # Sources API provisions tables that Koku uses
+          echo "Creating sources user with access to koku database..."
+          SOURCES_USER_EXISTS=$(kubectl exec postgres-0 -n {{ .Release.Namespace }} -- \
+            psql -U "$KOKU_DB_USER" -d "$KOKU_DB_NAME" -tAc "SELECT 1 FROM pg_roles WHERE rolname='$SOURCES_DB_USER';" | tr -d '[:space:]')
+
+          if [ "$SOURCES_USER_EXISTS" = "1" ]; then
+            echo "Sources user already exists, updating password..."
+            kubectl exec postgres-0 -n {{ .Release.Namespace }} -- \
+              psql -U "$KOKU_DB_USER" -d "$KOKU_DB_NAME" -c "ALTER USER $SOURCES_DB_USER WITH PASSWORD '$SOURCES_DB_PASSWORD';"
+          else
+            echo "Creating sources user..."
+            kubectl exec postgres-0 -n {{ .Release.Namespace }} -- \
+              psql -U "$KOKU_DB_USER" -d "$KOKU_DB_NAME" -c "CREATE USER $SOURCES_DB_USER WITH PASSWORD '$SOURCES_DB_PASSWORD';"
+          fi
+
+          # Grant sources user full access to koku database
+          echo "Granting sources user access to koku database..."
+          kubectl exec postgres-0 -n {{ .Release.Namespace }} -- \
+            psql -U "$KOKU_DB_USER" -d "$KOKU_DB_NAME" -c "GRANT ALL PRIVILEGES ON DATABASE $KOKU_DB_NAME TO $SOURCES_DB_USER;"
+
+          # Grant sources user access to public schema and future objects
+          kubectl exec postgres-0 -n {{ .Release.Namespace }} -- \
+            psql -U "$KOKU_DB_USER" -d "$KOKU_DB_NAME" -c "GRANT ALL ON SCHEMA public TO $SOURCES_DB_USER;"
+          kubectl exec postgres-0 -n {{ .Release.Namespace }} -- \
+            psql -U "$KOKU_DB_USER" -d "$KOKU_DB_NAME" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO $SOURCES_DB_USER;"
+          kubectl exec postgres-0 -n {{ .Release.Namespace }} -- \
+            psql -U "$KOKU_DB_USER" -d "$KOKU_DB_NAME" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO $SOURCES_DB_USER;"
+
+          # Create pg_stat_statements extension
+          echo "Creating pg_stat_statements extension on database: $KOKU_DB_NAME..."
+          kubectl exec postgres-0 -n {{ .Release.Namespace }} -- \
+            psql -U "$KOKU_DB_USER" -d "$KOKU_DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;" || true
+
+          # Create hive role
+          echo "Creating hive role..."
+          ROLE_EXISTS=$(kubectl exec postgres-0 -n {{ .Release.Namespace }} -- \
+            psql -U "$KOKU_DB_USER" -d "$KOKU_DB_NAME" -tAc "SELECT 1 FROM pg_roles WHERE rolname='hive';" | tr -d '[:space:]')
+
+          if [ "$ROLE_EXISTS" = "1" ]; then
+            echo "Hive role already exists"
+          else
+            kubectl exec postgres-0 -n {{ .Release.Namespace }} -- \
+              psql -U "$KOKU_DB_USER" -d "$KOKU_DB_NAME" -c "CREATE ROLE hive WITH LOGIN;" || echo "Hive role may already exist"
+          fi
+
+          # Create hive database
+          echo "Creating hive database..."
+          DB_EXISTS=$(kubectl exec postgres-0 -n {{ .Release.Namespace }} -- \
+            psql -U "$KOKU_DB_USER" -d "$KOKU_DB_NAME" -tAc "SELECT 1 FROM pg_database WHERE datname='hive';" | tr -d '[:space:]')
+
+          if [ "$DB_EXISTS" = "1" ]; then
+            echo "Hive database already exists"
+          else
+            kubectl exec postgres-0 -n {{ .Release.Namespace }} -- \
+              psql -U "$KOKU_DB_USER" -d "$KOKU_DB_NAME" -c "CREATE DATABASE hive OWNER hive;" || echo "Hive database may already exist"
+          fi
+
+          echo "✅ Database initialization completed"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+

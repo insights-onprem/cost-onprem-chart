@@ -1,9 +1,19 @@
 {{- $isOpenShift := eq (include "cost-onprem.platform.isOpenShift" .) "true" }}
-{{- if not $isOpenShift }}
+{{- $storageEndpoint := include "cost-onprem.storage.endpoint" . }}
+{{- $storagePort := include "cost-onprem.storage.port" . }}
+{{- $useSSL := eq (include "cost-onprem.storage.useSSL" .) "true" }}
+{{- $protocol := ternary "https" "http" $useSSL }}
+{{- /* MinIO endpoint already includes port, ODF does not */ -}}
+{{- $s3Url := "" }}
+{{- if $isOpenShift }}
+{{- $s3Url = printf "%s://%s:%s" $protocol $storageEndpoint $storagePort }}
+{{- else }}
+{{- $s3Url = printf "%s://%s" $protocol $storageEndpoint }}
+{{- end }}
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "cost-onprem.fullname" . }}-minio-buckets
+  name: {{ include "cost-onprem.fullname" . }}-s3-buckets
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "cost-onprem.labels" . | nindent 4 }}
@@ -21,18 +31,27 @@ spec:
     spec:
       restartPolicy: OnFailure
       securityContext:
-        {{- if eq (include "cost-onprem.platform.isOpenShift" .) "false" }}
-        runAsNonRoot: false
+        {{- if $isOpenShift }}
+        {{- include "cost-onprem.securityContext.pod.nonRoot" . | nindent 8 }}
         {{- else }}
-        {{- include "cost-onprem.securityContext.nonRoot" . | nindent 8 }}
+        runAsNonRoot: false
         {{- end }}
       initContainers:
-        - name: wait-for-minio
+        - name: wait-for-s3
           image: "{{ .Values.global.initContainers.waitFor.repository }}:{{ .Values.global.initContainers.waitFor.tag }}"
           securityContext:
             {{- include "cost-onprem.securityContext.nonRoot" . | nindent 12 }}
           command: ['bash', '-c']
           args:
+            {{- if $isOpenShift }}
+            - |
+              echo "Waiting for S3 storage at {{ $storageEndpoint }}:{{ $storagePort }}..."
+              until timeout 3 bash -c "echo > /dev/tcp/{{ $storageEndpoint }}/{{ $storagePort }}" 2>/dev/null; do
+                echo "S3 storage not ready yet, retrying in 5 seconds..."
+                sleep 5
+              done
+              echo "S3 storage is ready"
+            {{- else }}
             - |
               echo "Waiting for MinIO at {{ include "cost-onprem.fullname" . }}-minio:{{ .Values.minio.ports.api }}..."
               until timeout 3 bash -c "echo > /dev/tcp/{{ include "cost-onprem.fullname" . }}-minio/{{ .Values.minio.ports.api }}" 2>/dev/null; do
@@ -40,8 +59,9 @@ spec:
                 sleep 5
               done
               echo "MinIO is ready"
+            {{- end }}
       containers:
-        - name: minio-buckets
+        - name: create-buckets
           image: "{{ .Values.global.initContainers.minioMc.repository }}:{{ .Values.global.initContainers.minioMc.tag }}"
           imagePullPolicy: {{ .Values.global.pullPolicy }}
           securityContext:
@@ -49,7 +69,7 @@ spec:
             capabilities:
               drop:
                 - ALL
-            {{- if eq (include "cost-onprem.platform.isOpenShift" .) "false" }}
+            {{- if not $isOpenShift }}
             runAsUser: 1001
             {{- end }}
             {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
@@ -60,36 +80,58 @@ spec:
             - name: mc-config
               mountPath: /.mc
           env:
-            - name: MINIO_ACCESS_KEY
+            - name: S3_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "cost-onprem.fullname" . }}-storage-credentials
                   key: access-key
-            - name: MINIO_SECRET_KEY
+            - name: S3_SECRET_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "cost-onprem.fullname" . }}-storage-credentials
                   key: secret-key
+            - name: S3_URL
+              value: "{{ $s3Url }}"
           command: ["/bin/sh", "-c"]
           args:
             - |
-              echo 'Waiting for MinIO to be ready...'
-              for i in {1..10}; do
-                if /usr/bin/mc alias set myminio http://{{ include "cost-onprem.fullname" . }}-minio:{{ .Values.minio.ports.api }} ${MINIO_ACCESS_KEY} ${MINIO_SECRET_KEY} >/dev/null 2>&1; then
-                  echo 'MinIO is ready!'
+              echo "Configuring S3 storage at ${S3_URL}..."
+              
+              # Set up mc alias with appropriate SSL handling
+              {{- if $useSSL }}
+              # TODO: Remove --insecure flag in production environments with proper certificates.
+              # Using --insecure for self-signed certificates (common in ODF/OpenShift dev environments)
+              MC_INSECURE="--insecure"
+              {{- else }}
+              MC_INSECURE=""
+              {{- end }}
+              
+              # Wait for S3 to be ready and set alias
+              for i in $(seq 1 10); do
+                if /usr/bin/mc ${MC_INSECURE} alias set s3storage ${S3_URL} ${S3_ACCESS_KEY} ${S3_SECRET_KEY} >/dev/null 2>&1; then
+                  echo "S3 storage is ready!"
                   break
                 else
-                  echo "MinIO not ready, waiting... (attempt $i/10)"
+                  echo "S3 storage not ready, waiting... (attempt $i/10)"
                   sleep 3
                 fi
               done
-              /usr/bin/mc alias set myminio http://{{ include "cost-onprem.fullname" . }}-minio:{{ .Values.minio.ports.api }} ${MINIO_ACCESS_KEY} ${MINIO_SECRET_KEY} || exit 1
+              
+              # Final alias setup (fail if not working)
+              /usr/bin/mc ${MC_INSECURE} alias set s3storage ${S3_URL} ${S3_ACCESS_KEY} ${S3_SECRET_KEY} || exit 1
+              
+              # Create buckets
               {{- range .Values.minio.buckets }}
-              /usr/bin/mc mb --ignore-existing myminio/{{ . }}
-              /usr/bin/mc anonymous set public myminio/{{ . }}
+              echo "Creating bucket: {{ . }}"
+              /usr/bin/mc ${MC_INSECURE} mb --ignore-existing s3storage/{{ . }}
+              {{- if not $isOpenShift }}
+              # Set public access for MinIO (not needed for ODF which uses IAM policies)
+              /usr/bin/mc ${MC_INSECURE} anonymous set public s3storage/{{ . }}
               {{- end }}
-              echo 'MinIO bucket setup completed successfully'
+              {{- end }}
+              
+              echo "S3 bucket setup completed successfully"
+              /usr/bin/mc ${MC_INSECURE} ls s3storage/
       volumes:
         - name: mc-config
           emptyDir: {}
-{{- end }}

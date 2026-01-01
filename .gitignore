@@ -1,0 +1,29 @@
+*.pyc
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+cost-mgmt-venv/
+*-venv/
+
+# PR triage reports (ephemeral analysis files)
+PR*-TRIAGE-*.md
+PR*-QUICK-SUMMARY.md
+PR*-COMMENTS-*.md
+
+# Test logs
+test-logs/
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*~
+.DS_Store
+*.csv

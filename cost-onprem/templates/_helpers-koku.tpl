@@ -1,0 +1,661 @@
+{{/*
+Koku-specific helper functions for cost-management-onprem chart
+These helpers extend the base helpers from _helpers.tpl (PR #27)
+*/}}
+
+{{/*
+=============================================================================
+Koku Service Names
+=============================================================================
+*/}}
+
+{{/*
+Koku API service name
+*/}}
+{{- define "cost-onprem.koku.api.name" -}}
+{{- printf "%s-koku-api" (include "cost-onprem.fullname" .) -}}
+{{- end -}}
+
+{{/*
+Koku API reads deployment name
+*/}}
+{{- define "cost-onprem.koku.api.reads.name" -}}
+{{- printf "%s-koku-api-reads" (include "cost-onprem.fullname" .) -}}
+{{- end -}}
+
+{{/*
+Koku API writes deployment name
+*/}}
+{{- define "cost-onprem.koku.api.writes.name" -}}
+{{- printf "%s-koku-api-writes" (include "cost-onprem.fullname" .) -}}
+{{- end -}}
+
+{{/*
+Koku Celery Beat name
+*/}}
+{{- define "cost-onprem.koku.celery.beat.name" -}}
+{{- printf "%s-celery-beat" (include "cost-onprem.fullname" .) -}}
+{{- end -}}
+
+{{/*
+Koku Celery worker name (takes worker type as argument)
+Usage: {{ include "cost-onprem.koku.celery.worker.name" (dict "context" . "type" "default") }}
+*/}}
+{{- define "cost-onprem.koku.celery.worker.name" -}}
+{{- $context := .context -}}
+{{- $type := .type -}}
+{{- printf "%s-celery-worker-%s" (include "cost-onprem.fullname" $context) $type -}}
+{{- end -}}
+
+{{/*
+Koku database name
+*/}}
+{{- define "cost-onprem.koku.database.name" -}}
+{{- .Values.costManagement.database.name | default "koku" -}}
+{{- end -}}
+
+{{/*
+=============================================================================
+Trino Service Names
+=============================================================================
+*/}}
+
+{{/*
+Trino coordinator service name
+*/}}
+{{- define "cost-onprem.trino.coordinator.name" -}}
+{{- printf "%s-trino-coordinator" (include "cost-onprem.fullname" .) -}}
+{{- end -}}
+
+{{/*
+Trino worker name
+*/}}
+{{- define "cost-onprem.trino.worker.name" -}}
+{{- printf "%s-trino-worker" (include "cost-onprem.fullname" .) -}}
+{{- end -}}
+
+{{/*
+Hive metastore service name
+*/}}
+{{- define "cost-onprem.trino.metastore.name" -}}
+{{- printf "%s-hive-metastore" (include "cost-onprem.fullname" .) -}}
+{{- end -}}
+
+{{/*
+Hive metastore database name
+*/}}
+{{- define "cost-onprem.trino.metastore.database.name" -}}
+{{- printf "%s-hive-metastore-db" (include "cost-onprem.fullname" .) -}}
+{{- end -}}
+
+{{/*
+=============================================================================
+Database Connection Helpers
+=============================================================================
+*/}}
+
+
+{{/*
+Koku database host
+
+Returns the PostgreSQL service hostname. Uses the explicit host from values.yaml,
+or defaults to "postgres" (the service name from the infrastructure chart).
+*/}}
+{{- define "cost-onprem.koku.database.host" -}}
+{{- .Values.costManagement.database.host | default "postgres" -}}
+{{- end -}}
+
+{{/*
+Koku database port
+*/}}
+{{- define "cost-onprem.koku.database.port" -}}
+{{- .Values.costManagement.database.port | default 5432 -}}
+{{- end -}}
+
+{{/*
+Koku database name
+*/}}
+{{- define "cost-onprem.koku.database.dbname" -}}
+{{- .Values.costManagement.database.name | default "koku" -}}
+{{- end -}}
+
+{{/*
+Koku database user
+*/}}
+{{- define "cost-onprem.koku.database.user" -}}
+{{- .Values.costManagement.database.user | default "koku" -}}
+{{- end -}}
+
+{{/*
+Koku database connection URL (for Django)
+*/}}
+{{- define "cost-onprem.koku.database.url" -}}
+{{- printf "postgresql://%s:%s@%s:%v/%s"
+    (include "cost-onprem.koku.database.user" .)
+    "$(DATABASE_PASSWORD)"
+    (include "cost-onprem.koku.database.host" .)
+    (include "cost-onprem.koku.database.port" .)
+    (include "cost-onprem.koku.database.dbname" .)
+-}}
+{{- end -}}
+
+{{/*
+Trino metastore database host
+*/}}
+{{- define "cost-onprem.trino.metastore.database.host" -}}
+{{- if .Values.trino.metastore.database.host -}}
+  {{- .Values.trino.metastore.database.host -}}
+{{- else -}}
+  {{- include "cost-onprem.trino.metastore.database.name" . -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Trino metastore database connection URL (JDBC)
+*/}}
+{{- define "cost-onprem.trino.metastore.database.url" -}}
+{{- printf "jdbc:postgresql://%s:%v/%s"
+    (include "cost-onprem.trino.metastore.database.host" .)
+    (.Values.trino.metastore.database.port | default 5432)
+    (.Values.trino.metastore.database.name | default "metastore")
+-}}
+{{- end -}}
+
+{{/*
+=============================================================================
+Redis Connection Helpers (uses shared Redis from infrastructure)
+=============================================================================
+*/}}
+
+{{/*
+Redis host (uses shared Redis service from PR #27 infrastructure)
+*/}}
+{{- define "cost-onprem.koku.redis.host" -}}
+{{- /* Koku uses infrastructure chart's Redis, not cost-onprem's cache */ -}}
+redis
+{{- end -}}
+
+{{/*
+Redis port
+*/}}
+{{- define "cost-onprem.koku.redis.port" -}}
+6379
+{{- end -}}
+
+{{/*
+Storage credentials secret name for S3/ODF access
+*/}}
+{{- define "cost-onprem.storage.secretName" -}}
+{{- printf "%s-storage-credentials" (include "cost-onprem.fullname" .) -}}
+{{- end -}}
+
+{{/*
+Redis URL for Koku (uses DB 1)
+*/}}
+{{- define "cost-onprem.koku.redis.url" -}}
+{{- printf "redis://%s:%v/1"
+    (include "cost-onprem.koku.redis.host" .)
+    (include "cost-onprem.koku.redis.port" .)
+-}}
+{{- end -}}
+
+{{/*
+=============================================================================
+Kafka Connection Helpers (uses shared Kafka from infrastructure)
+=============================================================================
+*/}}
+
+{{/*
+Kafka hostname (without port)
+INSIGHTS_KAFKA_HOST - Koku's EnvConfigurator concatenates this with port
+Uses configurable value from .Values.costManagement.kafka.host
+*/}}
+{{- define "cost-onprem.koku.kafka.host" -}}
+{{- .Values.costManagement.kafka.host | default "kafka" -}}
+{{- end -}}
+
+{{/*
+Kafka bootstrap servers (uses shared Kafka from PR #27)
+*/}}
+{{- define "cost-onprem.koku.kafka.bootstrapServers" -}}
+{{- include "cost-onprem.kafka.bootstrapServers" . -}}
+{{- end -}}
+
+{{/*
+Kafka port
+Uses configurable value from .Values.costManagement.kafka.port
+*/}}
+{{- define "cost-onprem.koku.kafka.port" -}}
+{{- .Values.costManagement.kafka.port | default "9092" -}}
+{{- end -}}
+
+{{/*
+=============================================================================
+MinIO/S3 Connection Helpers (uses shared storage from infrastructure)
+=============================================================================
+*/}}
+
+{{/*
+MinIO endpoint (uses shared MinIO from PR #27)
+*/}}
+{{- define "cost-onprem.koku.s3.endpoint" -}}
+{{- include "cost-onprem.storage.endpoint" . -}}
+{{- end -}}
+
+{{/*
+MinIO bucket name (DEPRECATED - use costManagement.storage.bucketName instead)
+This helper is kept for backwards compatibility but should not be used
+*/}}
+{{- define "cost-onprem.koku.s3.bucket" -}}
+{{- required "costManagement.storage.bucketName is required" .Values.costManagement.storage.bucketName -}}
+{{- end -}}
+
+{{/*
+MinIO ROS bucket name
+*/}}
+{{- define "cost-onprem.koku.s3.rosBucket" -}}
+{{- .Values.costManagement.api.reads.env.REQUESTED_ROS_BUCKET | default "ros-report" -}}
+{{- end -}}
+
+{{/*
+=============================================================================
+Trino Connection Helpers
+=============================================================================
+*/}}
+
+{{/*
+Trino coordinator host
+*/}}
+{{- define "cost-onprem.koku.trino.host" -}}
+{{- if .Values.trino.coordinator.host -}}
+  {{- .Values.trino.coordinator.host -}}
+{{- else -}}
+{{- include "cost-onprem.trino.coordinator.name" . -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Trino coordinator port
+*/}}
+{{- define "cost-onprem.koku.trino.port" -}}
+{{- .Values.trino.coordinator.service.port | default 8080 -}}
+{{- end -}}
+
+{{/*
+Hive metastore URI
+*/}}
+{{- define "cost-onprem.trino.metastore.uri" -}}
+{{- printf "thrift://%s:%v"
+    (include "cost-onprem.trino.metastore.name" .)
+    (.Values.trino.metastore.service.port | default 9083)
+-}}
+{{- end -}}
+
+{{/*
+=============================================================================
+Secret Names
+=============================================================================
+*/}}
+
+{{/*
+Django secret name
+*/}}
+{{- define "cost-onprem.koku.django.secretName" -}}
+{{- printf "%s-django-secret" (include "cost-onprem.fullname" .) -}}
+{{- end -}}
+
+{{/*
+Koku database credentials secret name
+*/}}
+{{- define "cost-onprem.koku.database.secretName" -}}
+{{- if .Values.costManagement.database.secretName -}}
+{{- .Values.costManagement.database.secretName -}}
+{{- else -}}
+{{- printf "%s-db-credentials" (include "cost-onprem.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Trino metastore database credentials secret name
+*/}}
+{{- define "cost-onprem.trino.metastore.database.secretName" -}}
+{{- printf "%s-metastore-db-credentials" (include "cost-onprem.fullname" .) -}}
+{{- end -}}
+
+{{/*
+=============================================================================
+Labels
+=============================================================================
+*/}}
+
+{{/*
+Common labels for Koku resources
+Note: We don't override part-of here to keep consistency with selectorLabels
+*/}}
+{{- define "cost-onprem.koku.labels" -}}
+{{ include "cost-onprem.labels" . }}
+app.kubernetes.io/component: cost-management
+{{- end -}}
+
+{{/*
+Selector labels for Koku API reads
+*/}}
+{{- define "cost-onprem.koku.api.reads.selectorLabels" -}}
+{{ include "cost-onprem.selectorLabels" . }}
+app.kubernetes.io/component: cost-management-api
+api-type: reads
+{{- end -}}
+
+{{/*
+Selector labels for Koku API writes
+*/}}
+{{- define "cost-onprem.koku.api.writes.selectorLabels" -}}
+{{ include "cost-onprem.selectorLabels" . }}
+app.kubernetes.io/component: cost-management-api
+api-type: writes
+{{- end -}}
+
+{{/*
+Selector labels for Celery Beat
+*/}}
+{{- define "cost-onprem.koku.celery.beat.selectorLabels" -}}
+{{ include "cost-onprem.selectorLabels" . }}
+app.kubernetes.io/component: cost-management-celery
+celery-type: beat
+{{- end -}}
+
+{{/*
+Selector labels for Celery Worker (takes worker type as argument)
+Usage: {{ include "cost-onprem.koku.celery.worker.selectorLabels" (dict "context" . "type" "default") }}
+*/}}
+{{- define "cost-onprem.koku.celery.worker.selectorLabels" -}}
+{{- $context := .context -}}
+{{- $type := .type -}}
+{{ include "cost-onprem.selectorLabels" $context }}
+app.kubernetes.io/component: cost-management-celery
+celery-type: worker
+worker-queue: {{ $type }}
+{{- end -}}
+
+{{/*
+Common labels for Trino resources
+Note: We don't override part-of here to keep consistency with selectorLabels
+*/}}
+{{- define "cost-onprem.trino.labels" -}}
+{{ include "cost-onprem.labels" . }}
+app.kubernetes.io/component: trino
+{{- end -}}
+
+{{/*
+Selector labels for Trino Coordinator
+*/}}
+{{- define "cost-onprem.trino.coordinator.selectorLabels" -}}
+{{ include "cost-onprem.selectorLabels" . }}
+app.kubernetes.io/component: trino-coordinator
+{{- end -}}
+
+{{/*
+Selector labels for Trino Worker
+*/}}
+{{- define "cost-onprem.trino.worker.selectorLabels" -}}
+{{ include "cost-onprem.selectorLabels" . }}
+app.kubernetes.io/component: trino-worker
+{{- end -}}
+
+{{/*
+Selector labels for Hive Metastore
+*/}}
+{{- define "cost-onprem.trino.metastore.selectorLabels" -}}
+{{ include "cost-onprem.selectorLabels" . }}
+app.kubernetes.io/component: hive-metastore
+{{- end -}}
+
+{{/*
+=============================================================================
+Storage Class Helpers
+=============================================================================
+*/}}
+
+{{/*
+Storage class for Koku database (uses default if not specified)
+*/}}
+{{- define "cost-onprem.koku.database.storageClass" -}}
+{{- if .Values.costManagement.database.storage.storageClassName -}}
+  {{- .Values.costManagement.database.storage.storageClassName -}}
+{{- else -}}
+  {{- /* Use default storage class in cluster */ -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Storage class for Trino coordinator (uses default if not specified)
+*/}}
+{{- define "cost-onprem.trino.coordinator.storageClass" -}}
+{{- if .Values.trino.coordinator.storage.storageClassName -}}
+  {{- .Values.trino.coordinator.storage.storageClassName -}}
+{{- else -}}
+  {{- /* Use default storage class in cluster */ -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Storage class for Trino worker (uses default if not specified)
+*/}}
+{{- define "cost-onprem.trino.worker.storageClass" -}}
+{{- if .Values.trino.worker.storage.storageClassName -}}
+  {{- .Values.trino.worker.storage.storageClassName -}}
+{{- else -}}
+  {{- /* Use default storage class in cluster */ -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Storage class for Hive metastore database (uses default if not specified)
+*/}}
+{{- define "cost-onprem.trino.metastore.database.storageClass" -}}
+{{- if .Values.trino.metastore.database.storage.storageClassName -}}
+  {{- .Values.trino.metastore.database.storage.storageClassName -}}
+{{- else -}}
+  {{- /* Use default storage class in cluster */ -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+=============================================================================
+Service Account Helpers
+=============================================================================
+*/}}
+
+{{/*
+Koku service account name
+*/}}
+{{- define "cost-onprem.koku.serviceAccountName" -}}
+{{- if .Values.costManagement.serviceAccount.create -}}
+  {{- .Values.costManagement.serviceAccount.name | default (printf "%s-koku" (include "cost-onprem.fullname" .)) -}}
+{{- else -}}
+  {{- .Values.costManagement.serviceAccount.name | default "default" -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Trino service account name
+*/}}
+{{- define "cost-onprem.trino.serviceAccountName" -}}
+{{- if and .Values.trino .Values.trino.serviceAccount .Values.trino.serviceAccount.create -}}
+  {{- .Values.trino.serviceAccount.name | default (printf "%s-trino" (include "cost-onprem.fullname" .)) -}}
+{{- else if and .Values.trino .Values.trino.serviceAccount .Values.trino.serviceAccount.name -}}
+  {{- .Values.trino.serviceAccount.name -}}
+{{- else -}}
+  {{- "default" -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+=============================================================================
+Environment Variable Helpers
+=============================================================================
+*/}}
+
+{{/*
+Common environment variables for Koku API and Celery
+*/}}
+{{- define "cost-onprem.koku.commonEnv" -}}
+# On-prem deployment mode: disables Unleash, uses DisabledUnleashClient
+# This is hardcoded (not configurable) to make it explicit this chart is for on-prem only
+- name: KOKU_ONPREM_DEPLOYMENT
+  value: "true"
+- name: DATABASE_SERVICE_NAME
+  value: "database"
+- name: DATABASE_ENGINE
+  value: "postgresql"
+- name: DATABASE_SERVICE_HOST
+  # Discovered dynamically via Helm lookup function by PostgreSQL service labels
+  # or uses explicit value from costManagement.database.host
+  value: {{ include "cost-onprem.koku.database.host" . | quote }}
+- name: DATABASE_SERVICE_PORT
+  value: {{ include "cost-onprem.koku.database.port" . | quote }}
+- name: DATABASE_NAME
+  value: {{ include "cost-onprem.koku.database.dbname" . | quote }}
+- name: DATABASE_USER
+  value: {{ include "cost-onprem.koku.database.user" . | quote }}
+- name: DATABASE_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "cost-onprem.koku.database.secretName" . }}
+      key: password
+- name: REDIS_HOST
+  value: {{ include "cost-onprem.koku.redis.host" . | quote }}
+- name: REDIS_PORT
+  value: {{ include "cost-onprem.koku.redis.port" . | quote }}
+- name: CELERY_RESULT_EXPIRES
+  value: {{ .Values.costManagement.celery.resultExpires | default "28800" | quote }}
+- name: INSIGHTS_KAFKA_HOST
+  value: {{ include "cost-onprem.koku.kafka.host" . | quote }}
+- name: INSIGHTS_KAFKA_PORT
+  value: {{ include "cost-onprem.koku.kafka.port" . | quote }}
+- name: S3_ENDPOINT
+  value: {{ include "cost-onprem.koku.s3.endpoint" . | quote }}
+- name: REQUESTED_BUCKET
+  value: {{ required "costManagement.storage.bucketName is required" .Values.costManagement.storage.bucketName | quote }}
+{{- if eq (include "cost-onprem.platform.isOpenShift" $) "true" }}
+- name: AWS_CA_BUNDLE
+  value: /etc/pki/ca-trust/combined/ca-bundle.crt
+- name: REQUESTS_CA_BUNDLE
+  value: /etc/pki/ca-trust/combined/ca-bundle.crt
+{{- end }}
+- name: AWS_ACCESS_KEY_ID
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "cost-onprem.storage.secretName" . }}
+      key: access-key
+- name: AWS_SECRET_ACCESS_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "cost-onprem.storage.secretName" . }}
+      key: secret-key
+- name: TRINO_HOST
+  value: {{ include "cost-onprem.koku.trino.host" . | quote }}
+- name: TRINO_PORT
+  value: {{ include "cost-onprem.koku.trino.port" . | quote }}
+- name: TRINO_S3A_OR_S3
+  value: "s3"
+- name: DJANGO_SECRET_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "cost-onprem.koku.django.secretName" . }}
+      key: secret-key
+- name: SCHEDULE_REPORT_CHECKS
+  value: {{ .Values.costManagement.scheduleReportChecks | default "true" | quote }}
+- name: REPORT_DOWNLOAD_SCHEDULE
+  value: {{ .Values.costManagement.reportDownloadSchedule | default "*/5 * * * *" | quote }}
+- name: POLLING_TIMER
+  value: {{ .Values.costManagement.celery.pollingTimer | default "86400" | quote }}
+{{- end -}}
+
+{{/*
+=============================================================================
+Image Helpers
+=============================================================================
+*/}}
+
+{{/*
+Generate the Koku image reference
+*/}}
+{{- define "cost-onprem.koku.image" -}}
+{{- printf "%s:%s" .Values.costManagement.api.image.repository (.Values.costManagement.api.image.tag | default "latest") -}}
+{{- end -}}
+
+{{/*
+=============================================================================
+Validation Helpers
+=============================================================================
+*/}}
+
+{{/*
+Validate Celery Beat replicas (must be exactly 1)
+*/}}
+{{- define "cost-onprem.koku.celery.beat.validateReplicas" -}}
+{{- if ne (.Values.costManagement.celery.beat.replicas | int) 1 -}}
+  {{- fail "Celery Beat must have exactly 1 replica. Set costManagement.celery.beat.replicas to 1" -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Standard volumeMounts for Koku containers
+Includes tmp mount and combined CA bundle when on OpenShift
+*/}}
+{{- define "cost-onprem.koku.volumeMounts" -}}
+- name: tmp
+  mountPath: /tmp
+{{- if eq (include "cost-onprem.platform.isOpenShift" $) "true" }}
+- name: combined-ca-bundle
+  mountPath: /etc/pki/ca-trust/combined
+  readOnly: true
+{{- end }}
+{{- end -}}
+
+{{/*
+Standard volumes for Koku pods
+Includes tmp volume and CA bundle volumes for OpenShift
+*/}}
+{{- define "cost-onprem.koku.volumes" -}}
+- name: tmp
+  emptyDir: {}
+{{- if eq (include "cost-onprem.platform.isOpenShift" $) "true" }}
+- name: ca-scripts
+  configMap:
+    name: {{ include "cost-onprem.fullname" . }}-ca-combine
+    items:
+      - key: combine-ca.sh
+        path: combine-ca.sh
+        mode: 0755
+- name: ca-source
+  configMap:
+    name: {{ include "cost-onprem.fullname" . }}-service-ca
+- name: combined-ca-bundle
+  emptyDir: {}
+{{- end }}
+{{- end -}}
+
+{{/*
+Init container to combine CA certificates (OpenShift only)
+Combines system CA bundle with OpenShift cluster root CA and Service CA for Python SSL verification
+*/}}
+{{- define "cost-onprem.koku.initContainer.combineCA" -}}
+{{- if eq (include "cost-onprem.platform.isOpenShift" $) "true" }}
+- name: prepare-ca-bundle
+  image: {{ .Values.global.initContainers.waitFor.repository }}:{{ .Values.global.initContainers.waitFor.tag }}
+  command: ['bash', '/scripts/combine-ca.sh']
+  volumeMounts:
+    - name: ca-scripts
+      mountPath: /scripts
+      readOnly: true
+    - name: ca-source
+      mountPath: /ca-source
+      readOnly: true
+    - name: combined-ca-bundle
+      mountPath: /ca-output
+  securityContext:
+    {{- include "cost-onprem.securityContext.container" . | nindent 4 }}
+{{- end }}
+{{- end -}}

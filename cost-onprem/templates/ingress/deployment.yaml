@@ -84,110 +84,81 @@ spec:
           imagePullPolicy: {{ .Values.ingress.image.pullPolicy | default .Values.global.pullPolicy }}
           ports:
             - name: http
-              containerPort: {{- if eq (include "cost-onprem.jwt.shouldEnable" .) "true" }} 8081 {{- else }} {{ .Values.ingress.port }} {{- end }}
+              containerPort: {{- if eq (include "cost-onprem.jwt.shouldEnable" .) "true" }} 8081 {{- else }} {{ .Values.ingress.server.port }} {{- end }}
               protocol: TCP
           env:
-            # Server configuration
-            - name: SERVER_PORT
+            # Port configuration (insights-ingress-go uses INGRESS_ prefix)
+            - name: INGRESS_WEBPORT
               value: {{- if eq (include "cost-onprem.jwt.shouldEnable" .) "true" }} "8081" {{- else }} {{ .Values.ingress.server.port | quote }} {{- end }}
-            - name: SERVER_READ_TIMEOUT
-              value: {{ .Values.ingress.server.readTimeout | quote }}
-            - name: SERVER_WRITE_TIMEOUT
-              value: {{ .Values.ingress.server.writeTimeout | quote }}
-            - name: SERVER_IDLE_TIMEOUT
-              value: {{ .Values.ingress.server.idleTimeout | quote }}
-            - name: DEBUG
+            - name: INGRESS_METRICSPORT
+              value: {{ .Values.ingress.metrics.port | quote }}
+            - name: INGRESS_DEBUG
               value: {{ .Values.ingress.server.debug | quote }}
 
             # Upload configuration
-            - name: UPLOAD_MAX_SIZE
-              value: {{ .Values.ingress.upload.maxUploadSize | quote }}
-            - name: UPLOAD_MAX_MEMORY
-              value: {{ .Values.ingress.upload.maxMemory | quote }}
-            - name: UPLOAD_TEMP_DIR
-              value: {{ .Values.ingress.upload.tempDir | quote }}
-            - name: UPLOAD_ALLOWED_TYPES
-              value: {{ join "," .Values.ingress.upload.allowedTypes | quote }}
-            - name: UPLOAD_REQUIRE_AUTH
-              value: {{- if eq (include "cost-onprem.jwt.shouldEnable" .) "true" }} "true" {{- else }} {{ .Values.ingress.upload.requireAuth | quote }} {{- end }}
-
-            # Storage configuration
-            - name: STORAGE_ENDPOINT
+            - name: INGRESS_DEFAULTMAXSIZE
+              value: {{ .Values.ingress.upload.maxUploadSize | int | quote }}
+            - name: INGRESS_MAXUPLOADMEM
+              value: {{ .Values.ingress.upload.maxMemory | int | quote }}
+            - name: INGRESS_VALID_UPLOAD_TYPES
+              value: {{ .Values.ingress.upload.validTypes | quote }}
+ 
+            # Storage configuration (MinIO/S3)
+            - name: INGRESS_MINIOENDPOINT
               value: {{ include "cost-onprem.storage.endpoint" . }}
-            - name: STORAGE_BUCKET
+            - name: INGRESS_STAGEBUCKET
               value: {{ include "cost-onprem.storage.bucket" . | quote }}
-            - name: STORAGE_USE_SSL
+            - name: INGRESS_USESSL
               value: {{ include "cost-onprem.storage.useSSL" . | quote }}
-            - name: STORAGE_URL_EXPIRATION
-              value: {{ .Values.ingress.storage.urlExpiration | quote }}
-            - name: STORAGE_PATH_PREFIX
-              value: {{ .Values.ingress.storage.pathPrefix | quote }}
-            {{- if eq (include "cost-onprem.platform.isOpenShift" .) "true" }}
-            - name: STORAGE_SSL_CA_CERT_PATH
-              value: "/etc/ssl/certs/service-ca.crt"
-            {{- end }}
-            - name: STORAGE_ACCESS_KEY
+            - name: INGRESS_STAGERIMPLEMENTATION
+              value: "s3"
+            - name: INGRESS_MINIOACCESSKEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "cost-onprem.fullname" . }}-storage-credentials
                   key: access-key
-            - name: STORAGE_SECRET_KEY
+            - name: INGRESS_MINIOSECRETKEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "cost-onprem.fullname" . }}-storage-credentials
                   key: secret-key
 
             # Kafka configuration
-            - name: KAFKA_BROKERS
+            - name: INGRESS_KAFKA_BROKERS
               value: {{ include "cost-onprem.kafka.bootstrapServers" . | quote }}
-            - name: KAFKA_ROS_TOPIC
+            - name: INGRESS_KAFKAANNOUNCETOPIC
               value: {{ .Values.ingress.kafka.topic | quote }}
-            - name: KAFKA_SECURITY_PROTOCOL
-              value: {{ include "cost-onprem.kafka.securityProtocol" . | quote }}
-            - name: KAFKA_CLIENT_ID
-              value: {{ .Values.ingress.kafka.clientId | quote }}
-            - name: KAFKA_BATCH_SIZE
-              value: {{ .Values.ingress.kafka.batchSize | quote }}
-            - name: KAFKA_RETRIES
-              value: {{ .Values.ingress.kafka.retries | quote }}
+            - name: INGRESS_KAFKAGROUPID
+              value: {{ .Values.ingress.kafka.groupId | default "ingress" | quote }}
 
-            # Authentication configuration (only available on OpenShift with Keycloak)
-            - name: AUTH_ENABLED
+            # Authentication configuration
+            # When JWT is enabled via Envoy, the backend trusts X-Rh-Identity header
+            # When JWT is disabled, set INGRESS_AUTH=false to skip auth checks
+            - name: INGRESS_AUTH
               {{- if eq (include "cost-onprem.jwt.shouldEnable" .) "true" }}
-              value: "true"  # Auth is enabled via Envoy native JWT, service trusts X-ROS headers
+              value: "false"  # Auth is handled by Envoy sidecar, backend trusts X-Rh-Identity
               {{- else if eq (include "cost-onprem.platform.isOpenShift" .) "true" }}
               value: {{ .Values.ingress.auth.enabled | quote }}
               {{- else }}
               value: "false"
               {{- end }}
-            # Logging configuration
-            - name: LOG_LEVEL
-              value: {{ .Values.ingress.logging.level | quote }}
-            - name: LOG_FORMAT
-              value: {{ .Values.ingress.logging.format | quote }}
-            - name: LOG_OUTPUT
-              value: {{ .Values.ingress.logging.output | quote }}
 
-            # Metrics configuration
-            - name: METRICS_ENABLED
-              value: {{ .Values.ingress.metrics.enabled | quote }}
-            - name: METRICS_PATH
-              value: {{ .Values.ingress.metrics.path | quote }}
-            - name: METRICS_PORT
-              value: {{ .Values.ingress.metrics.port | quote }}
+            # Logging configuration
+            - name: INGRESS_LOGLEVEL
+              value: {{ .Values.ingress.logging.level | upper | quote }}
 
           livenessProbe:
             httpGet:
-              path: /health
-              port: {{- if eq (include "cost-onprem.jwt.shouldEnable" .) "true" }} 8081 {{- else }} {{ .Values.ingress.port }} {{- end }}
+              path: /
+              port: {{- if eq (include "cost-onprem.jwt.shouldEnable" .) "true" }} 8081 {{- else }} {{ .Values.ingress.server.port }} {{- end }}
             initialDelaySeconds: {{ .Values.probes.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.timeoutSeconds }}
             failureThreshold: {{ .Values.probes.failureThreshold }}
           readinessProbe:
             httpGet:
-              path: /ready
-              port: {{- if eq (include "cost-onprem.jwt.shouldEnable" .) "true" }} 8081 {{- else }} {{ .Values.ingress.port }} {{- end }}
+              path: /
+              port: {{- if eq (include "cost-onprem.jwt.shouldEnable" .) "true" }} 8081 {{- else }} {{ .Values.ingress.server.port }} {{- end }}
             initialDelaySeconds: 10
             periodSeconds: {{ .Values.probes.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.timeoutSeconds }}

@@ -7,9 +7,12 @@ metadata:
     {{- include "cost-onprem.labels" . | nindent 4 }}
     app.kubernetes.io/component: database
 data:
-  # PostgreSQL initialization script
+  # PostgreSQL initialization script for ROS and Kruize
   # This script runs automatically on first database initialization
   # Uses PostgreSQL's /docker-entrypoint-initdb.d/ mechanism
+  #
+  # NOTE: Sources API uses the INFRA CHART's PostgreSQL (shares koku database)
+  # because Sources API provisions tables that Koku uses.
   init-databases.sql: |
     -- ========================================
     -- Create Dedicated Database Users
@@ -34,15 +37,6 @@ data:
     END
     $$;
 
-    -- Sources User
-    DO $$
-    BEGIN
-      IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{{ .Values.database.sources.user }}') THEN
-        CREATE USER {{ .Values.database.sources.user }} WITH PASSWORD '{{ .Values.database.sources.password }}';
-      END IF;
-    END
-    $$;
-
     -- ========================================
     -- Create Databases
     -- ========================================
@@ -57,11 +51,6 @@ data:
     WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{{ .Values.database.kruize.name }}')
     \gexec
 
-    -- Sources Database
-    SELECT 'CREATE DATABASE {{ .Values.database.sources.name }}'
-    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{{ .Values.database.sources.name }}')
-    \gexec
-
     -- ========================================
     -- Grant Database Ownership and Privileges
     -- ========================================
@@ -74,7 +63,3 @@ data:
     -- Kruize Database - owned by kruize_user
     GRANT ALL PRIVILEGES ON DATABASE {{ .Values.database.kruize.name }} TO {{ .Values.database.kruize.user }};
     ALTER DATABASE {{ .Values.database.kruize.name }} OWNER TO {{ .Values.database.kruize.user }};
-
-    -- Sources Database - owned by sources_user
-    GRANT ALL PRIVILEGES ON DATABASE {{ .Values.database.sources.name }} TO {{ .Values.database.sources.user }};
-    ALTER DATABASE {{ .Values.database.sources.name }} OWNER TO {{ .Values.database.sources.user }};

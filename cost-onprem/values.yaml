@@ -124,14 +124,571 @@ ros:
           memory: "512Mi"
           cpu: "300m"
 
-# -----------------------------------------------------------------------------
-# Cost Management Service (Future - Placeholder)
-# -----------------------------------------------------------------------------
-# Placeholder for future cost management service components
-# When implemented, will include:
-# - API, Processor, and other components
-# - Integration with shared database, Kafka, storage
-costManagement: {}
+# =============================================================================
+# Cost Management (Koku) Configuration
+# =============================================================================
+# Koku is the Cost Management backend service that processes cost data
+# from various cloud providers (AWS, Azure, GCP, OCP)
+#
+# NOTE: Koku connects to the infrastructure chart's PostgreSQL and Trino,
+# NOT to this chart's unified database (which is for ROS, Kruize, Sources)
+
+costManagement:
+  # ---------------------------------------------------------------------------
+  # Celery Beat Scheduler Configuration
+  # ---------------------------------------------------------------------------
+  scheduleReportChecks: true
+  reportDownloadSchedule: "*/5 * * * *"
+
+  # ---------------------------------------------------------------------------
+  # S3 Configuration
+  # ---------------------------------------------------------------------------
+  s3VerifySSL: false
+  s3Endpoint: "https://s3.openshift-storage.svc:443"
+
+  storage:
+    bucketName: "cost-data"
+
+  # ---------------------------------------------------------------------------
+  # Koku API Configuration
+  # ---------------------------------------------------------------------------
+  api:
+    enabled: true
+
+    image:
+      repository: quay.io/insights-onprem/koku
+      tag: "latest"
+      pullPolicy: Always
+
+    reads:
+      replicas: 2
+      resources:
+        # Aligned with SaaS Clowder configuration (deploy/clowdapp.yaml)
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          cpu: 500m
+          memory: 1Gi
+
+      livenessProbe:
+        httpGet:
+          path: /livez
+          port: 9000
+          scheme: HTTP
+        initialDelaySeconds: 30
+        periodSeconds: 20
+        timeoutSeconds: 3
+        failureThreshold: 5
+        successThreshold: 1
+
+      readinessProbe:
+        httpGet:
+          path: /readyz
+          port: 9000
+          scheme: HTTP
+        initialDelaySeconds: 30
+        periodSeconds: 20
+        timeoutSeconds: 3
+        failureThreshold: 5
+        successThreshold: 1
+
+      env:
+        API_PATH_PREFIX: /api/cost-management
+        DEVELOPMENT: "True"
+        GUNICORN_LOG_LEVEL: INFO
+        KOKU_LOG_LEVEL: INFO
+        DJANGO_LOG_LEVEL: INFO
+        DJANGO_LOG_FORMATTER: simple
+        DJANGO_LOG_HANDLERS: console
+        PROMETHEUS_MULTIPROC_DIR: /tmp
+        REQUESTED_ROS_BUCKET: ros-data
+        KOKU_ENABLE_SENTRY: "False"
+        CACHED_VIEWS_DISABLED: "False"
+        RETAIN_NUM_MONTHS: "3"
+        NOTIFICATION_CHECK_TIME: "24"
+        ENHANCED_ORG_ADMIN: "True"
+        RBAC_CACHE_TIMEOUT: "300"
+        CACHE_TIMEOUT: "3600"
+        TAG_ENABLED_LIMIT: "200"
+        USE_READREPLICA: "False"
+        GUNICORN_WORKERS: "2"
+        GUNICORN_THREADS: "4"
+
+    writes:
+      replicas: 1
+      resources:
+        # Aligned with SaaS Clowder configuration (deploy/clowdapp.yaml)
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          cpu: 500m
+          memory: 1Gi
+
+      livenessProbe:
+        httpGet:
+          path: /livez
+          port: 9000
+          scheme: HTTP
+        initialDelaySeconds: 30
+        periodSeconds: 20
+        timeoutSeconds: 3
+        failureThreshold: 5
+        successThreshold: 1
+
+      readinessProbe:
+        httpGet:
+          path: /readyz
+          port: 9000
+          scheme: HTTP
+        initialDelaySeconds: 30
+        periodSeconds: 20
+        timeoutSeconds: 3
+        failureThreshold: 5
+        successThreshold: 1
+
+      env:
+        API_PATH_PREFIX: /api/cost-management
+        DEVELOPMENT: "True"
+        GUNICORN_LOG_LEVEL: INFO
+        KOKU_LOG_LEVEL: INFO
+        DJANGO_LOG_LEVEL: INFO
+        DJANGO_LOG_FORMATTER: simple
+        DJANGO_LOG_HANDLERS: console
+        PROMETHEUS_MULTIPROC_DIR: /tmp
+        REQUESTED_ROS_BUCKET: ros-data
+        KOKU_ENABLE_SENTRY: "False"
+        GUNICORN_WORKERS: "1"
+        GUNICORN_THREADS: "4"
+
+    service:
+      type: ClusterIP
+      port: 8000
+      targetPort: 8000
+      name: koku-api
+
+  # ---------------------------------------------------------------------------
+  # MASU (Data Processing Service)
+  # ---------------------------------------------------------------------------
+  masu:
+    enabled: true
+    replicas: 1
+    resources:
+      # Aligned with SaaS Clowder configuration (deploy/kustomize/patches)
+      requests:
+        cpu: 50m
+        memory: 500Mi
+      limits:
+        cpu: 100m
+        memory: 700Mi
+    env:
+      KOKU_LOG_LEVEL: DEBUG
+      DJANGO_LOG_LEVEL: INFO
+      GUNICORN_LOG_LEVEL: INFO
+      PROMETHEUS_MULTIPROC_DIR: /tmp
+      REQUESTED_ROS_BUCKET: ros-data
+
+  # ---------------------------------------------------------------------------
+  # Kafka Listener
+  # ---------------------------------------------------------------------------
+  listener:
+    enabled: true
+    # On-prem: 1 replica to fit cluster constraints (SaaS uses 2)
+    replicas: 1
+    resources:
+      # Aligned with SaaS Clowder configuration
+      requests:
+        cpu: 150m
+        memory: 300Mi
+      limits:
+        cpu: 300m
+        memory: 600Mi
+    env:
+      KOKU_LOG_LEVEL: INFO
+      DJANGO_LOG_LEVEL: INFO
+      PROMETHEUS_MULTIPROC_DIR: /tmp
+      REQUESTED_ROS_BUCKET: ros-data
+
+  # ---------------------------------------------------------------------------
+  # Kafka Configuration
+  # ---------------------------------------------------------------------------
+  kafka:
+    enabled: true
+    host: cost-onprem-kafka-kafka-bootstrap.kafka.svc.cluster.local
+    port: 9092
+    consumerGroupId: cost-mgmt-listener-group
+    topic: platform.upload.announce
+
+  # ---------------------------------------------------------------------------
+  # Celery Configuration
+  # ---------------------------------------------------------------------------
+  celery:
+    pollingTimer: 300
+    resultExpires: 28800
+
+    beat:
+      replicas: 1
+      resources:
+        # Aligned with SaaS Clowder configuration (scheduler)
+        requests:
+          cpu: 50m
+          memory: 200Mi
+        limits:
+          cpu: 100m
+          memory: 400Mi
+      env:
+        KOKU_LOG_LEVEL: INFO
+        DJANGO_LOG_LEVEL: INFO
+        PROMETHEUS_MULTIPROC_DIR: /tmp
+
+    workers:
+      commonEnv:
+        KOKU_LOG_LEVEL: INFO
+        DJANGO_LOG_LEVEL: INFO
+        PROMETHEUS_MULTIPROC_DIR: /tmp
+        REQUESTED_ROS_BUCKET: ros-data
+
+      default:
+        replicas: 1
+        queue: celery
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 200Mi
+          limits:
+            cpu: 200m
+            memory: 400Mi
+
+      priority:
+        # On-prem: 1 replica to fit cluster constraints (SaaS uses 2)
+        replicas: 1
+        queue: priority
+        concurrency: 5
+        resources:
+          # Aligned with SaaS Clowder configuration
+          requests:
+            cpu: 100m
+            memory: 400Mi
+          limits:
+            cpu: 200m
+            memory: 750Mi
+
+      refresh:
+        # OCP-ONLY: Disabled - primary use is delete_openshift_on_cloud_data for OCP-on-cloud
+        replicas: 0
+        queue: refresh
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+
+      summary:
+        replicas: 1
+        queue: summary
+        concurrency: 5
+        resources:
+          # Aligned with SaaS Clowder configuration
+          requests:
+            cpu: 100m
+            memory: 500Mi
+          limits:
+            cpu: 200m
+            memory: 750Mi
+
+      hcs:
+        # OCP-ONLY: Disabled - HCS only supports AWS, Azure, GCP (not OCP)
+        replicas: 0
+        queue: hcs
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 300Mi
+          limits:
+            cpu: 200m
+            memory: 500Mi
+
+      download:
+        # OCP-ONLY: Disabled - OCP uses PUSH model via Kafka, not PULL from S3
+        replicas: 0
+        queue: download
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 400m
+            memory: 1Gi
+
+      priorityXl:
+        # On-prem: 1 replica to fit cluster constraints (SaaS uses 2)
+        replicas: 1
+        queue: priority,priority_xl
+        concurrency: 5
+        resources:
+          # Aligned with SaaS Clowder configuration
+          requests:
+            cpu: 150m
+            memory: 400Mi
+          limits:
+            cpu: 300m
+            memory: 750Mi
+
+      refreshXl:
+        # OCP-ONLY: Disabled - not needed for OCP
+        replicas: 0
+        queue: refresh,refresh_xl
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+
+      summaryXl:
+        replicas: 1
+        queue: summary,summary_xl
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 200Mi
+          limits:
+            cpu: 200m
+            memory: 400Mi
+
+      downloadXl:
+        # OCP-ONLY: Disabled - not needed for OCP
+        replicas: 0
+        queue: download,download_xl
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 400m
+            memory: 1Gi
+
+      priorityPenalty:
+        # On-prem: 1 replica to fit cluster constraints (SaaS uses 2)
+        replicas: 1
+        queue: priority,priority_penalty
+        concurrency: 5
+        resources:
+          # Aligned with SaaS Clowder configuration
+          requests:
+            cpu: 150m
+            memory: 400Mi
+          limits:
+            cpu: 300m
+            memory: 750Mi
+
+      refreshPenalty:
+        # OCP-ONLY: Disabled - not needed for OCP
+        replicas: 0
+        queue: refresh,refresh_penalty
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+
+      summaryPenalty:
+        replicas: 1
+        queue: summary,summary_penalty
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 200Mi
+          limits:
+            cpu: 200m
+            memory: 400Mi
+
+      downloadPenalty:
+        # OCP-ONLY: Disabled - not needed for OCP
+        replicas: 0
+        queue: download,download_penalty
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 400m
+            memory: 1Gi
+
+      ocp:
+        replicas: 1
+        queue: ocp
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+
+      ocpXl:
+        replicas: 1
+        queue: ocp_xl
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+
+      ocpPenalty:
+        replicas: 1
+        queue: ocp_penalty
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+
+      costModel:
+        replicas: 1
+        queue: cost_model
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+
+      costModelXl:
+        replicas: 1
+        queue: cost_model_xl
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+
+      costModelPenalty:
+        replicas: 1
+        queue: cost_model_penalty
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+
+      subsExtraction:
+        # Disabled in SaaS - not needed for on-prem
+        replicas: 0
+        queue: subs_extraction
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 300Mi
+          limits:
+            cpu: 200m
+            memory: 500Mi
+
+      subsTransmission:
+        # Disabled in SaaS - not needed for on-prem
+        replicas: 0
+        queue: subs_transmission
+        concurrency: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 300Mi
+          limits:
+            cpu: 200m
+            memory: 500Mi
+
+  # ---------------------------------------------------------------------------
+  # Database Configuration (Infrastructure Chart's PostgreSQL)
+  # ---------------------------------------------------------------------------
+  database:
+    host: "postgres"
+    port: 5432
+    name: koku
+    user: koku
+    sslMode: disable
+    secretName: "postgres-credentials"
+
+  # ---------------------------------------------------------------------------
+  # Django Configuration
+  # ---------------------------------------------------------------------------
+  django:
+    secretKeyLength: 50
+
+  # ---------------------------------------------------------------------------
+  # Service Account Configuration
+  # ---------------------------------------------------------------------------
+  serviceAccount:
+    create: true
+    name: koku
+    annotations: {}
+
+# =============================================================================
+# Trino Configuration (Connection to Infrastructure Chart)
+# =============================================================================
+# Trino is deployed by the infrastructure chart, this section configures
+# how Koku connects to it
+
+trino:
+  coordinator:
+    host: "trino-coordinator"
+    service:
+      port: 8080
+
+# =============================================================================
+# Mock RBAC Service Configuration
+# =============================================================================
+# Lightweight RBAC service for on-prem environments
+
+mockRbac:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: python
+    tag: "3.11-slim"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8111
+  debug: false
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
 
 # -----------------------------------------------------------------------------
 # Kruize - Optimization Engine (ROS Dependency)
@@ -210,72 +767,65 @@ sourcesApi:
 # -----------------------------------------------------------------------------
 # Ingress Service (Shared entry point for uploads and routing)
 # -----------------------------------------------------------------------------
+# Uses insights-ingress-go which requires INGRESS_* prefixed environment variables
 ingress:
   serviceAccount:
     create: true
     name: insights-ros-ingress
 
   image:
-    repository: quay.io/insights-onprem/insights-ros-ingress
+    repository: quay.io/insights-onprem/insights-ingress-go
     tag: "latest"
     pullPolicy: Always
-
-  port: 8080
 
   # Server configuration
   server:
     port: 8080
-    readTimeout: 30
-    writeTimeout: 30
-    idleTimeout: 120
     debug: false
 
   # Upload handling
   upload:
-    maxUploadSize: 104857600  # 100MB
-    maxMemory: 33554432       # 32MB
-    tempDir: "/tmp"
-    allowedTypes:
-      - "application/vnd.redhat.hccm.upload"
-    requireAuth: true  # Overridden by platform detection
+    maxUploadSize: 104857600  # 100MB (INGRESS_DEFAULTMAXSIZE)
+    maxMemory: 33554432       # 32MB (INGRESS_MAXUPLOADMEM)
+    # Valid upload types - comma-separated list for INGRESS_VALID_UPLOAD_TYPES
+    # This is REQUIRED by insights-ingress-go
+    validTypes: "hccm"
 
-  # Storage backend configuration
+  # Storage backend configuration (MinIO/S3)
   storage:
-    bucket: "ros-data"
+    bucket: "koku-bucket"
     useSSL: false      # Overridden to true on OpenShift (ODF)
-    urlExpiration: 172800  # 48 hours
-    pathPrefix: "ros"
 
   # Kafka producer configuration
   kafka:
-    topic: "hccm.ros.events"
-    clientId: "insights-ros-ingress"
-    batchSize: 16384
-    retries: 3
+    topic: "platform.upload.announce"  # INGRESS_KAFKAANNOUNCETOPIC
+    groupId: "ingress"                 # INGRESS_KAFKAGROUPID
 
   # Authentication (OpenShift only)
   # Note: Authentication is only available on OpenShift with Keycloak (RHBK).
   # On vanilla Kubernetes/KIND, authentication is automatically disabled.
+  # When JWT is enabled via Envoy sidecar, INGRESS_AUTH is set to false
+  # because the backend trusts the X-Rh-Identity header injected by Envoy.
   auth:
     enabled: true      # Auto-disabled on Kubernetes
 
   # Logging
   logging:
-    level: "info"
-    format: "json"
-    output: "stdout"
+    level: "INFO"      # INGRESS_LOGLEVEL (uppercase)
 
   # Metrics
   metrics:
-    enabled: true
-    path: "/metrics"
-    port: 8080
+    port: 9090         # INGRESS_METRICSPORT (separate from web port)
 
 # -----------------------------------------------------------------------------
-# Shared Infrastructure - Database
+# Shared Infrastructure - Database (for ROS and Kruize only)
 # -----------------------------------------------------------------------------
-# Unified PostgreSQL server with multiple databases for different services
-# Single StatefulSet hosts separate databases: ros_db, kruize_db, sources_db
+# Unified PostgreSQL server for ROS and Kruize services
+# Single StatefulSet hosts separate databases: ros_db, kruize_db
+#
+# NOTE: Sources API and Koku use the INFRA CHART's PostgreSQL instead
+# (configured in costManagement.database section). Sources API provisions
+# tables that Koku uses, so they must share the same database.
 #
 # Security Model:
 # - Each service gets its own dedicated database user
@@ -301,7 +851,7 @@ database:
   # Database Credentials Management
   # Option 1: Use existing secret (recommended for production)
   #   Set existingSecret to the name of your pre-created secret
-  #   Secret must contain keys: ros-user, ros-password, kruize-user, kruize-password, sources-user, sources-password
+  #   Secret must contain keys: ros-user, ros-password, kruize-user, kruize-password
   # Option 2: Let chart create secret (default)
   #   Chart will create secret using values below
   existingSecret: ""  # Name of existing secret, or empty to auto-create
@@ -321,17 +871,6 @@ database:
     # Dedicated user for Kruize service (only used if existingSecret is empty)
     user: kruize_user
     password: kruize_password
-
-  # Sources API Database Configuration
-  sources:
-    # Database name on the unified server
-    name: sources_db
-    # Dedicated user for Sources service (only used if existingSecret is empty)
-    user: sources_user
-    password: sources_password
-
-  # Cost Management Database (future placeholder - DB server will be shared with ROS)
-  costManagement: {}
 
 # -----------------------------------------------------------------------------
 # Shared Infrastructure - Kafka
@@ -381,6 +920,7 @@ minio:
     console: 9990
 
   buckets:
+    - cost-data
     - insights-upload-perma
     - koku-bucket
     - ros-data
@@ -555,14 +1095,15 @@ resources:
       memory: "512Mi"
       cpu: "500m"
 
-  # Standard application services
+  # Standard application services (ROS API, Processor, Poller, Housekeeper)
+  # Aligned with SaaS Clowder configuration (ros-ocp-backend/clowdapp.yaml)
   application:
     requests:
-      memory: "256Mi"
-      cpu: "100m"
+      memory: "1Gi"
+      cpu: "500m"
     limits:
-      memory: "512Mi"
-      cpu: "300m"
+      memory: "1Gi"
+      cpu: "1"
 
   # Kruize is memory-intensive (Java workload)
   kruize:
