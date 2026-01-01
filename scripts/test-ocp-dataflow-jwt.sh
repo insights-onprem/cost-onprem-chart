@@ -666,9 +666,47 @@ EOF
     fi
     echo_success "Cost Management application created with ID: $app_id"
 
-    # Step 6: Wait for source processing
-    echo_info "Waiting for Koku to process the new source (15 seconds)..."
-    sleep 15
+    # Step 6: Wait for Koku to process the source (via Kafka event)
+    # The Sources API publishes to Kafka, then sources-listener creates the provider
+    echo_info "Waiting for Koku to process the new source via Kafka..."
+
+    local db_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=postgresql" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    if [ -z "$db_pod" ]; then
+        # Try infra postgres pod
+        db_pod="postgres-0"
+    fi
+
+    local max_wait=120  # 2 minutes max
+    local wait_interval=5
+    local elapsed=0
+    local provider_found=false
+
+    local provider_count
+    while [ $elapsed -lt $max_wait ]; do
+        # Check if provider exists in Koku database for this cluster
+        provider_count=$(oc exec -n "$NAMESPACE" "$db_pod" -- \
+            psql -U koku -d koku -t -c \
+            "SELECT COUNT(*) FROM api_provider p
+             JOIN api_providerauthentication a ON p.authentication_id = a.id
+             WHERE a.credentials->>'cluster_id' = '$cluster_id'
+                OR p.additional_context->>'cluster_id' = '$cluster_id';" 2>/dev/null | tr -d ' ' || echo "0")
+
+        if [ "$provider_count" -gt 0 ]; then
+            provider_found=true
+            echo_success "Provider created in Koku database"
+            break
+        fi
+
+        echo_info "  Waiting for provider to be created... ($elapsed/$max_wait seconds)"
+        sleep $wait_interval
+        elapsed=$((elapsed + wait_interval))
+    done
+
+    if [ "$provider_found" = "false" ]; then
+        echo_error "Timeout waiting for provider to be created in Koku database"
+        echo_info "Check sources-listener logs: oc logs -n $NAMESPACE deployment/cost-onprem-sources-listener --tail=50"
+        return 1
+    fi
 
     echo_success "OCP source registered successfully"
     echo_info "  Source ID: $TEST_SOURCE_ID"
