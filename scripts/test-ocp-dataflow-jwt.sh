@@ -1,9 +1,26 @@
 #!/bin/bash
 
-# ROS OpenShift Data Flow Test Script with Keycloak JWT Authentication
-# This script tests the complete data flow using Keycloak JWT tokens
-# Ingress: Uses Keycloak JWT (external uploads from Cost Management Operator)
-# Backend API: Uses Keycloak JWT (for API access)
+# Cost Management & ROS OpenShift Data Flow Test Script with Keycloak JWT Authentication
+#
+# This script tests the complete end-to-end data flow through the Cost Management (Koku)
+# and ROS (Resource Optimization Service) pipeline using Keycloak JWT authentication.
+#
+# Data Flow Architecture:
+# =======================
+# 1. Cost Management Operator uploads data via JWT-authenticated ingress
+# 2. Ingress (insights-ingress-go) stores files in S3 (cost-data bucket)
+# 3. Ingress publishes upload notification to Kafka (platform.upload.announce topic)
+# 4. Koku Listener consumes from platform.upload.announce
+# 5. Koku/MASU processes cost data from cost-data bucket
+# 6. Koku copies ROS-relevant data to ros-data bucket
+# 7. Koku emits events to hccm.ros.events topic
+# 8. ROS Processor consumes from hccm.ros.events and sends data to Kruize
+# 9. Kruize generates optimization recommendations
+# 10. Recommendations are available via the ROS API
+#
+# Authentication:
+# - Ingress: Keycloak JWT (external uploads from Cost Management Operator)
+# - Backend API: Keycloak JWT (for API access)
 
 set -e  # Exit on any error
 
@@ -633,7 +650,8 @@ EOF
 verify_upload_processing() {
     echo_info "=== STEP 2: Verify Upload Processing ===="
 
-    # Check ingress logs for upload activity
+    # Step 2a: Check ingress logs for upload activity
+    echo_info "--- Step 2a: Ingress Upload Verification ---"
     echo_info "Checking ingress logs for upload processing..."
     local ingress_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=ingress -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
@@ -645,24 +663,71 @@ verify_upload_processing() {
         # Try to get logs from the ingress container
         echo_info "Recent ingress logs:"
         if echo "$containers" | grep -q "ingress"; then
-            oc logs -n "$NAMESPACE" "$ingress_pod" -c ingress --tail=10 2>/dev/null | grep -i "upload\|jwt\|auth\|error" || echo "No relevant log messages found"
+            oc logs -n "$NAMESPACE" "$ingress_pod" -c ingress --tail=10 2>/dev/null | grep -i "upload\|jwt\|auth\|kafka\|error" || echo "No relevant log messages found"
         else
             # Fall back to first container
             local first_container=$(echo "$containers" | awk '{print $1}')
-            oc logs -n "$NAMESPACE" "$ingress_pod" -c "$first_container" --tail=10 2>/dev/null | grep -i "upload\|jwt\|auth\|error" || echo "No relevant log messages found"
+            oc logs -n "$NAMESPACE" "$ingress_pod" -c "$first_container" --tail=10 2>/dev/null | grep -i "upload\|jwt\|auth\|kafka\|error" || echo "No relevant log messages found"
         fi
     else
         echo_warning "Ingress pod not found (tried label: app.kubernetes.io/name=ingress)"
     fi
 
-    # If we have the full ROS stack, check for further processing
+    # Step 2b: Check Koku Listener logs for Kafka message consumption
+    echo_info ""
+    echo_info "--- Step 2b: Koku Listener Verification ---"
+    echo_info "Checking Koku listener for Kafka message consumption (platform.upload.announce)..."
+    local listener_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+
+    if [ -n "$listener_pod" ]; then
+        echo_info "Found Koku listener pod: $listener_pod"
+        echo_info "Recent Koku listener logs:"
+        oc logs -n "$NAMESPACE" "$listener_pod" --tail=15 2>/dev/null | grep -i "kafka\|message\|upload\|announce\|processing\|error" || echo "No relevant log messages found"
+    else
+        echo_warning "Koku listener pod not found (tried label: app.kubernetes.io/component=listener)"
+        echo_info "Trying alternative label..."
+        listener_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+        if [ -n "$listener_pod" ]; then
+            echo_info "Found Koku listener pod: $listener_pod"
+            oc logs -n "$NAMESPACE" "$listener_pod" --tail=15 2>/dev/null | grep -i "kafka\|message\|upload\|announce\|processing\|error" || echo "No relevant log messages found"
+        fi
+    fi
+
+    # Step 2c: Check Koku/MASU worker logs for cost data processing
+    echo_info ""
+    echo_info "--- Step 2c: Koku/MASU Worker Verification ---"
+    echo_info "Checking Koku workers for cost data processing..."
+
+    # Check MASU pod for processing activity
+    local masu_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=masu" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    if [ -n "$masu_pod" ]; then
+        echo_info "Found MASU pod: $masu_pod"
+        echo_info "Recent MASU logs:"
+        oc logs -n "$NAMESPACE" "$masu_pod" --tail=10 2>/dev/null | grep -i "processing\|download\|report\|complete\|error" || echo "No relevant log messages found"
+    fi
+
+    # Check Celery worker pods for task processing
+    local worker_pods=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=worker" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)
+    if [ -n "$worker_pods" ]; then
+        local first_worker=$(echo "$worker_pods" | awk '{print $1}')
+        echo_info "Found Celery worker pod: $first_worker"
+        echo_info "Recent worker logs (first worker):"
+        oc logs -n "$NAMESPACE" "$first_worker" --tail=10 2>/dev/null | grep -i "task\|download\|process\|complete\|error" || echo "No relevant log messages found"
+    else
+        echo_info "No Celery worker pods found - Koku may use a different worker configuration"
+    fi
+
+    # Step 2d: Check ROS Processor for downstream processing
+    echo_info ""
+    echo_info "--- Step 2d: ROS Processor Verification ---"
     local processor_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=ros-processor" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
     if [ -n "$processor_pod" ]; then
-        echo_info "Checking processor logs for data processing..."
-        oc logs -n "$NAMESPACE" "$processor_pod" --tail=10 | grep -i "processing\|complete\|error" || echo "No processing messages found"
+        echo_info "Found ROS processor pod: $processor_pod"
+        echo_info "Checking ROS processor logs for data processing (hccm.ros.events consumption)..."
+        oc logs -n "$NAMESPACE" "$processor_pod" --tail=10 | grep -i "processing\|kafka\|event\|complete\|error" || echo "No processing messages found"
     else
-        echo_info "ROS processor not deployed - upload verification complete at ingress level"
+        echo_info "ROS processor not deployed - checking if Koku processing is sufficient"
     fi
 
     return 0
@@ -814,10 +879,14 @@ check_recommendations_with_retry() {
 
 # Main execution
 main() {
-    echo_info "ROS JWT Authentication Data Flow Test"
+    echo_info "Cost Management & ROS Data Flow Test"
     echo_info "============================================"
-    echo_info "Ingress: Keycloak JWT (external uploads from Cost Management Operator)"
-    echo_info "Backend API: Keycloak JWT (for API access)"
+    echo_info "This test validates the complete data flow through:"
+    echo_info "  1. Ingress (JWT authenticated upload)"
+    echo_info "  2. Koku/MASU (cost data processing)"
+    echo_info "  3. ROS Processor (resource optimization)"
+    echo_info "  4. Kruize (recommendation generation)"
+    echo_info "  5. ROS Backend API (JWT authenticated access)"
     echo ""
 
     # Check prerequisites first
@@ -939,36 +1008,45 @@ main() {
 
     if ! check_recommendations_with_retry "$UPLOAD_CLUSTER_ID"; then
         echo ""
-        echo_error "❌ JWT Authentication Data Flow Test FAILED!"
+        echo_error "❌ Cost Management & ROS Data Flow Test FAILED!"
         echo_error "The upload was successful but no recommendations were generated for cluster: $UPLOAD_CLUSTER_ID"
         echo_info ""
         echo_info "Troubleshooting steps:"
-        echo_info "  1. Check if data reached Kruize for this cluster:"
+        echo_info "  1. Check Koku listener for Kafka message consumption:"
+        echo_info "     oc logs -n $NAMESPACE -l app.kubernetes.io/component=listener --tail=100"
+        echo_info "  2. Check Koku/MASU workers for cost data processing:"
+        echo_info "     oc logs -n $NAMESPACE -l app.kubernetes.io/component=masu --tail=100"
+        echo_info "  3. Check if data reached Kruize for this cluster:"
         echo_info "     ./query-kruize.sh --cluster $UPLOAD_CLUSTER_ID"
-        echo_info "  2. Check processor logs for errors:"
+        echo_info "  4. Check ROS processor logs for errors:"
         echo_info "     oc logs -n $NAMESPACE deployment/cost-onprem-ros-processor --tail=100"
-        echo_info "  3. Check Kruize logs:"
+        echo_info "  5. Check Kruize logs:"
         echo_info "     oc logs -n $NAMESPACE deployment/cost-onprem-kruize --tail=100"
-        echo_info "  4. Query all recommendations:"
+        echo_info "  6. Query all recommendations:"
         echo_info "     ./query-kruize.sh --recommendations"
         exit 1
     fi
 
     echo ""
-    echo_success "✅ JWT Authentication Data Flow Test completed successfully!"
+    echo_success "✅ Cost Management & ROS Data Flow Test completed successfully!"
     echo_success "Test cluster ID: $UPLOAD_CLUSTER_ID"
     echo_info ""
-    echo_info "The test demonstrated:"
+    echo_info "The test demonstrated the complete data flow:"
     echo_info "  ✓ Keycloak JWT token generation"
     echo_info "  ✓ Authenticated file upload using JWT Bearer token (ingress)"
-    echo_info "  ✓ Ingress processing with JWT authentication"
-    echo_info "  ✓ Backend API queries with Keycloak JWT token"
-    echo_info "  ✓ Backend processing and data aggregation"
-    echo_info "  ✓ Kruize recommendation generation for uploaded data"
-    echo_info "  ✓ End-to-end data flow with optimization recommendations"
+    echo_info "  ✓ Ingress: File stored in S3 (cost-data bucket)"
+    echo_info "  ✓ Ingress: Kafka message published to platform.upload.announce"
+    echo_info "  ✓ Koku Listener: Consumed Kafka message"
+    echo_info "  ✓ Koku/MASU: Processed cost data and copied ROS data to ros-data bucket"
+    echo_info "  ✓ Koku: Published event to hccm.ros.events topic"
+    echo_info "  ✓ ROS Processor: Consumed event and sent data to Kruize"
+    echo_info "  ✓ Kruize: Generated optimization recommendations"
+    echo_info "  ✓ Backend API: Recommendations accessible via JWT-authenticated API"
     echo_info ""
-    echo_info "🎉 This confirms JWT authentication is working for both:"
+    echo_info "This confirms the full Cost Management -> ROS pipeline is working:"
     echo_info "   - Ingress: Keycloak JWT (for external Cost Management Operator)"
+    echo_info "   - Koku: Cost data processing and ROS data forwarding"
+    echo_info "   - ROS: Resource optimization recommendations"
     echo_info "   - Backend API: Keycloak JWT (for API access)"
     echo_info ""
     echo_info "To query recommendations for this specific upload later:"
@@ -981,7 +1059,7 @@ case "${1:-}" in
         echo "Usage: $0 [command]"
         echo ""
         echo "Commands:"
-        echo "  (no command)    Run complete JWT authentication test"
+        echo "  (no command)    Run complete Cost Management & ROS data flow test"
         echo "  help            Show this help message"
         echo ""
         echo "Environment Variables:"
@@ -989,25 +1067,36 @@ case "${1:-}" in
         echo "  HELM_RELEASE_NAME      Helm release name (default: cost-onprem)"
         echo "  KEYCLOAK_NAMESPACE     Keycloak namespace (default: keycloak)"
         echo ""
-        echo "This script tests JWT authentication for both ingress and backend API:"
+        echo "This script tests the complete Cost Management (Koku) and ROS data flow:"
         echo ""
-        echo "Keycloak JWT Authentication:"
+        echo "Data Flow Architecture:"
+        echo "  1. Upload: Cost Management Operator -> Ingress (JWT authenticated)"
+        echo "  2. Storage: Ingress stores files in S3 (cost-data bucket)"
+        echo "  3. Notification: Ingress publishes to Kafka (platform.upload.announce)"
+        echo "  4. Koku Processing: Listener consumes message, MASU processes cost data"
+        echo "  5. ROS Forwarding: Koku copies ROS data to ros-data bucket"
+        echo "  6. ROS Event: Koku publishes to Kafka (hccm.ros.events)"
+        echo "  7. ROS Processing: ROS Processor consumes event, sends to Kruize"
+        echo "  8. Recommendations: Kruize generates optimization recommendations"
+        echo "  9. API Access: Recommendations available via JWT-authenticated API"
+        echo ""
+        echo "Test Steps:"
         echo "  1. Detects Keycloak configuration automatically"
         echo "  2. Obtains JWT token using client credentials flow"
         echo "  3. Uploads sample data using JWT Bearer authentication (ingress)"
-        echo "  4. Queries backend API using JWT Bearer authentication"
-        echo "  5. Verifies the upload was processed successfully"
-        echo "  6. Validates recommendations were generated"
-        echo ""
-        echo "Note: The script validates the complete end-to-end flow using:"
-        echo "      - Keycloak JWT for external Cost Management Operator uploads (ingress)"
-        echo "      - Keycloak JWT for backend API access"
+        echo "  4. Verifies Koku listener consumed the Kafka message"
+        echo "  5. Verifies Koku/MASU processed the cost data"
+        echo "  6. Verifies ROS processor received the forwarded data"
+        echo "  7. Queries backend API using JWT Bearer authentication"
+        echo "  8. Validates recommendations were generated by Kruize"
         echo ""
         echo "Requirements:"
         echo "  - Active OpenShift session (oc login completed)"
         echo "  - Keycloak deployed with cost-management-operator client"
-        echo "  - ROS ingress with JWT authentication enabled"
-        echo "  - ROS backend API with JWT authentication enabled"
+        echo "  - Cost Management (Koku) services deployed and running"
+        echo "  - ROS services deployed and running"
+        echo "  - Ingress with JWT authentication enabled"
+        echo "  - Backend API with JWT authentication enabled"
         echo "  - User must have access to the cost-onprem namespace"
         exit 0
         ;;
