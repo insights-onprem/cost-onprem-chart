@@ -8,10 +8,10 @@
 # Data Flow Architecture:
 # =======================
 # 1. Cost Management Operator uploads data via JWT-authenticated ingress
-# 2. Ingress (insights-ingress-go) stores files in S3 (cost-data bucket)
+# 2. Ingress (insights-ingress-go) stores files in S3 (koku-bucket)
 # 3. Ingress publishes upload notification to Kafka (platform.upload.announce topic)
 # 4. Koku Listener consumes from platform.upload.announce
-# 5. Koku/MASU processes cost data from cost-data bucket
+# 5. Koku/MASU processes cost data from koku-bucket
 # 6. Koku copies ROS-relevant data to ros-data bucket
 # 7. Koku emits events to hccm.ros.events topic
 # 8. ROS Processor consumes from hccm.ros.events and sends data to Kruize
@@ -1034,7 +1034,7 @@ main() {
     echo_info "The test demonstrated the complete data flow:"
     echo_info "  ✓ Keycloak JWT token generation"
     echo_info "  ✓ Authenticated file upload using JWT Bearer token (ingress)"
-    echo_info "  ✓ Ingress: File stored in S3 (cost-data bucket)"
+    echo_info "  ✓ Ingress: File stored in S3 (koku-bucket)"
     echo_info "  ✓ Ingress: Kafka message published to platform.upload.announce"
     echo_info "  ✓ Koku Listener: Consumed Kafka message"
     echo_info "  ✓ Koku/MASU: Processed cost data and copied ROS data to ros-data bucket"
@@ -1071,7 +1071,7 @@ case "${1:-}" in
         echo ""
         echo "Data Flow Architecture:"
         echo "  1. Upload: Cost Management Operator -> Ingress (JWT authenticated)"
-        echo "  2. Storage: Ingress stores files in S3 (cost-data bucket)"
+        echo "  2. Storage: Ingress stores files in S3 (koku-bucket)"
         echo "  3. Notification: Ingress publishes to Kafka (platform.upload.announce)"
         echo "  4. Koku Processing: Listener consumes message, MASU processes cost data"
         echo "  5. ROS Forwarding: Koku copies ROS data to ros-data bucket"

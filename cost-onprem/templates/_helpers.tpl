@@ -726,7 +726,7 @@ Storage bucket name
 {{- if .Values.odf -}}
 {{- .Values.odf.bucket -}}
 {{- else -}}
-ros-data
+koku-bucket
 {{- end -}}
 {{- else -}}
 {{- .Values.ingress.storage.bucket -}}
