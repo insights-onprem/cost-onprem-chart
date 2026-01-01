@@ -798,8 +798,8 @@ ingress:
 
   # Kafka producer configuration
   kafka:
-    topic: "hccm.ros.events"  # INGRESS_KAFKAANNOUNCETOPIC
-    groupId: "ingress"        # INGRESS_KAFKAGROUPID
+    topic: "platform.upload.announce"  # INGRESS_KAFKAANNOUNCETOPIC
+    groupId: "ingress"                 # INGRESS_KAFKAGROUPID
 
   # Authentication (OpenShift only)
   # Note: Authentication is only available on OpenShift with Keycloak (RHBK).
