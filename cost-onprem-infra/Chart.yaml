@@ -2,7 +2,7 @@ apiVersion: v2
 name: cost-onprem-infra
 description: Infrastructure components for Cost Management On-Premise (PostgreSQL, Trino, Hive Metastore)
 type: application
-version: 0.2.3
+version: 0.2.4
 appVersion: "latest"
 keywords:
   - cost-management
