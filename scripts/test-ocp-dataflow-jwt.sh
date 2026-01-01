@@ -30,7 +30,11 @@ cleanup() {
     if [ -n "${PORT_FORWARD_PID:-}" ]; then
         kill "$PORT_FORWARD_PID" 2>/dev/null || true
     fi
-    # Note: No cleanup needed for user session tokens
+    # Cleanup test source if it was created
+    if [ -n "${TEST_SOURCE_ID:-}" ]; then
+        echo_info "Cleaning up test source..."
+        cleanup_test_source
+    fi
     exit $exit_code
 }
 
@@ -530,9 +534,177 @@ EOF
     echo "$test_csv"
 }
 
+# Global variables for source registration
+SOURCES_API_URL=""
+TEST_SOURCE_ID=""
+TEST_SOURCE_NAME=""
+ORG_ID="12345"
+
+# Function to register OCP source via Sources API
+# This creates a source that Koku will recognize when processing uploads
+register_ocp_source() {
+    local cluster_id="$1"
+
+    if [ -z "$cluster_id" ]; then
+        echo_error "Cluster ID is required for source registration"
+        return 1
+    fi
+
+    echo_info "=== Registering OCP Source via Sources API ==="
+
+    # Get Sources API service URL (internal cluster service)
+    local sources_svc="${HELM_RELEASE_NAME}-sources-api.${NAMESPACE}.svc.cluster.local:8000"
+    SOURCES_API_URL="http://${sources_svc}/api/sources/v1.0"
+
+    echo_info "Sources API URL: $SOURCES_API_URL"
+    echo_info "Cluster ID: $cluster_id"
+    echo_info "Org ID: $ORG_ID"
+
+    # Find a pod to execute curl from (use sources-listener or any koku pod)
+    local exec_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=sources-listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    if [ -z "$exec_pod" ]; then
+        exec_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    fi
+    if [ -z "$exec_pod" ]; then
+        echo_error "No suitable pod found to execute Sources API calls"
+        return 1
+    fi
+    echo_info "Using pod for API calls: $exec_pod"
+
+    # Step 1: Get OpenShift source type ID
+    echo_info "Getting OpenShift source type ID..."
+    local source_types_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -- \
+        curl -s "${SOURCES_API_URL}/source_types" \
+        -H "Content-Type: application/json" \
+        -H "x-rh-sources-org-id: $ORG_ID" 2>/dev/null)
+
+    local ocp_source_type_id=$(echo "$source_types_response" | jq -r '.data[] | select(.name == "openshift") | .id' 2>/dev/null)
+    if [ -z "$ocp_source_type_id" ] || [ "$ocp_source_type_id" = "null" ]; then
+        echo_error "Failed to find OpenShift source type"
+        echo_info "Available source types: $(echo "$source_types_response" | jq -r '.data[].name' 2>/dev/null | tr '\n' ', ')"
+        return 1
+    fi
+    echo_info "OpenShift source type ID: $ocp_source_type_id"
+
+    # Step 2: Get Cost Management application type ID
+    echo_info "Getting Cost Management application type ID..."
+    local app_types_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -- \
+        curl -s "${SOURCES_API_URL}/application_types" \
+        -H "Content-Type: application/json" \
+        -H "x-rh-sources-org-id: $ORG_ID" 2>/dev/null)
+
+    local cost_mgmt_app_type_id=$(echo "$app_types_response" | jq -r '.data[] | select(.name == "/insights/platform/cost-management") | .id' 2>/dev/null)
+    if [ -z "$cost_mgmt_app_type_id" ] || [ "$cost_mgmt_app_type_id" = "null" ]; then
+        echo_error "Failed to find Cost Management application type"
+        echo_info "Available app types: $(echo "$app_types_response" | jq -r '.data[].name' 2>/dev/null | tr '\n' ', ')"
+        return 1
+    fi
+    echo_info "Cost Management application type ID: $cost_mgmt_app_type_id"
+
+    # Step 3: Create the OCP source
+    TEST_SOURCE_NAME="E2E Test OCP Source $(date +%s)"
+    echo_info "Creating OCP source: $TEST_SOURCE_NAME"
+
+    local create_source_payload=$(cat <<EOF
+{"name": "$TEST_SOURCE_NAME", "source_type_id": "$ocp_source_type_id", "source_ref": "$cluster_id"}
+EOF
+)
+
+    local source_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -- \
+        curl -s -X POST "${SOURCES_API_URL}/sources" \
+        -H "Content-Type: application/json" \
+        -H "x-rh-sources-org-id: $ORG_ID" \
+        -d "$create_source_payload" 2>/dev/null)
+
+    TEST_SOURCE_ID=$(echo "$source_response" | jq -r '.id' 2>/dev/null)
+    if [ -z "$TEST_SOURCE_ID" ] || [ "$TEST_SOURCE_ID" = "null" ]; then
+        echo_error "Failed to create source"
+        echo_info "Response: $source_response"
+        return 1
+    fi
+    echo_success "Source created with ID: $TEST_SOURCE_ID"
+
+    # Step 4: Create authentication for the source
+    echo_info "Creating authentication for source..."
+    local auth_payload=$(cat <<EOF
+{"resource_type": "Source", "resource_id": "$TEST_SOURCE_ID", "authtype": "token", "username": "$cluster_id"}
+EOF
+)
+
+    local auth_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -- \
+        curl -s -X POST "${SOURCES_API_URL}/authentications" \
+        -H "Content-Type: application/json" \
+        -H "x-rh-sources-org-id: $ORG_ID" \
+        -d "$auth_payload" 2>/dev/null)
+
+    local auth_id=$(echo "$auth_response" | jq -r '.id' 2>/dev/null)
+    if [ -z "$auth_id" ] || [ "$auth_id" = "null" ]; then
+        echo_warning "Authentication creation may have failed (non-critical)"
+        echo_info "Response: $auth_response"
+    else
+        echo_success "Authentication created with ID: $auth_id"
+    fi
+
+    # Step 5: Create Cost Management application
+    echo_info "Creating Cost Management application..."
+    local app_payload=$(cat <<EOF
+{"source_id": "$TEST_SOURCE_ID", "application_type_id": "$cost_mgmt_app_type_id", "extra": {"bucket": "koku-bucket", "cluster_id": "$cluster_id"}}
+EOF
+)
+
+    local app_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -- \
+        curl -s -X POST "${SOURCES_API_URL}/applications" \
+        -H "Content-Type: application/json" \
+        -H "x-rh-sources-org-id: $ORG_ID" \
+        -d "$app_payload" 2>/dev/null)
+
+    local app_id=$(echo "$app_response" | jq -r '.id' 2>/dev/null)
+    if [ -z "$app_id" ] || [ "$app_id" = "null" ]; then
+        echo_error "Failed to create Cost Management application"
+        echo_info "Response: $app_response"
+        return 1
+    fi
+    echo_success "Cost Management application created with ID: $app_id"
+
+    # Step 6: Wait for source processing
+    echo_info "Waiting for Koku to process the new source (15 seconds)..."
+    sleep 15
+
+    echo_success "OCP source registered successfully"
+    echo_info "  Source ID: $TEST_SOURCE_ID"
+    echo_info "  Source Name: $TEST_SOURCE_NAME"
+    echo_info "  Cluster ID: $cluster_id"
+
+    return 0
+}
+
+# Function to cleanup test source after test
+cleanup_test_source() {
+    if [ -z "$TEST_SOURCE_ID" ]; then
+        return 0
+    fi
+
+    echo_info "Cleaning up test source: $TEST_SOURCE_ID"
+
+    # Find a pod to execute curl from
+    local exec_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=sources-listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    if [ -z "$exec_pod" ]; then
+        exec_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    fi
+
+    if [ -n "$exec_pod" ] && [ -n "$SOURCES_API_URL" ]; then
+        oc exec -n "$NAMESPACE" "$exec_pod" -- \
+            curl -s -X DELETE "${SOURCES_API_URL}/sources/${TEST_SOURCE_ID}" \
+            -H "x-rh-sources-org-id: $ORG_ID" 2>/dev/null || true
+        echo_info "Test source deleted"
+    fi
+
+    TEST_SOURCE_ID=""
+}
+
 # Function to upload test data with JWT authentication
 upload_test_data_jwt() {
-    echo_info "=== STEP 1: Upload Test Data with JWT Authentication ===="
+    echo_info "=== STEP 6: Upload Test Data with JWT Authentication ===="
 
     if [ -z "$JWT_TOKEN" ]; then
         echo_error "JWT token not available. Please run get_jwt_token first."
@@ -560,9 +732,14 @@ upload_test_data_jwt() {
         return 1
     fi
 
-    # Generate unique cluster ID for this test run
-    UPLOAD_CLUSTER_ID="test-cluster-$(date +%s)"
-    echo_info "Generated cluster ID for this upload: $UPLOAD_CLUSTER_ID"
+    # Use the pre-generated cluster ID (set before calling this function)
+    if [ -z "$UPLOAD_CLUSTER_ID" ]; then
+        echo_error "UPLOAD_CLUSTER_ID not set. Source must be registered first."
+        rm -f "$test_csv"
+        rm -rf "$test_dir"
+        return 1
+    fi
+    echo_info "Using registered cluster ID: $UPLOAD_CLUSTER_ID"
 
     # Create manifest.json (required by ingress service)
     local manifest_file="$test_dir/manifest.json"
@@ -648,10 +825,10 @@ EOF
 
 # Function to verify upload was processed
 verify_upload_processing() {
-    echo_info "=== STEP 2: Verify Upload Processing ===="
+    echo_info "=== STEP 7: Verify Upload Processing ===="
 
-    # Step 2a: Check ingress logs for upload activity
-    echo_info "--- Step 2a: Ingress Upload Verification ---"
+    # Step 7a: Check ingress logs for upload activity
+    echo_info "--- Step 7a: Ingress Upload Verification ---"
     echo_info "Checking ingress logs for upload processing..."
     local ingress_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=ingress -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
@@ -673,9 +850,9 @@ verify_upload_processing() {
         echo_warning "Ingress pod not found (tried label: app.kubernetes.io/name=ingress)"
     fi
 
-    # Step 2b: Check Koku Listener logs for Kafka message consumption
+    # Step 7b: Check Koku Listener logs for Kafka message consumption
     echo_info ""
-    echo_info "--- Step 2b: Koku Listener Verification ---"
+    echo_info "--- Step 7b: Koku Listener Verification ---"
     echo_info "Checking Koku listener for Kafka message consumption (platform.upload.announce)..."
     local listener_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
@@ -693,9 +870,9 @@ verify_upload_processing() {
         fi
     fi
 
-    # Step 2c: Check Koku/MASU worker logs for cost data processing
+    # Step 7c: Check Koku/MASU worker logs for cost data processing
     echo_info ""
-    echo_info "--- Step 2c: Koku/MASU Worker Verification ---"
+    echo_info "--- Step 7c: Koku/MASU Worker Verification ---"
     echo_info "Checking Koku workers for cost data processing..."
 
     # Check MASU pod for processing activity
@@ -717,9 +894,9 @@ verify_upload_processing() {
         echo_info "No Celery worker pods found - Koku may use a different worker configuration"
     fi
 
-    # Step 2d: Check ROS Processor for downstream processing
+    # Step 7d: Check ROS Processor for downstream processing
     echo_info ""
-    echo_info "--- Step 2d: ROS Processor Verification ---"
+    echo_info "--- Step 7d: ROS Processor Verification ---"
     local processor_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=ros-processor" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
     if [ -n "$processor_pod" ]; then
@@ -930,18 +1107,29 @@ main() {
     fi
     echo ""
 
-    # Step 5: Upload test data with JWT authentication
+    # Step 5: Register OCP source before upload
+    # Generate unique cluster ID for this test run
+    UPLOAD_CLUSTER_ID="test-cluster-$(date +%s)"
+    echo_info "Generated cluster ID: $UPLOAD_CLUSTER_ID"
+
+    if ! register_ocp_source "$UPLOAD_CLUSTER_ID"; then
+        echo_error "Failed to register OCP source"
+        exit 1
+    fi
+    echo ""
+
+    # Step 6: Upload test data with JWT authentication
     if ! upload_test_data_jwt; then
         echo_error "Upload with JWT authentication failed"
         exit 1
     fi
     echo ""
 
-    # Step 6: Verify processing
+    # Step 7: Verify processing
     verify_upload_processing
     echo ""
 
-    # Step 7: Query backend API with JWT token to verify authenticated access
+    # Step 8: Query backend API with JWT token to verify authenticated access
     echo_info "=== Querying Backend API with Keycloak JWT Token ==="
     echo_info "Testing API access using Keycloak JWT token..."
     echo ""
@@ -1000,7 +1188,7 @@ main() {
     fi
     echo ""
 
-    # Step 8: Check for recommendations with retries (for the specific cluster we just uploaded)
+    # Step 9: Check for recommendations with retries (for the specific cluster we just uploaded)
     if [ -z "$UPLOAD_CLUSTER_ID" ]; then
         echo_error "UPLOAD_CLUSTER_ID not set. This should have been set during upload."
         exit 1
@@ -1033,6 +1221,7 @@ main() {
     echo_info ""
     echo_info "The test demonstrated the complete data flow:"
     echo_info "  ✓ Keycloak JWT token generation"
+    echo_info "  ✓ OCP source registered via Sources API"
     echo_info "  ✓ Authenticated file upload using JWT Bearer token (ingress)"
     echo_info "  ✓ Ingress: File stored in S3 (koku-bucket)"
     echo_info "  ✓ Ingress: Kafka message published to platform.upload.announce"
