@@ -22,7 +22,7 @@ When the operator attempts to communicate with services using self-signed certif
 ERROR: Get "https://keycloak-keycloak.apps.cluster.local/realms/kubernetes/protocol/openid-connect/token":
 x509: certificate signed by unknown authority
 
-# Upload to ROS Ingress
+# Upload to Ingress
 ERROR: Post "https://cost-onprem-ingress-cost-onprem.apps.cluster.local/api/ingress/v1/upload":
 tls: failed to verify certificate: x509: certificate signed by unknown authority
 
@@ -49,7 +49,7 @@ The operator's `combined-ca-bundle.crt` doesn't include:
 #### Impact on JWT Authentication Flow
 In our JWT authentication implementation, this affects:
 1. **Token Generation**: Operator → Keycloak (fails with certificate error)
-2. **Upload Process**: Operator → ROS Ingress (fails with certificate error)
+2. **Upload Process**: Operator → Ingress (fails with certificate error)
 3. **Metrics Collection**: Operator → Prometheus (fails with certificate error)
 
 The operator logs will show continuous authentication and upload failures, preventing cost management data from being collected and uploaded.
@@ -58,7 +58,7 @@ The operator logs will show continuous authentication and upload failures, preve
 
 The Cost Management Operator communicates with several services that may use self-signed certificates:
 1. **Red Hat Build of Keycloak (RHBK)** - for JWT token generation
-2. **ROS Ingress** - for uploading metrics data
+2. **Ingress** - for uploading metrics data
 3. **Prometheus/Thanos** - for collecting metrics
 4. **OpenShift API** - for cluster metadata
 
@@ -283,7 +283,7 @@ Based on our real-world testing, here are the exact errors you'll encounter and 
 | Error | When It Occurs | Root Cause | Solution |
 |-------|---------------|------------|----------|
 | `x509: certificate signed by unknown authority` | JWT token generation from Keycloak | Keycloak CA not in bundle | Add Keycloak CA to combined-ca-bundle |
-| `tls: failed to verify certificate: x509: certificate signed by unknown authority` | Upload to ROS ingress | Ingress route CA not in bundle | Add OpenShift ingress CA to bundle |
+| `tls: failed to verify certificate: x509: certificate signed by unknown authority` | Upload to ingress | Ingress route CA not in bundle | Add OpenShift ingress CA to bundle |
 | `SSL: CERTIFICATE_VERIFY_FAILED` | Any HTTPS communication | Outdated or incomplete CA bundle | Run CA bundle update script |
 | `dial tcp: lookup keycloak-keycloak.apps.cluster.local: no such host` | DNS resolution failure | Network/DNS issue | Verify service names and DNS |
 | `connection refused` | Service connectivity | Service not available | Check pod status: `oc get pods -n keycloak` |
@@ -323,7 +323,7 @@ oc logs -n costmanagement-metrics-operator deployment/costmanagement-metrics-ope
 ### Why TLS Matters for JWT Authentication
 Our JWT authentication implementation requires the Cost Management Operator to:
 1. **Generate JWT tokens** by calling Keycloak's token endpoint
-2. **Upload data** to the ROS ingress with JWT authentication
+2. **Upload data** to the ingress with JWT authentication
 3. **Validate certificates** for all HTTPS communications
 
 Without proper TLS configuration, the JWT authentication flow fails at the token generation step.

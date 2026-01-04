@@ -27,7 +27,7 @@ Welcome to the Resource Optimization Service (ROS) for OpenShift Container Platf
 | **[UI OAuth Authentication](ui-oauth-authentication.md)** | Complete guide for UI OAuth authentication with Keycloak OAuth proxy | Understanding and troubleshooting UI authentication on OpenShift |
 | **[TLS Certificate Options](tls-certificate-options.md)** | Guide to different TLS certificate configuration scenarios | Configuring TLS for Keycloak JWKS endpoint validation |
 | **[External Keycloak Scenario](external-keycloak-scenario.md)** | Analysis and architecture for using external Keycloak | Connecting Cost Management On-Premise to Keycloak outside the cluster |
-| **[Cost Management Operator TLS Config Setup](cost-management-operator-tls-config-setup.md)** | TLS configuration for the Cost Management Metrics Operator | Setting up secure communication between operator and ROS ingress |
+| **[Cost Management Operator TLS Config Setup](cost-management-operator-tls-config-setup.md)** | TLS configuration for the Cost Management Metrics Operator | Setting up secure communication between operator and ingress |
 
 ### Configuration
 
@@ -257,11 +257,11 @@ Welcome to the Resource Optimization Service (ROS) for OpenShift Container Platf
 ---
 
 #### [Cost Management Operator TLS Config Setup](cost-management-operator-tls-config-setup.md)
-**Purpose:** Instructions for configuring TLS/JWT authentication between the Cost Management Metrics Operator and ROS ingress.
+**Purpose:** Instructions for configuring TLS/JWT authentication between the Cost Management Metrics Operator and ingress.
 
 **Use when:**
 - Setting up the Cost Management Metrics Operator
-- Configuring secure communication with ROS ingress
+- Configuring secure communication with ingress
 - Troubleshooting operator upload issues
 
 **Key topics:**

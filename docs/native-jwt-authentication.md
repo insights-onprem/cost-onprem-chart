@@ -12,7 +12,7 @@ The ROS Helm Chart uses **Envoy's native JWT authentication filter** for validat
 graph TB
     Client["Client<br/>(with JWT)"]
     Envoy["Envoy Sidecar<br/>(Port 8080)<br/><br/>1. jwt_authn filter<br/>   - Fetches JWKS from Keycloak<br/>   - Validates JWT signature<br/>   - Extracts claims to metadata<br/><br/>2. Lua filter<br/>   - Reads JWT claims<br/>   - Injects X-ROS-* headers<br/><br/>3. Routes to backend"]
-    Ingress["ROS Ingress Service<br/>(Port 8081)<br/><br/>- Trusts X-ROS headers<br/>- Processes authenticated upload"]
+    Ingress["Ingress Service<br/>(Port 8081)<br/><br/>- Trusts X-RH-Identity headers<br/>- Processes authenticated upload"]
 
     Client -->|"Authorization: Bearer &lt;JWT&gt;"| Envoy
     Envoy -->|"X-ROS-Authenticated: true<br/>X-ROS-User-ID: &lt;sub&gt;<br/>X-Bearer-Token: &lt;token&gt;"| Ingress
@@ -276,7 +276,7 @@ This script:
 
 ## Payload Requirements
 
-The ROS ingress service expects tar.gz archives with:
+The ingress service expects tar.gz archives with:
 
 1. **manifest.json** (required):
 ```json

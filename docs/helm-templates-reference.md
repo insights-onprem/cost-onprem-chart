@@ -96,7 +96,7 @@ graph TB
         Lua --> Router
     end
 
-    Backend["ROS Ingress Backend<br/>(Port 8081)<br/><br/>- Trusts X-ROS headers<br/>- Processes authenticated req"]
+    Backend["Ingress Backend<br/>(Port 8081)<br/><br/>- Trusts X-RH-Identity headers<br/>- Processes authenticated req"]
 
     Router --> Backend
 
