@@ -764,8 +764,9 @@ ingress:
     validTypes: "hccm"
 
   # Storage backend configuration (MinIO/S3)
+  # INGRESS_STAGEBUCKET - staging bucket where uploads are stored before processing
   storage:
-    bucket: "koku-bucket"
+    bucket: "insights-upload-perma"
     useSSL: false      # Overridden to true on OpenShift (ODF)
 
   # Kafka producer configuration

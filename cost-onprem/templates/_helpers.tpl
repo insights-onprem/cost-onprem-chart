@@ -707,14 +707,14 @@ Storage secret key (MinIO root password - ODF uses noobaa-admin secret directly)
 {{- end }}
 
 {{/*
-Storage bucket name
+Storage bucket name (staging bucket for ingress uploads)
 */}}
 {{- define "cost-onprem.storage.bucket" -}}
 {{- if eq (include "cost-onprem.platform.isOpenShift" .) "true" -}}
 {{- if .Values.odf -}}
 {{- .Values.odf.bucket -}}
 {{- else -}}
-koku-bucket
+insights-upload-perma
 {{- end -}}
 {{- else -}}
 {{- .Values.ingress.storage.bucket -}}
