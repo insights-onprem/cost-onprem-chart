@@ -343,38 +343,6 @@ kubectl get pods -n kafka -l name=strimzi-cluster-operator
 
 ## E2E Validation Script Issues
 
-### Trino Tables Not Created After Manual Table Drops
-
-**Problem**: After manually dropping Trino tables, Koku doesn't recreate them and summarization fails with `Table 'org1234567.openshift_pod_usage_line_items_daily' does not exist`.
-
-**Cause**: Koku caches the result of `table_exists()` in Redis. When you manually drop Trino tables, the Redis cache still returns `True`, causing Koku to skip table creation. This is a known Koku behavior where the cache is not invalidated on external table drops.
-
-**Symptoms**:
-- Listener logs show `'create_table': True` but no `attempting to create parquet table` message
-- Listener logs show `WARNING TrinoUserError(type=USER_ERROR, name=NOT_FOUND, message="Table 'org1234567.openshift_xxx' not found")`
-- Summarization fails with `TABLE_NOT_FOUND` error
-
-**Solution**: Clear Redis/Valkey cache and restart the Koku listener:
-
-```bash
-# Step 1: Flush Redis/Valkey cache (uses valkey-cli, Redis-compatible)
-REDIS_POD=$(kubectl get pod -n cost-onprem -l app.kubernetes.io/name=redis -o jsonpath='{.items[0].metadata.name}')
-kubectl exec -n cost-onprem $REDIS_POD -- valkey-cli FLUSHALL
-
-# Step 2: Restart Koku listener to clear in-memory state
-kubectl delete pod -n cost-onprem -l app.kubernetes.io/component=listener
-kubectl wait --for=condition=ready pod -l app.kubernetes.io/component=listener -n cost-onprem --timeout=60s
-
-# Step 3: Trigger data processing again
-./scripts/cost-mgmt-ocp-dataflow.sh --force
-```
-
-**Note**: The Redis deployment uses Valkey (Redis-compatible). If Redis has a PVC, restarting the pod alone won't clear the cache - you must use `valkey-cli FLUSHALL`.
-
-**Note**: This issue only occurs when tables are manually dropped. In normal operation, tables are created once and persist, so this caching behavior is not problematic. The E2E script works like production - it doesn't drop/recreate tables.
-
----
-
 ### Starting Fresh: Complete E2E Test Environment Reset
 
 **Problem**: You need to completely reset the E2E test environment to start fresh.
@@ -384,31 +352,19 @@ kubectl wait --for=condition=ready pod -l app.kubernetes.io/component=listener -
 **Steps**:
 
 ```bash
-# 1. Drop all OCP Trino tables
-for table in openshift_pod_usage_line_items openshift_pod_usage_line_items_daily \
-             openshift_node_labels_line_items openshift_node_labels_line_items_daily \
-             openshift_namespace_labels_line_items openshift_namespace_labels_line_items_daily; do
-    kubectl exec -n cost-onprem trino-coordinator-0 -- \
-        trino --execute "DROP TABLE IF EXISTS hive.org1234567.$table"
-done
-
-# 2. Delete parquet files from S3
-kubectl exec -n cost-onprem -l app.kubernetes.io/name=minio -- \
-    mc rm --recursive --force myminio/koku-bucket/data/parquet/org1234567/OCP/
-
-# 3. Clear Redis/Valkey cache (uses valkey-cli, Redis-compatible)
+# 1. Clear Redis/Valkey cache (uses valkey-cli, Redis-compatible)
 REDIS_POD=$(kubectl get pod -n cost-onprem -l app.kubernetes.io/name=redis -o jsonpath='{.items[0].metadata.name}')
 kubectl exec -n cost-onprem $REDIS_POD -- valkey-cli FLUSHALL
 
-# 4. Restart Koku listener
+# 2. Restart Koku listener to clear in-memory state
 kubectl delete pod -n cost-onprem -l app.kubernetes.io/component=listener
 kubectl wait --for=condition=ready pod -l app.kubernetes.io/component=listener -n cost-onprem --timeout=60s
 
-# 5. Delete test data from S3
+# 3. Delete test data from S3
 kubectl exec -n cost-onprem -l app.kubernetes.io/name=minio -- \
     mc rm --recursive --force myminio/koku-bucket/reports/
 
-# 6. Run E2E test
+# 4. Run E2E test
 ./scripts/cost-mgmt-ocp-dataflow.sh --force
 ```
 

@@ -22,7 +22,7 @@ The Cost Management stack consists of two Helm charts deployed in sequence:
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    cost-onprem-infra (Chart 1)                  │
-│  PostgreSQL, Trino (Coordinator + Workers), Hive Metastore      │
+│  PostgreSQL, Valkey                                             │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -109,14 +109,9 @@ The system deploys **24 Celery pods** across different queues:
 |-----------|----------|-------------|-----------|----------------|--------------|
 | **PostgreSQL (main)** | 1 | 500m | 2000m | 1 Gi | 4 Gi |
 | cost-onprem-database | 1 | 100m | 500m | 256 Mi | 512 Mi |
-| **Trino Coordinator** | 1 | 250m | 500m | 1 Gi | 2 Gi |
-| **Trino Worker** | 2 | 250m | 500m | 1 Gi | 2 Gi |
-| Hive Metastore | 1 | 250m | 500m | 512 Mi | 1 Gi |
-| Hive Metastore DB | 1 | 50m | 100m | 128 Mi | 256 Mi |
-| Redis | 1 | 100m | 500m | 256 Mi | 512 Mi |
 | Valkey | 1 | 200m | 500m | 512 Mi | 1 Gi |
 
-**Subtotal**: 9 pods, **2.05 cores** request, **~5.7 Gi** memory request
+**Subtotal**: 3 pods, **800m** request, **~1.8 Gi** memory request
 
 ---
 
@@ -157,20 +152,20 @@ Kafka pods typically don't have explicit resource requests set by default. Based
 | Koku Core Services | 7 | 1.9 cores | 4.5 Gi |
 | Celery Workers | 24 | 2.4 cores | 6.5 Gi |
 | ROS Services | 6 | 1.3 cores | 4.2 Gi |
-| Infrastructure | 9 | 2.05 cores | 5.7 Gi |
+| Infrastructure | 3 | 0.8 cores | 1.8 Gi |
 | Supporting Services | 3 | 0.6 cores | 1.3 Gi |
 | Kafka (recommended) | 7 | 3.2 cores | 7.0 Gi |
-| **TOTAL** | **56** | **~11.5 cores** | **~29 Gi** |
+| **TOTAL** | **50** | **~10.2 cores** | **~25 Gi** |
 
 ### Grand Total
 
 | Metric | Value |
 |--------|-------|
-| **Total Pods** | 55-56 |
-| **CPU Requests** | ~10-12 cores |
-| **CPU Limits** | ~17-18 cores |
-| **Memory Requests** | ~24-30 Gi |
-| **Memory Limits** | ~50-55 Gi |
+| **Total Pods** | 49-50 |
+| **CPU Requests** | ~9-11 cores |
+| **CPU Limits** | ~15-16 cores |
+| **Memory Requests** | ~22-26 Gi |
+| **Memory Limits** | ~45-50 Gi |
 
 ---
 
@@ -207,10 +202,9 @@ For resource-constrained environments, you can reduce the deployment footprint:
 | Remove penalty workers (8 pods) | 800m | ~2 Gi | Slower recovery from failures |
 | Remove XL workers (8 pods) | 800m | ~2 Gi | Large jobs may timeout |
 | Single replica API pods | 600m | 1.5 Gi | No HA for API layer |
-| Single Trino worker | 250m | 1 Gi | Slower queries |
 | Skip Kruize replica | 200m | 1 Gi | No HA for recommendations |
 
-**Minimal Deployment Total**: ~6.5 cores, ~16 Gi memory
+**Minimal Deployment Total**: ~6.5 cores, ~15 Gi memory
 
 ---
 
@@ -219,13 +213,11 @@ For resource-constrained environments, you can reduce the deployment footprint:
 | Component | Storage Class | Size | Notes |
 |-----------|---------------|------|-------|
 | PostgreSQL | Block (RWO) | 50 Gi | Main application database |
-| Hive Metastore DB | Block (RWO) | 10 Gi | Metadata storage |
-| Trino | - | - | Stateless (uses ODF for data) |
 | ODF/MinIO | Object Storage | 150+ Gi | Cost report storage |
 | Kafka | Block (RWO) | 50 Gi × 3 | Message persistence |
 | ZooKeeper | Block (RWO) | 10 Gi × 3 | Coordination state |
 
-**Total Persistent Storage**: ~300-400 Gi
+**Total Persistent Storage**: ~280-380 Gi
 
 ---
 
@@ -301,14 +293,6 @@ koku:
       replicas: 1
     writes:
       replicas: 1
-
-# Reduce Trino workers
-trino:
-  worker:
-    replicas: 1
-    resources:
-      requests:
-        memory: "512Mi"
 ```
 
 ---

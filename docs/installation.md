@@ -77,20 +77,18 @@ export USE_LOCAL_CHART=true
 
 **What the script does (Two-Phase Deployment):**
 
-The script orchestrates a complete deployment in two phases:
+The script deploys a unified chart containing all components:
 
-1. **Phase 1: Infrastructure** (`cost-onprem-infra` chart)
-   - PostgreSQL (Koku database)
-   - Trino Coordinator + Workers (analytics engine)
-   - Hive Metastore + DB (table metadata)
-   - Redis (caching)
+**Infrastructure:**
+- PostgreSQL (unified database for Koku, Sources, ROS, Kruize)
+- Valkey (caching and Celery broker)
 
-2. **Phase 2: Application** (`cost-onprem` chart)
-   - Koku API (reads, writes, masu, listener)
-   - Celery Workers (background processing)
-   - ROS components (API, processor, housekeeper)
-   - Sources API
-   - UI and Ingress
+**Applications:**
+- Koku API (reads, writes, masu, listener)
+- Celery Workers (background processing)
+- ROS components (API, processor, housekeeper)
+- Sources API
+- UI and Ingress
 
 **Features:**
 - ✅ Two-phase deployment (infrastructure first, then application)
@@ -546,19 +544,15 @@ kubectl exec -it statefulset/cost-onprem-minio -n cost-onprem -- \
 > - **Koku:** `deploy/clowdapp.yaml` in [insights-onprem/koku](https://github.com/insights-onprem/koku)
 > - **ROS:** `clowdapp.yaml` in [insights-onprem/ros-ocp-backend](https://github.com/insights-onprem/ros-ocp-backend)
 
-### Infrastructure Chart (cost-onprem-infra)
+### Infrastructure Components
 
 | Component | Pods | CPU Request | CPU Limit | Memory Request | Memory Limit |
 |-----------|------|-------------|-----------|----------------|--------------|
 | **PostgreSQL** | 1 | 500m | 1000m | 1Gi | 2Gi |
-| **Trino Coordinator** | 1 | 1000m | 2000m | 2Gi | 4Gi |
-| **Trino Worker** | 1 | 1000m | 2000m | 2Gi | 4Gi |
-| **Hive Metastore** | 1 | 500m | 1000m | 1Gi | 2Gi |
-| **Hive Metastore DB** | 1 | 250m | 500m | 512Mi | 1Gi |
-| **Redis** | 1 | 200m | 400m | 256Mi | 512Mi |
-| **Subtotal** | **6** | **3.45 cores** | **6.9 cores** | **6.75 GB** | **13.5 GB** |
+| **Valkey** | 1 | 100m | 500m | 256Mi | 512Mi |
+| **Subtotal** | **2** | **600m** | **1.5 cores** | **1.25 GB** | **2.5 GB** |
 
-### Application Chart (cost-onprem)
+### Application Components
 
 | Component | Pods | CPU Request | CPU Limit | Memory Request | Memory Limit |
 |-----------|------|-------------|-----------|----------------|--------------|
@@ -608,9 +602,9 @@ cd scripts
 2. ✅ **Provider** - Creates OCP cost provider
 3. ✅ **Data Upload** - Generates and uploads test data (CSV → TAR.GZ → S3)
 4. ✅ **Kafka** - Publishes message to trigger processing
-5. ✅ **Processing** - CSV → Parquet conversion, Trino table creation
-6. ✅ **Trino** - Validates tables and data
-7. ✅ **Aggregation** - Trino SQL → PostgreSQL summary tables
+5. ✅ **Processing** - CSV parsing and data ingestion
+6. ✅ **Database** - Validates data in PostgreSQL tables
+7. ✅ **Aggregation** - Summary table generation
 8. ✅ **Validation** - Verifies cost calculations
 
 ### Expected Output
@@ -625,7 +619,7 @@ Phases: 8/8 passed
   ✅ provider
   ✅ data_upload
   ✅ processing
-  ✅ trino
+  ✅ database
   ✅ validation
 
 Total Time: ~2-3 minutes
@@ -635,7 +629,7 @@ Total Time: ~2-3 minutes
 
 ```bash
 # Port-forward to PostgreSQL
-kubectl port-forward -n cost-onprem pod/postgres-0 5432:5432 &
+kubectl port-forward -n cost-onprem pod/cost-onprem-database-0 5432:5432 &
 
 # Query aggregated cost data
 psql -h localhost -U koku -d koku -c "

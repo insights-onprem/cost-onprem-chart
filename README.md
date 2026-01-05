@@ -1,37 +1,32 @@
 # Cost Management On-Premise Helm Charts
 
-This repository contains Helm charts for deploying cost management solutions on-premise:
+This repository contains a Helm chart for deploying cost management solutions on-premise:
 
-1. **`cost-onprem/`** - Main application chart containing ROS, Kruize, Sources API, and Koku (Cost Management) components
-2. **`cost-onprem-infra/`** - Infrastructure chart (PostgreSQL, Redis) deployed before the main chart
+**`cost-onprem/`** - Unified chart containing all components: ROS, Kruize, Sources API, Koku (Cost Management), PostgreSQL, and Valkey
 
 ---
 
-## 📊 Cost Management (Koku) Deployment ⭐ NEW
+## 📊 Cost Management (Koku) Deployment
 
-Complete Helm charts for deploying the full Cost Management stack with OCP cost analytics capabilities.
+Complete Helm chart for deploying the full Cost Management stack with OCP cost analytics capabilities.
 
 **🚀 Quick Start:**
 ```bash
-# Automated deployment (recommended) - deploys both infra + main chart
+# Automated deployment (recommended)
 ./scripts/install-helm-chart.sh
-
-# Or deploy components separately
-./scripts/bootstrap-infrastructure.sh --namespace cost-onprem  # Infrastructure (PostgreSQL, Redis)
-./scripts/install-helm-chart.sh                                 # Application (uses infra deployed above)
 ```
 
 **📖 Documentation:**
 - **[Cost Management Installation Guide](docs/cost-management-installation.md)** - Complete deployment guide
 - **Prerequisites**: OpenShift 4.18+, ODF (150GB+), Kafka/Strimzi
-- **Architecture**: 2-chart deployment (`cost-onprem-infra` → `cost-onprem`)
-- **E2E Testing**: Automated validation with `./scripts/cost-mgmt-ocp-dataflow.sh`
+- **Architecture**: Single unified chart with all components
+- **E2E Testing**: Automated validation with `./scripts/cost-mgmt-ocp-dataflow.sh`. Basic sanity with `./scripts/test-ocp-dataflow-jwt.sh`
 
 **Key Features:**
 - 📊 Complete OCP cost data pipeline (Kafka → CSV → PostgreSQL)
-- 🔄 37 Kubernetes resources with optimized resource requests/limits
-- 🧪 Python-based E2E validation framework
-- 📦 Modular deployment (infrastructure and application separately or together)
+- 🗄️ PostgreSQL-based data processing and analytics
+- 🔄 Optimized Kubernetes resources with production-ready defaults
+- 🧪 Comprehensive E2E validation framework
 
 ---
 
@@ -115,7 +110,7 @@ cost-onprem-chart/
 ## 📦 Services Deployed
 
 ### Stateful Services
-- **PostgreSQL** (3 instances): ROS, Kruize, Sources databases
+- **PostgreSQL**: Unified database server hosting ROS, Kruize, Koku, and Sources databases
 - **MinIO/ODF**: Object storage (MinIO for Kubernetes, ODF for OpenShift)
 
 ### Kafka Infrastructure (Managed by Install Script)

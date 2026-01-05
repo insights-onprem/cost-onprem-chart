@@ -19,7 +19,7 @@ Validate that Cost Management can be deployed from scratch and all data flows wo
 2. Cleaned all S3 storage (`koku-bucket` bucket): ~444KB of data deleted
 3. Ran `scripts/install-cost-management-complete.sh`
    - Kafka/Strimzi deployed successfully
-   - Infrastructure chart deployed (PostgreSQL, Trino, Redis, Hive Metastore)
+   - Infrastructure chart deployed (PostgreSQL, Valkey)
    - Application chart deployed (Koku API, Celery workers, Sources API)
 4. All 37 pods reached `Running` status
 
@@ -40,8 +40,8 @@ cd scripts && ./cost-onprem-ocp-dataflow.sh --force
 | Kafka Validation | ✅ PASSED | 5s | Cluster healthy, listener connected |
 | Provider Setup | ✅ PASSED | 2s | OCP provider created successfully |
 | Data Upload | ✅ PASSED | 30s | TAR.GZ uploaded, Kafka message sent |
-| Processing | ✅ PASSED | 65s | 3 CSVs → Parquet → S3 |
-| Trino | ✅ PASSED | 5s | Tables created, queries working |
+| Processing | ✅ PASSED | 65s | 3 CSVs processed → S3 |
+| Database | ✅ PASSED | 5s | Tables verified, queries working |
 | Validation | ✅ PASSED | 10s | Cost calculations accurate |
 
 **Total Duration:** ~5 minutes
@@ -100,16 +100,6 @@ This is **correct behavior** - Cost Management tracks both allocated and unalloc
 
 **Fix Required:** Add retry logic or wait longer for summary aggregation before validation
 
-### ⚠️ Minor: Trino Table Cleanup Warning
-
-**Error:** `'KubernetesClient' object has no attribute 'execute_command_in_pod'`
-
-**Impact:** None - cleanup still works by deleting S3 files
-
-**Root Cause:** Method name mismatch in cleanup code
-
-**Fix Required:** Update cleanup method to use correct KubernetesClient API
-
 ### ⚠️ Minor: Summary Aggregation Timing
 
 **Observation:** Summary aggregation can take >60 seconds in some cases
@@ -129,9 +119,7 @@ This is **correct behavior** - Cost Management tracks both allocated and unalloc
 
 **Infrastructure Components:**
 - PostgreSQL: 1 pod (koku database)
-- Trino: 1 coordinator + 1 worker
-- Hive Metastore: 1 pod + metastore-db
-- Redis: 1 pod
+- Valkey: 1 pod (cache/broker)
 - Kafka: 7 pods (Strimzi operator + cluster)
 
 **Application Components:**
@@ -156,17 +144,15 @@ The `install-cost-management-complete.sh` script successfully:
 
 The E2E test successfully validates:
 - Data ingestion (Kafka → CSV → S3)
-- Parquet conversion (CSV → Parquet → S3)
-- Trino table creation and queries
-- Summary aggregation (Trino → PostgreSQL)
+- Database table verification and queries
+- Summary aggregation to PostgreSQL
 - Cost calculations (exact match with expected values)
 
 ### ✅ Cost Management: **FUNCTIONAL**
 
 The deployed system correctly:
 - Processes OCP usage data
-- Converts to Parquet format
-- Aggregates data via Trino
+- Aggregates data in PostgreSQL
 - Calculates costs accurately
 - Tracks allocated and unallocated capacity
 

@@ -183,7 +183,7 @@ ROS components remain constant regardless of deployment scenario:
 | **OCP-Only** | 16-17 | 5-6 | **21-23** | **~3.0 cores** | **~9 Gi** |
 | **OCP on Cloud** | 25-26 | 5-6 | **30-32** | **~4.3 cores** | **~12.3 Gi** |
 
-> **Note**: These totals exclude infrastructure (PostgreSQL, Trino, Kafka, Redis) which adds ~5 Gi memory and ~2 cores.
+> **Note**: These totals exclude infrastructure (PostgreSQL, Kafka, Valkey) which adds ~5 Gi memory and ~2 cores.
 
 ### With Infrastructure
 

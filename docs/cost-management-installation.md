@@ -33,19 +33,15 @@
 
 ### Resource Requirements by Component
 
-#### Infrastructure Chart (cost-onprem-infra)
+#### Infrastructure Components
 
 | Component | Pods | CPU Request | CPU Limit | Memory Request | Memory Limit |
 |-----------|------|-------------|-----------|----------------|--------------|
 | **PostgreSQL** | 1 | 500m | 1000m | 1Gi | 2Gi |
-| **Trino Coordinator** | 1 | 1000m | 2000m | 2Gi | 4Gi |
-| **Trino Worker** | 1 | 1000m | 2000m | 2Gi | 4Gi |
-| **Hive Metastore** | 1 | 500m | 1000m | 1Gi | 2Gi |
-| **Hive Metastore DB** | 1 | 250m | 500m | 512Mi | 1Gi |
-| **Redis** | 1 | 200m | 400m | 256Mi | 512Mi |
-| **Subtotal** | **6** | **3.45 cores** | **6.9 cores** | **6.75 GB** | **13.5 GB** |
+| **Valkey** | 1 | 100m | 500m | 256Mi | 512Mi |
+| **Subtotal** | **2** | **600m** | **1.5 cores** | **1.25 GB** | **2.5 GB** |
 
-#### Application Chart (cost-onprem)
+#### Application Components
 
 | Component | Pods | CPU Request | CPU Limit | Memory Request | Memory Limit |
 |-----------|------|-------------|-----------|----------------|--------------|
@@ -63,14 +59,14 @@
 
 | Metric | Development | Production |
 |--------|-------------|------------|
-| **Total Pods** | 37 | 37+ (with replicas) |
-| **Total CPU Request** | **~10 cores** | **15+ cores** |
-| **Total CPU Limit** | **~20 cores** | **30+ cores** |
-| **Total Memory Request** | **~19 GB** | **32+ GB** |
-| **Total Memory Limit** | **~38 GB** | **64+ GB** |
+| **Total Pods** | ~24 | 34+ (with replicas) |
+| **Total CPU Request** | **~7.5 cores** | **15+ cores** |
+| **Total CPU Limit** | **~15 cores** | **30+ cores** |
+| **Total Memory Request** | **~16 GB** | **32+ GB** |
+| **Total Memory Limit** | **~28 GB** | **64+ GB** |
 | **Storage (ODF)** | **150 GB** | **300+ GB** |
 
-**Note:** Production deployments should scale Koku API reads, Celery workers, and add Trino workers based on data volume.
+**Note:** Production deployments should scale Koku API reads and Celery workers based on data volume.
 
 ### Required OpenShift Components
 
@@ -159,47 +155,42 @@ jq --version
 └─────────────────────────────────────────────────────────────────────────┘
 
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃  APPLICATION LAYER (cost-onprem chart)                      ┃
+┃  APPLICATION LAYER (cost-onprem chart)                               ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
     ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
     │   Koku API      │   │ Kafka Listener  │   │  MASU Workers   │
     │   (Django)      │   │   (Celery)      │   │   (Celery)      │
     └────────┬────────┘   └────────┬────────┘   └────────┬────────┘
-             │                     │                      │
-             │                     │                      │
-             └─────────────────────┴──────────────────────┘
+             │                     │                     │
+             │                     │                     │
+             └─────────────────────┴─────────────────────┘
                                    │
                                    ▼
                     ┌──────────────────────────────┐
-                    │   PostgreSQL (Koku DB)       │
-                    │  • Summary tables            │
-                    │  • Metadata                  │
-                    │  • Application state         │
+                    │   PostgreSQL (Unified DB)    │
+                    │  • Koku: Summary tables      │
+                    │  • Sources: Provider data    │
+                    └──────────────────────────────┘
+                                   │
+                                   ▼
+                    ┌──────────────────────────────┐
+                    │   Valkey (Cache/Broker)      │
+                    │  • Celery task queue         │
+                    │  • Session caching           │
                     └──────────────────────────────┘
 
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃  DATA PROCESSING LAYER (cost-onprem-infra chart)          ┃
+┃  STORAGE LAYER (S3/ODF)                                              ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
-    ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
-    │     Trino       │   │      Hive       │   │   PostgreSQL    │
-    │  Coordinator    │──▶│   Metastore     │──▶│ (Metastore DB)  │
-    │ (Query Engine)  │   │ (Table Metadata)│   │   (Metadata)    │
-    └────────┬────────┘   └────────┬────────┘   └─────────────────┘
-             │                     │
-             │                     │
-             └─────────┬───────────┘
-                       │
-                       ▼
             ┌─────────────────────────┐
             │   S3 Storage (NooBaa)   │
-            │  • Parquet files        │
-            │  • Raw CSVs             │
+            │  • Raw CSV uploads      │
+            │  • Processed data       │
             │  • Monthly partitions   │
             └─────────────────────────┘
                        ▲
-                       │
                        │ (uploads)
                        │
             ┌──────────┴──────────┐
@@ -207,7 +198,7 @@ jq --version
             └─────────────────────┘
 
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃  MESSAGE QUEUE (Kafka/Strimzi - deployed separately)                   ┃
+┃  MESSAGE QUEUE (Kafka/Strimzi - deployed separately)                 ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
             ┌───────────────────────────────┐
@@ -227,10 +218,9 @@ jq --version
 
 1. **Data Ingestion:** OCP metrics → Kafka → Koku Listener
 2. **CSV Processing:** Listener → S3 (raw CSVs)
-3. **Parquet Conversion:** MASU → S3 (Parquet files)
-4. **Trino Tables:** Hive Metastore → Trino (query layer)
-5. **Aggregation:** Trino SQL → PostgreSQL (summary tables)
-6. **API Access:** Koku API → PostgreSQL (serve data)
+3. **Data Processing:** MASU workers parse and process CSV data
+4. **Aggregation:** PostgreSQL stores and aggregates summary tables
+5. **API Access:** Koku API → PostgreSQL (serve data)
 
 ---
 
@@ -247,140 +237,32 @@ oc new-project $NAMESPACE
 oc project $NAMESPACE
 ```
 
-### Step 2: Deploy Infrastructure Chart
+### Step 2: Deploy Cost Management Chart
 
-The infrastructure chart deploys the data processing layer: PostgreSQL, Hive Metastore, Trino, and Redis.
-
-**Option A: Using Helm directly (manual control)**
-```bash
-cd /path/to/ros-helm-chart
-
-# Deploy infrastructure chart
-helm install cost-onprem-infra ./cost-onprem-infra \
-  --namespace $NAMESPACE \
-  --create-namespace \
-  --wait \
-  --timeout 10m
-
-# Verify infrastructure pods
-oc get pods -n $NAMESPACE | grep -E "postgres|hive|trino"
-```
-
-**Option B: Using provided script (Infrastructure Only)**
-
-This script deploys **only the infrastructure chart** with automated setup and migration handling.
-
-**Features:**
-- 🎯 Automated infrastructure deployment
-- 📦 PostgreSQL, Trino, Hive Metastore, Redis setup
-- 🔄 Automatic database migration execution
-- ✅ Component health verification
-
-**Note:** This script is also used internally by `install-helm-chart.sh` (Option C) for infrastructure deployment.
-
-```bash
-# Deploy only infrastructure
-./scripts/bootstrap-infrastructure.sh --namespace cost-onprem
-
-# With custom release name
-./scripts/bootstrap-infrastructure.sh --namespace cost-onprem --release-name my-infra
-
-# Skip migrations (run manually later)
-./scripts/bootstrap-infrastructure.sh --namespace cost-onprem --skip-migrations
-```
-
-**Option C: Use automated script (recommended - see Step 4)**
-Skip to Step 4 for automated deployment of **both** infrastructure and application charts using `install-helm-chart.sh`.
-
-**Expected Pods:**
-- `postgres-0` (StatefulSet, Ready 1/1)
-- `hive-metastore-0` (StatefulSet, Ready 1/1)
-- `hive-metastore-db-0` (StatefulSet, Ready 1/1)
-- `trino-coordinator-0` (StatefulSet, Ready 1/1)
-- `trino-worker-*` (StatefulSet, Ready 1/1 each)
-
-**Verify Infrastructure:**
-```bash
-# Check PostgreSQL
-oc exec -n $NAMESPACE postgres-0 -- psql -U koku -d koku -c "SELECT version();"
-
-# Check Hive Metastore
-oc logs -n $NAMESPACE hive-metastore-0 --tail=20
-
-# Check Trino
-oc exec -n $NAMESPACE trino-coordinator-0 -- trino --execute "SHOW CATALOGS;"
-# Expected: hive, postgres, system
-```
-
-### Step 3: Deploy Cost Management Chart
-
-The application chart deploys Koku (API, listeners, workers).
+The unified `cost-onprem` chart deploys all components: PostgreSQL, Valkey, Koku API, MASU workers, Celery workers, Sources API, ROS, and Kruize.
 
 **Option A: Using Helm directly (manual control)**
 ```bash
-# Deploy cost management application chart
+cd /path/to/cost-onprem-chart
+
+# Deploy cost management chart
 helm install cost-onprem ./cost-onprem \
   --namespace $NAMESPACE \
+  --create-namespace \
   --wait \
   --timeout 10m \
   --set kafka.bootstrap_servers="cost-onprem-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
 
-# Verify application pods
-oc get pods -n $NAMESPACE | grep koku
+# Verify all pods
+oc get pods -n $NAMESPACE
 ```
 
-**Option B: Using provided script (Application Only)**
+**Option B: Automated Installation (Recommended)**
 
-This script deploys **only the Cost Management application chart** (Koku API, MASU, Celery workers).
-
-**⚠️ Prerequisites:** Infrastructure chart must be deployed first (see Step 2 or use `bootstrap-infrastructure.sh`)
-
-**Features:**
-- 🔐 Automatic secret creation (Django, Sources API, Hive Metastore, S3)
-- 🔍 Auto-discovers S3 credentials from ODF
-- ✅ Chart validation and linting before deployment
-- 🎯 Pod readiness checks and status reporting
-
-**Note:** This script is also used internally by `install-helm-chart.sh` (Option C) for application deployment.
+Use the automated installation script for the simplest deployment:
 
 ```bash
-# Deploy only the application chart
-./scripts/install-helm-chart.sh
-
-# With custom namespace
-NAMESPACE=my-namespace ./scripts/install-helm-chart.sh
-
-# Show deployment status
-./scripts/install-helm-chart.sh status
-
-# Clean uninstall
-./scripts/install-helm-chart.sh cleanup
-```
-
-**Option C: Use automated script (recommended - see Step 4)**
-Skip to Step 4 for automated deployment of **both** infrastructure and application charts using `install-helm-chart.sh`.
-
-**Expected Pods:**
-- `koku-koku-api-*` (Deployment, multiple replicas)
-- `koku-koku-api-listener-*` (Deployment)
-- `koku-koku-worker-*` (Deployment, multiple replicas)
-
-**Verify Application:**
-```bash
-# Check Koku API
-oc exec -n $NAMESPACE $(oc get pod -n $NAMESPACE -l app=koku-api -o name | head -1) \
-  -- python manage.py showmigrations --database=default
-
-# Check Kafka listener
-oc logs -n $NAMESPACE $(oc get pod -n $NAMESPACE -l app=koku-api-listener -o name) --tail=50
-```
-
-### Step 4: Automated Installation (Recommended)
-
-**The easiest way:** Use the automated installation script that deploys both infrastructure and application charts:
-
-```bash
-cd /path/to/ros-helm-chart/scripts
+cd /path/to/cost-onprem-chart/scripts
 
 # Run automated installation (recommended)
 ./install-helm-chart.sh
@@ -390,24 +272,15 @@ cd /path/to/ros-helm-chart/scripts
 1. ✅ Verifies pre-requirements (ODF, Kafka)
 2. ✅ Auto-discovers ODF S3 credentials
 3. ✅ Creates namespace if needed
-4. ✅ Deploys infrastructure chart via `bootstrap-infrastructure.sh` (PostgreSQL, Hive, Trino, Redis)
-5. ✅ Deploys cost management chart via `install-helm-chart.sh` (Koku API, listeners, workers)
-6. ✅ Runs database migrations automatically
-7. ✅ Verifies all components are healthy
+4. ✅ Deploys unified chart (PostgreSQL, Valkey, Koku, ROS, Sources, Kruize)
+5. ✅ Runs database migrations automatically via init container
+6. ✅ Verifies all components are healthy
 
-**Architecture:**
-This script orchestrates the complete deployment by calling:
-- **Phase 1:** `bootstrap-infrastructure.sh` (infrastructure chart)
-- **Phase 2:** `install-helm-chart.sh` (application chart)
-
-This modular approach allows you to run each phase independently if needed (see Steps 2 and 3).
-
-**Script Features:**
-- **Auto-discovery:** Finds ODF S3 credentials automatically
-- **Non-interactive:** CI/CD friendly (no prompts)
-- **Validated:** Each step is checked before proceeding
-- **Error reporting:** Clear messages if anything fails
-- **Idempotent:** Safe to run multiple times
+**Features:**
+- 🔐 Automatic secret creation (Django, Sources API, S3)
+- 🔍 Auto-discovers S3 credentials from ODF
+- ✅ Chart validation and linting before deployment
+- 🎯 Pod readiness checks and status reporting
 
 **Customization with Environment Variables:**
 ```bash
@@ -419,18 +292,39 @@ KAFKA_NAMESPACE=my-kafka \
 KAFKA_CLUSTER=my-cluster \
 ./install-helm-chart.sh
 
-# All options
-NAMESPACE=my-namespace \
-KAFKA_NAMESPACE=my-kafka \
-KAFKA_CLUSTER=my-cluster \
-./install-helm-chart.sh
+# Use local chart for development
+USE_LOCAL_CHART=true ./install-helm-chart.sh
+
+# Show deployment status
+./install-helm-chart.sh status
+
+# Clean uninstall
+./install-helm-chart.sh cleanup
 ```
 
-**When to use manual deployment (Steps 2-3):**
-- You need fine-grained control over each component
-- You're deploying in a restricted environment
-- You want to customize chart values files
-- You're debugging deployment issues
+**Expected Pods:**
+- `cost-onprem-database-0` (StatefulSet, Ready 1/1) - PostgreSQL
+- `cost-onprem-valkey-*` (Deployment, Ready 1/1) - Cache/Broker
+- `cost-onprem-koku-api-reads-*` (Deployment)
+- `cost-onprem-koku-api-writes-*` (Deployment)
+- `cost-onprem-koku-listener-*` (Deployment)
+- `cost-onprem-koku-masu-*` (Deployment)
+- `cost-onprem-celery-*` (Multiple Deployments)
+- `cost-onprem-ros-*` (Deployment)
+- `cost-onprem-sources-api-*` (Deployment)
+
+**Verify Deployment:**
+```bash
+# Check PostgreSQL
+oc exec -n $NAMESPACE cost-onprem-database-0 -- psql -U koku -d koku -c "SELECT version();"
+
+# Check Koku API health
+oc exec -n $NAMESPACE $(oc get pod -n $NAMESPACE -l app.kubernetes.io/component=cost-management-api -o name | head -1) \
+  -- python manage.py showmigrations --database=default
+
+# Check Kafka listener
+oc logs -n $NAMESPACE $(oc get pod -n $NAMESPACE -l app.kubernetes.io/component=koku-listener -o name) --tail=50
+```
 
 ---
 
@@ -443,42 +337,29 @@ KAFKA_CLUSTER=my-cluster \
 oc get pods -n $NAMESPACE
 
 # Expected output (no CrashLoopBackOff, no Error)
-NAME                                    READY   STATUS    RESTARTS   AGE
-postgres-0                              1/1     Running   0          5m
-hive-metastore-0                        1/1     Running   0          5m
-hive-metastore-db-0                     1/1     Running   0          5m
-trino-coordinator-0                     1/1     Running   0          5m
-trino-worker-0                          1/1     Running   0          5m
-koku-koku-api-*                         1/1     Running   0          3m
-koku-koku-api-listener-*                1/1     Running   0          3m
-koku-koku-worker-*                      1/1     Running   0          3m
+NAME                                            READY   STATUS    RESTARTS   AGE
+cost-onprem-database-0                          1/1     Running   0          5m
+cost-onprem-valkey-*                            1/1     Running   0          5m
+cost-onprem-koku-api-reads-*                    1/1     Running   0          3m
+cost-onprem-koku-api-writes-*                   1/1     Running   0          3m
+cost-onprem-koku-api-listener-*                 1/1     Running   0          3m
+cost-onprem-koku-api-masu-*                     1/1     Running   0          3m
+cost-onprem-celery-*                            1/1     Running   0          3m
+cost-onprem-sources-api-*                       1/1     Running   0          3m
+cost-onprem-ros-*                               1/1     Running   0          3m
+cost-onprem-kruize-*                            1/1     Running   0          3m
 ```
 
 ### 2. Verify Database
 
 ```bash
 # Check PostgreSQL connectivity and schema
-oc exec -n $NAMESPACE postgres-0 -- psql -U koku -d koku -c "\dt" | head -20
+oc exec -n $NAMESPACE cost-onprem-database-0 -- psql -U koku -d koku -c "\dt" | head -20
 
 # Expected: Many tables (reporting_*, api_*, etc.)
 ```
 
-### 3. Verify Trino
-
-```bash
-# Check Trino catalogs
-oc exec -n $NAMESPACE trino-coordinator-0 -- trino --execute "SHOW CATALOGS;"
-
-# Expected output:
-# hive
-# postgres
-# system
-
-# Check Hive schemas (should be empty initially)
-oc exec -n $NAMESPACE trino-coordinator-0 -- trino --execute "SHOW SCHEMAS IN hive;"
-```
-
-### 4. Verify S3 Storage
+### 3. Verify S3 Storage
 
 The installation automatically creates the following S3 buckets (for both MinIO and ODF):
 
@@ -526,15 +407,15 @@ The E2E test validates the entire data pipeline:
 2. ✅ **Provider** - Creates OCP cost provider
 3. ✅ **Data Upload** - Generates and uploads test data (CSV → TAR.GZ → S3)
 4. ✅ **Kafka** - Publishes message to trigger processing
-5. ✅ **Processing** - CSV → Parquet conversion, Trino table creation
-6. ✅ **Trino** - Validates tables and data
-7. ✅ **Aggregation** - Trino SQL → PostgreSQL summary tables
+5. ✅ **Processing** - CSV parsing and data ingestion
+6. ✅ **Database** - Validates data in PostgreSQL tables
+7. ✅ **Aggregation** - Summary table generation
 8. ✅ **Validation** - Verifies cost calculations
 
 ### Running the Test
 
 ```bash
-cd /path/to/ros-helm-chart/scripts
+cd /path/to/cost-onprem-helm-chart/scripts
 
 # Run E2E test (smoke test mode - ~3 minutes)
 ./cost-onprem-ocp-dataflow.sh
@@ -585,7 +466,7 @@ Phases: 8/8 passed
   ✅ provider
   ✅ data_upload
   ✅ processing
-  ✅ trino
+  ✅ database
   ✅ validation
 
 ✅ E2E SMOKE TEST PASSED
@@ -683,7 +564,7 @@ Once the E2E test completes, verify the aggregated data:
 
 ```bash
 # Port-forward to PostgreSQL
-oc port-forward -n cost-onprem pod/postgres-0 5432:5432 &
+oc port-forward -n cost-onprem pod/cost-onprem-database-0 5432:5432 &
 
 # Connect and query
 psql -h localhost -U koku -d koku << 'SQL'
@@ -750,31 +631,8 @@ Nise generates hourly usage data in CSVs with columns:
 - `pod_request_memory_byte_seconds` (converted to GB-hours)
 - `interval_start`, `interval_end` (hourly intervals)
 
-#### 2. Parquet Files (in S3)
-CSVs are converted to Parquet and stored in S3:
-```
-s3://koku-bucket/
-  └── org1234567/
-      └── ocp/
-          └── source=test-cluster-123/
-              └── year=2025/
-                  └── month=11/
-                      └── openshift_pod_usage_line_items/
-                          └── *.parquet
-```
-
-#### 3. Trino Tables
-Parquet files are exposed as Trino tables:
-```sql
--- Raw hourly data
-SELECT * FROM hive.org1234567.openshift_pod_usage_line_items;
-
--- Daily aggregated data (partitioned by source, year, month)
-SELECT * FROM hive.org1234567.openshift_pod_usage_line_items_daily;
-```
-
-#### 4. PostgreSQL Summary Tables
-Trino aggregates data into PostgreSQL:
+#### 2. PostgreSQL Summary Tables
+Processed data is aggregated into PostgreSQL summary tables:
 ```sql
 -- Final summary table (used by Koku API)
 SELECT * FROM org1234567.reporting_ocpusagelineitem_daily_summary;
@@ -786,38 +644,7 @@ SELECT * FROM org1234567.reporting_ocpusagelineitem_daily_summary;
 
 ### Common Issues
 
-#### 1. Hive Metastore Crash Loop
-
-**Symptom:** `hive-metastore-0` pod in CrashLoopBackOff
-
-**Cause:** Database password mismatch or connection issues
-
-**Solution:**
-```bash
-# Delete pod to force clean restart
-oc delete pod -n $NAMESPACE hive-metastore-0
-
-# Verify metastore DB is ready
-oc exec -n $NAMESPACE hive-metastore-db-0 -- psql -U metastore -d metastore -c "SELECT 1;"
-```
-
-#### 2. Trino Cannot Access PostgreSQL
-
-**Symptom:** Trino queries fail with "connection refused" or "authentication failed"
-
-**Cause:** NetworkPolicy blocking traffic or stale credentials
-
-**Solution:**
-```bash
-# Verify NetworkPolicy allows Trino → PostgreSQL
-oc get networkpolicy -n $NAMESPACE postgresql-access -o yaml
-
-# Restart Trino pods to pick up new credentials
-oc delete pod -n $NAMESPACE trino-coordinator-0
-oc delete pod -n $NAMESPACE trino-worker-0
-```
-
-#### 3. Kafka Listener Not Receiving Messages
+#### 1. Kafka Listener Not Receiving Messages
 
 **Symptom:** E2E test hangs at "Processing" phase
 
@@ -837,7 +664,7 @@ oc exec -n kafka cost-onprem-kafka-kafka-0 -- bin/kafka-topics.sh \
 oc logs -n $NAMESPACE $(oc get pod -n $NAMESPACE -l app=koku-api-listener -o name) --tail=100
 ```
 
-#### 4. E2E Test Validation Failures
+#### 2. E2E Test Validation Failures
 
 **Symptom:** Test passes all phases but validation shows incorrect data
 
@@ -849,11 +676,11 @@ oc logs -n $NAMESPACE $(oc get pod -n $NAMESPACE -l app=koku-api-listener -o nam
 ./cost-onprem-ocp-dataflow.sh --force
 
 # Or manually clear summary table
-oc exec -n $NAMESPACE postgres-0 -- psql -U koku -d koku -c \
+oc exec -n $NAMESPACE cost-onprem-database-0 -- psql -U koku -d koku -c \
   "DELETE FROM org1234567.reporting_ocpusagelineitem_daily_summary WHERE cluster_id = 'test-cluster-123';"
 ```
 
-#### 5. Nise Generates Random Data
+#### 3. Nise Generates Random Data
 
 **Symptom:** Pod/node names in database don't match nise YAML
 
@@ -882,12 +709,7 @@ See `COMPLETE_RESOLUTION_JOURNEY.md` for details.
 ### Upgrading Charts
 
 ```bash
-# Upgrade infrastructure
-helm upgrade cost-onprem-infra ./cost-onprem-infra \
-  --namespace $NAMESPACE \
-  --reuse-values
-
-# Upgrade application
+# Upgrade the unified chart
 helm upgrade cost-onprem ./cost-onprem \
   --namespace $NAMESPACE \
   --reuse-values
@@ -896,21 +718,16 @@ helm upgrade cost-onprem ./cost-onprem \
 ### Scaling Workers
 
 ```bash
-# Scale MASU workers for higher throughput
-oc scale deployment koku-koku-worker -n $NAMESPACE --replicas=5
-
-# Scale Trino workers for better query performance
-oc scale statefulset trino-worker -n $NAMESPACE --replicas=3
+# Scale Celery workers for higher throughput
+oc scale deployment cost-onprem-celery-worker-ocp -n $NAMESPACE --replicas=3
+oc scale deployment cost-onprem-celery-worker-summary -n $NAMESPACE --replicas=3
 ```
 
 ### Database Backups
 
 ```bash
 # Backup PostgreSQL (Koku DB)
-oc exec -n $NAMESPACE postgres-0 -- pg_dump -U koku koku > koku-backup-$(date +%Y%m%d).sql
-
-# Backup Hive Metastore DB
-oc exec -n $NAMESPACE hive-metastore-db-0 -- pg_dump -U metastore metastore > metastore-backup-$(date +%Y%m%d).sql
+oc exec -n $NAMESPACE cost-onprem-database-0 -- pg_dump -U koku koku > koku-backup-$(date +%Y%m%d).sql
 ```
 
 ### Monitoring
@@ -922,10 +739,6 @@ oc adm top pods -n $NAMESPACE
 # Monitor Celery queue (MASU workers)
 oc exec -n $NAMESPACE $(oc get pod -n $NAMESPACE -l app=koku-worker -o name | head -1) \
   -- celery -A koku inspect active
-
-# Check Trino query history
-oc exec -n $NAMESPACE trino-coordinator-0 -- trino --execute \
-  "SELECT query_id, state, query FROM system.runtime.queries ORDER BY created DESC LIMIT 10;"
 ```
 
 ---
@@ -934,7 +747,6 @@ oc exec -n $NAMESPACE trino-coordinator-0 -- trino --execute \
 
 - **Project Repository:** https://github.com/project-koku
 - **Koku Documentation:** https://koku.readthedocs.io/
-- **Trino Documentation:** https://trino.io/docs/current/
 - **Strimzi (Kafka):** https://strimzi.io/
 
 ### Project Documentation

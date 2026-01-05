@@ -224,7 +224,7 @@ End-to-end validation of Cost Management data pipeline (OCP provider).
 4. Provider setup (creates OCP provider via Sources API → Kafka → Listener)
 5. Data generation with nise + upload to S3
 6. Kafka message triggers MASU processing
-7. Trino table validation (Parquet data accessible)
+7. Data processing validation (PostgreSQL tables populated)
 8. Cost validation (PostgreSQL summary tables match expected values)
 
 **Usage:**
@@ -266,14 +266,13 @@ NAMESPACE=my-cost-mgmt ./cost-mgmt-ocp-dataflow.sh
   ✅ Cost: 2 checks passed
 ======================================================================
 
-Phases: 8/8 passed
+Phases: 7/7 passed
   ✅ preflight
   ✅ migrations
   ✅ kafka_validation
   ✅ provider
   ✅ data_upload
   ✅ processing
-  ✅ trino
   ✅ validation
 
 ✅ E2E SMOKE TEST PASSED
@@ -394,7 +393,7 @@ The `cost-mgmt-ocp-dataflow.sh` script validates:
 - ✅ Sources API → Kafka → Sources Listener integration
 - ✅ OCP provider creation via production flow
 - ✅ S3 upload → Kafka → MASU processing
-- ✅ CSV → Parquet conversion (Trino tables)
+- ✅ PostgreSQL data tables populated
 - ✅ PostgreSQL summary aggregation
 - ✅ Cost calculations match expected values
 - ✅ **Shows actual data proof** (not just PASSED/FAILED)
