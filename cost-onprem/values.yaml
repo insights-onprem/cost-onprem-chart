@@ -846,7 +846,7 @@ database:
     name: koku
     # Dedicated user for Koku service (only used if existingSecret is empty)
     user: koku
-    password: ""  # Auto-generated if empty
+    password: koku_password
 
   # Sources Database Configuration
   sources:
@@ -854,7 +854,7 @@ database:
     name: sources
     # Dedicated user for Sources service (only used if existingSecret is empty)
     user: sources
-    password: ""  # Auto-generated if empty
+    password: sources_password
 
 # -----------------------------------------------------------------------------
 # Shared Infrastructure - Kafka
