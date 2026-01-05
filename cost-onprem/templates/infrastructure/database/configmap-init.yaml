@@ -68,14 +68,35 @@ data:
     -- ========================================
     -- Koku Cost Management Service
 
-    -- Koku User
+    -- Koku User (requires CREATEROLE and CREATEDB for Django migrations)
+    -- CREATEROLE: needed for migrations that create roles like 'hive'
+    -- CREATEDB: needed for migrations that create the 'hive' database
     DO $$
     BEGIN
       IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{{ .Values.database.koku.user }}') THEN
-        CREATE USER {{ .Values.database.koku.user }} WITH PASSWORD '{{ .Values.database.koku.password }}';
+        CREATE USER {{ .Values.database.koku.user }} WITH PASSWORD '{{ .Values.database.koku.password }}' CREATEROLE CREATEDB;
+      ELSE
+        -- Ensure privileges are granted if user already exists
+        ALTER USER {{ .Values.database.koku.user }} CREATEROLE CREATEDB;
       END IF;
     END
     $$;
+
+    -- Hive Role and Database (required by Koku migrations for Trino/Hive compatibility)
+    -- These are created upfront to support migrations that reference them
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'hive') THEN
+        CREATE ROLE hive;
+      END IF;
+    END
+    $$;
+    GRANT hive TO {{ .Values.database.koku.user }} WITH ADMIN OPTION;
+
+    -- Hive Database (required by Koku migration 0039_create_hive_db)
+    SELECT 'CREATE DATABASE hive OWNER {{ .Values.database.koku.user }}'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'hive')
+    \gexec
 
     -- Koku Database
     SELECT 'CREATE DATABASE {{ .Values.database.koku.name }}'
