@@ -484,10 +484,9 @@ The installation automatically creates the following S3 buckets (for both MinIO 
 
 | Bucket | Purpose |
 |--------|---------|
-| `cost-data` | Koku/Cost Management parquet data and Hive warehouse |
+| `koku-bucket` | Koku/Cost Management parquet data and reports |
 | `ros-data` | Resource Optimization Service data |
 | `insights-upload-perma` | Ingress service for operator uploads |
-| `koku-bucket` | Koku temporary storage |
 
 ```bash
 # Get S3 credentials from ODF
@@ -502,7 +501,6 @@ echo "Access Key: $S3_ACCESS_KEY"
 aws s3 ls --endpoint-url https://$S3_ENDPOINT
 
 # Expected output should include:
-# cost-data
 # insights-upload-perma
 # koku-bucket
 # ros-data
@@ -755,7 +753,7 @@ Nise generates hourly usage data in CSVs with columns:
 #### 2. Parquet Files (in S3)
 CSVs are converted to Parquet and stored in S3:
 ```
-s3://cost-data/
+s3://koku-bucket/
   └── org1234567/
       └── ocp/
           └── source=test-cluster-123/

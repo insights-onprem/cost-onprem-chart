@@ -276,7 +276,7 @@ class DeploymentValidationPhase:
 
         return result
 
-    def validate_s3_integration(self, bucket: str = "cost-data") -> Dict[str, any]:
+    def validate_s3_integration(self, bucket: str = "koku-bucket") -> Dict[str, any]:
         """Validate S3/MinIO integration"""
         print("\n☁️  Integration: S3 Storage")
 

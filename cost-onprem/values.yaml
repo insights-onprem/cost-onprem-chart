@@ -147,7 +147,7 @@ costManagement:
   s3Endpoint: "https://s3.openshift-storage.svc:443"
 
   storage:
-    bucketName: "cost-data"
+    bucketName: "koku-bucket"
 
   # ---------------------------------------------------------------------------
   # Koku API Configuration
@@ -922,7 +922,6 @@ minio:
     console: 9990
 
   buckets:
-    - cost-data
     - insights-upload-perma
     - koku-bucket
     - ros-data

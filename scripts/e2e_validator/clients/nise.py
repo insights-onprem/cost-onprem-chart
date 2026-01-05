@@ -367,7 +367,7 @@ class NiseClient:
                              end_date: datetime,
                              subscription_id: str = '11111111-1111-1111-1111-111111111111',
                              output_dir: Optional[str] = None,
-                             container_name: str = 'cost-data',
+                             container_name: str = 'koku-bucket',
                              report_name: str = 'test-report',
                              report_prefix: str = 'reports',
                              resource_group: bool = True) -> str:
@@ -416,9 +416,9 @@ class NiseClient:
                            end_date: datetime,
                            project_id: str = 'test-project-12345',
                            output_dir: Optional[str] = None,
-                           dataset_name: str = 'cost-data',
+                           dataset_name: str = 'koku-bucket',
                            table_name: str = 'test-report',
-                           bucket_name: str = 'cost-data',
+                           bucket_name: str = 'koku-bucket',
                            report_prefix: str = 'reports',
                            resource_level: bool = True) -> str:
         """Generate GCP Billing Export

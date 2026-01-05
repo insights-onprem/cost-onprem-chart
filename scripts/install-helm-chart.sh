@@ -475,7 +475,7 @@ create_s3_buckets() {
             set -e
             wget -q https://dl.min.io/client/mc/release/linux-amd64/mc -O /usr/local/bin/mc && chmod +x /usr/local/bin/mc
             mc alias set s3 ${s3_url} '${access_key}' '${secret_key}' ${mc_insecure}
-            for bucket in cost-data insights-upload-perma koku-bucket ros-data; do
+            for bucket in insights-upload-perma koku-bucket ros-data; do
                 if mc ls s3/\${bucket} ${mc_insecure} >/dev/null 2>&1; then
                     echo \"ℹ️  Bucket \${bucket} already exists\"
                 else

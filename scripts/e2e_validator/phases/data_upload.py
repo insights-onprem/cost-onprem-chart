@@ -26,7 +26,7 @@ class DataUploadPhase:
     def __init__(self,
                  s3_client,
                  nise_client: NiseClient,
-                 bucket: str = "cost-data",
+                 bucket: str = "koku-bucket",
                  report_name: str = "test-report",
                  report_prefix: str = "reports",
                  k8s_client=None,

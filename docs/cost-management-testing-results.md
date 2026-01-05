@@ -16,7 +16,7 @@ Validate that Cost Management can be deployed from scratch and all data flows wo
 
 **Steps Executed:**
 1. Deleted `cost-onprem` namespace
-2. Cleaned all S3 storage (`cost-data` bucket): ~444KB of data deleted
+2. Cleaned all S3 storage (`koku-bucket` bucket): ~444KB of data deleted
 3. Ran `scripts/install-cost-management-complete.sh`
    - Kafka/Strimzi deployed successfully
    - Infrastructure chart deployed (PostgreSQL, Trino, Redis, Hive Metastore)

@@ -301,7 +301,7 @@ class SourcesAPIClient:
 
     def create_aws_source_full(self,
                                name: str = "AWS Test Provider E2E",
-                               bucket: str = "cost-data",
+                               bucket: str = "koku-bucket",
                                report_name: str = "test-report",
                                report_prefix: str = "") -> Dict:
         """Create a complete AWS source with authentication and application
@@ -369,7 +369,7 @@ class SourcesAPIClient:
     def create_ocp_source_full(self,
                                name: str = "OCP Test Provider E2E",
                                cluster_id: str = "test-cluster-123",
-                               bucket: str = "cost-data",
+                               bucket: str = "koku-bucket",
                                report_prefix: str = "reports") -> Dict:
         """Create a complete OCP source with authentication and application
 

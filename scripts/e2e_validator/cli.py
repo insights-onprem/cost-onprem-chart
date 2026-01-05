@@ -247,7 +247,7 @@ def main(ctx, namespace, org_id, provider_type, skip_migrations, skip_provider, 
             # Fallback to internal endpoint
             s3_endpoint = "https://s3.openshift-storage.svc:443"
 
-        bucket = "cost-data"
+        bucket = "koku-bucket"
 
         # Fail-fast: skip remaining phases if a critical phase fails
         should_skip_remaining = False

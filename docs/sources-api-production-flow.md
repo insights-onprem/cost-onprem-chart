@@ -89,7 +89,7 @@ Key environment variables:
    {"name": "OCP Test Provider", "source_type_id": "3"}
 
    POST /api/sources/v3.1/applications
-   {"source_id": "123", "application_type_id": "2", "extra": {"bucket": "cost-data", "cluster_id": "test-cluster-123"}}
+   {"source_id": "123", "application_type_id": "2", "extra": {"bucket": "koku-bucket", "cluster_id": "test-cluster-123"}}
    ```
 
 3. **Sources API publishes to Kafka**

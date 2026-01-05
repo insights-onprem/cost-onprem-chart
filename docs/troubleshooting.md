@@ -394,7 +394,7 @@ done
 
 # 2. Delete parquet files from S3
 kubectl exec -n cost-onprem -l app.kubernetes.io/name=minio -- \
-    mc rm --recursive --force myminio/cost-data/data/parquet/org1234567/OCP/
+    mc rm --recursive --force myminio/koku-bucket/data/parquet/org1234567/OCP/
 
 # 3. Clear Redis/Valkey cache (uses valkey-cli, Redis-compatible)
 REDIS_POD=$(kubectl get pod -n cost-onprem -l app.kubernetes.io/name=redis -o jsonpath='{.items[0].metadata.name}')
@@ -406,7 +406,7 @@ kubectl wait --for=condition=ready pod -l app.kubernetes.io/component=listener -
 
 # 5. Delete test data from S3
 kubectl exec -n cost-onprem -l app.kubernetes.io/name=minio -- \
-    mc rm --recursive --force myminio/cost-data/reports/
+    mc rm --recursive --force myminio/koku-bucket/reports/
 
 # 6. Run E2E test
 ./scripts/cost-mgmt-ocp-dataflow.sh --force

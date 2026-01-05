@@ -202,7 +202,7 @@ except Exception as e:
     def create_provider_via_django_orm(self,
                                        name: str = "AWS Test Provider E2E",
                                        provider_type: str = "AWS",
-                                       bucket: str = "cost-data",
+                                       bucket: str = "koku-bucket",
                                        report_name: str = "test-report",
                                        report_prefix: str = "reports",
                                        cluster_id: str = "test-cluster-123") -> str:
@@ -467,7 +467,7 @@ except Exception as e:
 
     def create_provider_via_sources_api(self,
                                         name: str = "AWS Test Provider E2E",
-                                        bucket: str = "cost-data",
+                                        bucket: str = "koku-bucket",
                                         report_name: str = "test-report",
                                         report_prefix: str = "reports") -> str:
         """Create provider via Sources API (Red Hat recommended method)
@@ -540,7 +540,7 @@ except Exception as e:
     def create_provider(self,
                        name: str = None,  # Will be auto-generated with timestamp if not provided
                        provider_type: str = "AWS",
-                       bucket: str = "cost-data",
+                       bucket: str = "koku-bucket",
                        report_name: str = "test-report",
                        report_prefix: str = "reports",
                        cluster_id: str = "test-cluster-123") -> str:
@@ -785,7 +785,7 @@ except Exception as e:
                         RETURNING uuid
                     """, (
                         billing_source_uuid,
-                        '{"bucket": "cost-data", "report_name": "test-report", "report_prefix": "reports"}'
+                        '{"bucket": "koku-bucket", "report_name": "test-report", "report_prefix": "reports"}'
                     ))
 
                     # Step 2: Get the internal ID of the billing source
