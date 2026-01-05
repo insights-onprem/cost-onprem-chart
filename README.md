@@ -3,7 +3,7 @@
 This repository contains Helm charts for deploying cost management solutions on-premise:
 
 1. **`cost-onprem/`** - Main application chart containing ROS, Kruize, Sources API, and Koku (Cost Management) components
-2. **`cost-onprem-infra/`** - Infrastructure chart (PostgreSQL, Trino, Hive Metastore) deployed before the main chart
+2. **`cost-onprem-infra/`** - Infrastructure chart (PostgreSQL, Redis) deployed before the main chart
 
 ---
 
@@ -17,7 +17,7 @@ Complete Helm charts for deploying the full Cost Management stack with OCP cost 
 ./scripts/install-helm-chart.sh
 
 # Or deploy components separately
-./scripts/bootstrap-infrastructure.sh --namespace cost-onprem  # Infrastructure (PostgreSQL, Trino, Hive)
+./scripts/bootstrap-infrastructure.sh --namespace cost-onprem  # Infrastructure (PostgreSQL, Redis)
 ./scripts/install-helm-chart.sh                                 # Application (uses infra deployed above)
 ```
 
@@ -28,7 +28,7 @@ Complete Helm charts for deploying the full Cost Management stack with OCP cost 
 - **E2E Testing**: Automated validation with `./scripts/cost-mgmt-ocp-dataflow.sh`
 
 **Key Features:**
-- 📊 Complete OCP cost data pipeline (Kafka → CSV → Parquet → Trino → PostgreSQL)
+- 📊 Complete OCP cost data pipeline (Kafka → CSV → PostgreSQL)
 - 🔄 37 Kubernetes resources with optimized resource requests/limits
 - 🧪 Python-based E2E validation framework
 - 📦 Modular deployment (infrastructure and application separately or together)

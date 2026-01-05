@@ -157,19 +157,18 @@ costManagement:
 
     image:
       repository: quay.io/insights-onprem/koku
-      tag: "latest"
+      tag: "postgres"
       pullPolicy: Always
 
     reads:
       replicas: 2
       resources:
-        # Aligned with SaaS Clowder configuration (deploy/clowdapp.yaml)
         requests:
           cpu: 250m
-          memory: 512Mi
-        limits:
-          cpu: 500m
           memory: 1Gi
+        limits:
+          cpu: 1
+          memory: 2Gi
 
       livenessProbe:
         httpGet:
@@ -218,13 +217,12 @@ costManagement:
     writes:
       replicas: 1
       resources:
-        # Aligned with SaaS Clowder configuration (deploy/clowdapp.yaml)
         requests:
           cpu: 250m
-          memory: 512Mi
-        limits:
-          cpu: 500m
           memory: 1Gi
+        limits:
+          cpu: 1
+          memory: 2Gi
 
       livenessProbe:
         httpGet:
@@ -275,13 +273,12 @@ costManagement:
     enabled: true
     replicas: 1
     resources:
-      # Aligned with SaaS Clowder configuration (deploy/kustomize/patches)
       requests:
-        cpu: 50m
-        memory: 500Mi
+        cpu: 250m
+        memory: 1Gi
       limits:
-        cpu: 100m
-        memory: 700Mi
+        cpu: 500m
+        memory: 2Gi
     env:
       KOKU_LOG_LEVEL: DEBUG
       DJANGO_LOG_LEVEL: INFO
@@ -367,13 +364,12 @@ costManagement:
         queue: priority
         concurrency: 5
         resources:
-          # Aligned with SaaS Clowder configuration
           requests:
-            cpu: 100m
-            memory: 400Mi
+            cpu: 250m
+            memory: 1Gi
           limits:
-            cpu: 200m
-            memory: 750Mi
+            cpu: 500m
+            memory: 2Gi
 
       refresh:
         # OCP-ONLY: Disabled - primary use is delete_openshift_on_cloud_data for OCP-on-cloud
@@ -393,13 +389,12 @@ costManagement:
         queue: summary
         concurrency: 5
         resources:
-          # Aligned with SaaS Clowder configuration
           requests:
-            cpu: 100m
-            memory: 500Mi
+            cpu: 250m
+            memory: 1Gi
           limits:
-            cpu: 200m
-            memory: 750Mi
+            cpu: 500m
+            memory: 2Gi
 
       hcs:
         # OCP-ONLY: Disabled - HCS only supports AWS, Azure, GCP (not OCP)
@@ -537,11 +532,11 @@ costManagement:
         concurrency: 5
         resources:
           requests:
-            cpu: 100m
-            memory: 256Mi
-          limits:
-            cpu: 200m
+            cpu: 250m
             memory: 512Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
 
       ocpXl:
         replicas: 1
@@ -653,18 +648,6 @@ costManagement:
     create: true
     name: koku
     annotations: {}
-
-# =============================================================================
-# Trino Configuration (Connection to Infrastructure Chart)
-# =============================================================================
-# Trino is deployed by the infrastructure chart, this section configures
-# how Koku connects to it
-
-trino:
-  coordinator:
-    host: "trino-coordinator"
-    service:
-      port: 8080
 
 # =============================================================================
 # Mock RBAC Service Configuration

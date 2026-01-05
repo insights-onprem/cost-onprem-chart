@@ -59,7 +59,7 @@ spec:
 
         # Environment variables
         env:
-        # Common Koku environment variables (includes DB, Redis, S3, Trino, etc.)
+        # Common Koku environment variables (includes DB, Redis, S3, etc.)
         {{- include "cost-onprem.koku.commonEnv" . | nindent 8 }}
 
         # POD_CPU_LIMIT is required for gunicorn worker calculation

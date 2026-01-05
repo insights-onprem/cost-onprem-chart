@@ -3,8 +3,7 @@
 # Cost On-Premise Infrastructure Bootstrap Script
 # =============================================================================
 # This script deploys and initializes the infrastructure components for
-# Cost Management On-Premise (PostgreSQL, Trino, Hive Metastore) and runs
-# database migrations.
+# Cost Management On-Premise (PostgreSQL, Redis) and runs database migrations.
 #
 # Usage:
 #   ./bootstrap-infrastructure.sh --namespace <namespace> [options]
@@ -170,37 +169,6 @@ log_info "Creating pg_stat_statements extension on database: $KOKU_DB_NAME..."
 kubectl exec "$POD_NAME" -n "$NAMESPACE" -- \
     psql -U "$KOKU_DB_USER" -d "$KOKU_DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;" 2>&1 || \
     log_warning "Extension may already exist"
-
-log_info "Creating hive role..."
-ROLE_EXISTS=$(kubectl exec "$POD_NAME" -n "$NAMESPACE" -- \
-    psql -U "$KOKU_DB_USER" -d "$KOKU_DB_NAME" -tAc "SELECT 1 FROM pg_roles WHERE rolname='hive';" | tr -d '[:space:]')
-
-if [ "$ROLE_EXISTS" = "1" ]; then
-    log_info "Hive role already exists"
-else
-    kubectl exec "$POD_NAME" -n "$NAMESPACE" -- \
-        psql -U "$KOKU_DB_USER" -d "$KOKU_DB_NAME" -c "CREATE ROLE hive WITH LOGIN PASSWORD 'hive';" 2>&1 | grep -q "CREATE ROLE\|already exists" || {
-        log_error "Failed to create hive role"
-        exit 1
-    }
-    log_success "Hive role created"
-fi
-
-# Create hive database
-log_info "Creating hive database..."
-DB_EXISTS=$(kubectl exec "$POD_NAME" -n "$NAMESPACE" -- \
-    psql -U "$KOKU_DB_USER" -d "$KOKU_DB_NAME" -tAc "SELECT 1 FROM pg_database WHERE datname='hive';" | tr -d '[:space:]')
-
-if [ "$DB_EXISTS" = "1" ]; then
-    log_info "Hive database already exists"
-else
-    kubectl exec "$POD_NAME" -n "$NAMESPACE" -- \
-        psql -U "$KOKU_DB_USER" -d "$KOKU_DB_NAME" -c "CREATE DATABASE hive OWNER hive;" 2>&1 | grep -q "CREATE DATABASE\|already exists" || {
-        log_error "Failed to create hive database"
-        exit 1
-    }
-    log_success "Hive database created"
-fi
 
 log_success "Database initialization complete"
 

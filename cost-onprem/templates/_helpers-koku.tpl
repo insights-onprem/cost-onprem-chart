@@ -56,40 +56,6 @@ Koku database name
 
 {{/*
 =============================================================================
-Trino Service Names
-=============================================================================
-*/}}
-
-{{/*
-Trino coordinator service name
-*/}}
-{{- define "cost-onprem.trino.coordinator.name" -}}
-{{- printf "%s-trino-coordinator" (include "cost-onprem.fullname" .) -}}
-{{- end -}}
-
-{{/*
-Trino worker name
-*/}}
-{{- define "cost-onprem.trino.worker.name" -}}
-{{- printf "%s-trino-worker" (include "cost-onprem.fullname" .) -}}
-{{- end -}}
-
-{{/*
-Hive metastore service name
-*/}}
-{{- define "cost-onprem.trino.metastore.name" -}}
-{{- printf "%s-hive-metastore" (include "cost-onprem.fullname" .) -}}
-{{- end -}}
-
-{{/*
-Hive metastore database name
-*/}}
-{{- define "cost-onprem.trino.metastore.database.name" -}}
-{{- printf "%s-hive-metastore-db" (include "cost-onprem.fullname" .) -}}
-{{- end -}}
-
-{{/*
-=============================================================================
 Database Connection Helpers
 =============================================================================
 */}}
@@ -136,28 +102,6 @@ Koku database connection URL (for Django)
     (include "cost-onprem.koku.database.host" .)
     (include "cost-onprem.koku.database.port" .)
     (include "cost-onprem.koku.database.dbname" .)
--}}
-{{- end -}}
-
-{{/*
-Trino metastore database host
-*/}}
-{{- define "cost-onprem.trino.metastore.database.host" -}}
-{{- if .Values.trino.metastore.database.host -}}
-  {{- .Values.trino.metastore.database.host -}}
-{{- else -}}
-  {{- include "cost-onprem.trino.metastore.database.name" . -}}
-{{- end -}}
-{{- end -}}
-
-{{/*
-Trino metastore database connection URL (JDBC)
-*/}}
-{{- define "cost-onprem.trino.metastore.database.url" -}}
-{{- printf "jdbc:postgresql://%s:%v/%s"
-    (include "cost-onprem.trino.metastore.database.host" .)
-    (.Values.trino.metastore.database.port | default 5432)
-    (.Values.trino.metastore.database.name | default "metastore")
 -}}
 {{- end -}}
 
@@ -259,40 +203,6 @@ MinIO ROS bucket name
 
 {{/*
 =============================================================================
-Trino Connection Helpers
-=============================================================================
-*/}}
-
-{{/*
-Trino coordinator host
-*/}}
-{{- define "cost-onprem.koku.trino.host" -}}
-{{- if .Values.trino.coordinator.host -}}
-  {{- .Values.trino.coordinator.host -}}
-{{- else -}}
-{{- include "cost-onprem.trino.coordinator.name" . -}}
-{{- end -}}
-{{- end -}}
-
-{{/*
-Trino coordinator port
-*/}}
-{{- define "cost-onprem.koku.trino.port" -}}
-{{- .Values.trino.coordinator.service.port | default 8080 -}}
-{{- end -}}
-
-{{/*
-Hive metastore URI
-*/}}
-{{- define "cost-onprem.trino.metastore.uri" -}}
-{{- printf "thrift://%s:%v"
-    (include "cost-onprem.trino.metastore.name" .)
-    (.Values.trino.metastore.service.port | default 9083)
--}}
-{{- end -}}
-
-{{/*
-=============================================================================
 Secret Names
 =============================================================================
 */}}
@@ -313,13 +223,6 @@ Koku database credentials secret name
 {{- else -}}
 {{- printf "%s-db-credentials" (include "cost-onprem.fullname" .) -}}
 {{- end -}}
-{{- end -}}
-
-{{/*
-Trino metastore database credentials secret name
-*/}}
-{{- define "cost-onprem.trino.metastore.database.secretName" -}}
-{{- printf "%s-metastore-db-credentials" (include "cost-onprem.fullname" .) -}}
 {{- end -}}
 
 {{/*
@@ -378,39 +281,6 @@ worker-queue: {{ $type }}
 {{- end -}}
 
 {{/*
-Common labels for Trino resources
-Note: We don't override part-of here to keep consistency with selectorLabels
-*/}}
-{{- define "cost-onprem.trino.labels" -}}
-{{ include "cost-onprem.labels" . }}
-app.kubernetes.io/component: trino
-{{- end -}}
-
-{{/*
-Selector labels for Trino Coordinator
-*/}}
-{{- define "cost-onprem.trino.coordinator.selectorLabels" -}}
-{{ include "cost-onprem.selectorLabels" . }}
-app.kubernetes.io/component: trino-coordinator
-{{- end -}}
-
-{{/*
-Selector labels for Trino Worker
-*/}}
-{{- define "cost-onprem.trino.worker.selectorLabels" -}}
-{{ include "cost-onprem.selectorLabels" . }}
-app.kubernetes.io/component: trino-worker
-{{- end -}}
-
-{{/*
-Selector labels for Hive Metastore
-*/}}
-{{- define "cost-onprem.trino.metastore.selectorLabels" -}}
-{{ include "cost-onprem.selectorLabels" . }}
-app.kubernetes.io/component: hive-metastore
-{{- end -}}
-
-{{/*
 =============================================================================
 Storage Class Helpers
 =============================================================================
@@ -422,39 +292,6 @@ Storage class for Koku database (uses default if not specified)
 {{- define "cost-onprem.koku.database.storageClass" -}}
 {{- if .Values.costManagement.database.storage.storageClassName -}}
   {{- .Values.costManagement.database.storage.storageClassName -}}
-{{- else -}}
-  {{- /* Use default storage class in cluster */ -}}
-{{- end -}}
-{{- end -}}
-
-{{/*
-Storage class for Trino coordinator (uses default if not specified)
-*/}}
-{{- define "cost-onprem.trino.coordinator.storageClass" -}}
-{{- if .Values.trino.coordinator.storage.storageClassName -}}
-  {{- .Values.trino.coordinator.storage.storageClassName -}}
-{{- else -}}
-  {{- /* Use default storage class in cluster */ -}}
-{{- end -}}
-{{- end -}}
-
-{{/*
-Storage class for Trino worker (uses default if not specified)
-*/}}
-{{- define "cost-onprem.trino.worker.storageClass" -}}
-{{- if .Values.trino.worker.storage.storageClassName -}}
-  {{- .Values.trino.worker.storage.storageClassName -}}
-{{- else -}}
-  {{- /* Use default storage class in cluster */ -}}
-{{- end -}}
-{{- end -}}
-
-{{/*
-Storage class for Hive metastore database (uses default if not specified)
-*/}}
-{{- define "cost-onprem.trino.metastore.database.storageClass" -}}
-{{- if .Values.trino.metastore.database.storage.storageClassName -}}
-  {{- .Values.trino.metastore.database.storage.storageClassName -}}
 {{- else -}}
   {{- /* Use default storage class in cluster */ -}}
 {{- end -}}
@@ -478,19 +315,6 @@ Koku service account name
 {{- end -}}
 
 {{/*
-Trino service account name
-*/}}
-{{- define "cost-onprem.trino.serviceAccountName" -}}
-{{- if and .Values.trino .Values.trino.serviceAccount .Values.trino.serviceAccount.create -}}
-  {{- .Values.trino.serviceAccount.name | default (printf "%s-trino" (include "cost-onprem.fullname" .)) -}}
-{{- else if and .Values.trino .Values.trino.serviceAccount .Values.trino.serviceAccount.name -}}
-  {{- .Values.trino.serviceAccount.name -}}
-{{- else -}}
-  {{- "default" -}}
-{{- end -}}
-{{- end -}}
-
-{{/*
 =============================================================================
 Environment Variable Helpers
 =============================================================================
@@ -500,10 +324,10 @@ Environment Variable Helpers
 Common environment variables for Koku API and Celery
 */}}
 {{- define "cost-onprem.koku.commonEnv" -}}
-# On-prem deployment mode: disables Unleash, uses DisabledUnleashClient
+# On-prem deployment mode: uses PostgreSQL for data processing, disables Unleash
 # This is hardcoded (not configurable) to make it explicit this chart is for on-prem only
-- name: KOKU_ONPREM_DEPLOYMENT
-  value: "true"
+- name: ONPREM
+  value: "True"
 - name: DATABASE_SERVICE_NAME
   value: "database"
 - name: DATABASE_ENGINE
@@ -553,12 +377,6 @@ Common environment variables for Koku API and Celery
     secretKeyRef:
       name: {{ include "cost-onprem.storage.secretName" . }}
       key: secret-key
-- name: TRINO_HOST
-  value: {{ include "cost-onprem.koku.trino.host" . | quote }}
-- name: TRINO_PORT
-  value: {{ include "cost-onprem.koku.trino.port" . | quote }}
-- name: TRINO_S3A_OR_S3
-  value: "s3"
 - name: DJANGO_SECRET_KEY
   valueFrom:
     secretKeyRef:

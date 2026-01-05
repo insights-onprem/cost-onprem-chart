@@ -79,7 +79,7 @@ spec:
         - name: SOURCES_API_PREFIX
           value: /api/sources/v1.0
 
-        # Common Koku environment variables (DB, Redis, S3, Trino, Kafka, etc.)
+        # Common Koku environment variables (DB, Redis, S3, Kafka, etc.)
         {{- include "cost-onprem.koku.commonEnv" . | nindent 8 }}
 
         volumeMounts:

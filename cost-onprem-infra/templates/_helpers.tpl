@@ -82,7 +82,7 @@ false
 {{/*
 =============================================================================
 Compatibility Aliases for cost-mgmt.* functions
-(Used by Trino/Redis templates that reference "cost-mgmt" naming)
+(Used by Redis templates that reference "cost-mgmt" naming)
 =============================================================================
 */}}
 

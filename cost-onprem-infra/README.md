@@ -1,33 +1,27 @@
 # Cost On-Premise Infrastructure Chart
 
-This Helm chart deploys the infrastructure components for Cost Management On-Premise, specifically PostgreSQL, Trino, and Hive Metastore. This follows the SaaS pattern where infrastructure is managed separately from the application.
+This Helm chart deploys the infrastructure components for Cost Management On-Premise, specifically PostgreSQL and Redis. This follows the SaaS pattern where infrastructure is managed separately from the application.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────┐
-│  Cost On-Premise Infrastructure    │
-│  (This Chart: cost-onprem-infra)   │
-│                                     │
-│  ┌─────────────────────────────┐   │
-│  │   PostgreSQL StatefulSet    │   │
-│  │   - Persistent Storage      │   │
-│  │   - Database: koku          │   │
-│  │   - User: koku              │   │
-│  │   - Extensions & Roles      │   │
-│  └─────────────────────────────┘   │
-│                                     │
-│  ┌─────────────────────────────┐   │
-│  │   Trino + Hive Metastore    │   │
-│  │   - Analytics Engine        │   │
-│  │   - Metadata Storage        │   │
-│  └─────────────────────────────┘   │
-│                                     │
-│  ┌─────────────────────────────┐   │
-│  │   Redis                     │   │
-│  │   - Cache Layer             │   │
-│  └─────────────────────────────┘   │
-└─────────────────────────────────────┘
+┌───────────────────────────────────┐
+│  Cost On-Premise Infrastructure   │
+│  (This Chart: cost-onprem-infra)  │
+│                                   │
+│  ┌─────────────────────────────┐  │
+│  │   PostgreSQL StatefulSet    │  │
+│  │   - Persistent Storage      │  │
+│  │   - Database: koku          │  │
+│  │   - User: koku              │  │
+│  │   - Extensions & Roles      │  │
+│  └─────────────────────────────┘  │
+│                                   │
+│  ┌─────────────────────────────┐  │
+│  │   Redis                     │  │
+│  │   - Cache Layer             │  │
+│  └─────────────────────────────┘  │
+└───────────────────────────────────┘
                  ▲
                  │ External Connection
                  │
@@ -81,7 +75,6 @@ This script will:
 - Deploy PostgreSQL with persistent storage
 - Wait for database to be ready
 - Create required extensions (`pg_stat_statements`)
-- Create required roles (`hive`)
 - Run Django database migrations
 - Validate the setup
 
@@ -124,12 +117,6 @@ Create extensions and roles:
 POD=postgres-0
 kubectl exec $POD -n cost-onprem -- psql -U postgres -d koku -c \
   "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
-
-kubectl exec $POD -n cost-onprem -- psql -U postgres -d postgres -c \
-  "CREATE ROLE hive WITH LOGIN PASSWORD 'hive';"
-
-kubectl exec $POD -n cost-onprem -- psql -U postgres -d postgres -c \
-  "CREATE DATABASE hive OWNER hive;"
 ```
 
 ### 3. Run Migrations
@@ -184,9 +171,8 @@ helm upgrade --install cost-onprem-infra ./cost-onprem-infra \
 The bootstrap script performs these initialization steps:
 
 1. **Extension Creation**: `pg_stat_statements` for query performance monitoring
-2. **Role Creation**: `hive` role required by Django migration `0039_create_hive_db`
-3. **Migration Check**: Verifies which migrations need to run
-4. **Migration Execution**: Runs pending Django migrations
+2. **Migration Check**: Verifies which migrations need to run
+3. **Migration Execution**: Runs pending Django migrations
 
 ## Troubleshooting
 

@@ -433,7 +433,7 @@ create_storage_credentials_secret() {
     fi
 }
 
-# Function to create S3 buckets (required before Hive Metastore starts)
+# Function to create S3 buckets (required for data storage)
 # This function MUST succeed for the installation to continue.
 # - If buckets already exist: prints notification and continues
 # - If buckets don't exist and creation fails: exits with error
@@ -566,7 +566,7 @@ cleanup_downloaded_chart() {
     fi
 }
 
-# Function to deploy infrastructure chart (PostgreSQL, Trino, Hive Metastore)
+# Function to deploy infrastructure chart (PostgreSQL, Redis)
 deploy_infrastructure_chart() {
     echo_info "Deploying infrastructure chart (cost-onprem-infra)..."
 
@@ -1704,9 +1704,9 @@ main() {
         exit 1
     fi
 
-    # Create S3 buckets (required before Hive Metastore starts)
+    # Create S3 buckets (required for data storage)
     if ! create_s3_buckets; then
-        echo_warning "Failed to create S3 buckets. Hive Metastore may fail to start."
+        echo_warning "Failed to create S3 buckets. Data storage may not work correctly."
     fi
 
     # Create UI secrets (cookie + OAuth client) - required before helm install
@@ -1736,7 +1736,7 @@ main() {
         exit 1
     fi
 
-    # Deploy infrastructure chart (PostgreSQL, Trino, Hive Metastore)
+    # Deploy infrastructure chart (PostgreSQL, Redis)
     if ! deploy_infrastructure_chart; then
         echo_error "Failed to deploy infrastructure chart"
         exit 1
