@@ -670,10 +670,10 @@ EOF
     # The Sources API publishes to Kafka, then sources-listener creates the provider
     echo_info "Waiting for Koku to process the new source via Kafka..."
 
-    local db_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=postgresql" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    local db_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=database" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
     if [ -z "$db_pod" ]; then
-        # Try infra postgres pod
-        db_pod="postgres-0"
+        # Try default database pod name
+        db_pod="cost-onprem-database-0"
     fi
 
     local max_wait=120  # 2 minutes max
@@ -689,9 +689,11 @@ EOF
             "SELECT COUNT(*) FROM api_provider p
              JOIN api_providerauthentication a ON p.authentication_id = a.id
              WHERE a.credentials->>'cluster_id' = '$cluster_id'
-                OR p.additional_context->>'cluster_id' = '$cluster_id';" 2>/dev/null | tr -d ' ' || echo "0")
+                OR p.additional_context->>'cluster_id' = '$cluster_id';" 2>/dev/null | tr -d ' \n\t')
+        # Default to 0 if empty or not a number
+        provider_count=${provider_count:-0}
 
-        if [ "$provider_count" -gt 0 ]; then
+        if [ "$provider_count" -gt 0 ] 2>/dev/null; then
             provider_found=true
             echo_success "Provider created in Koku database"
             break
@@ -963,9 +965,9 @@ verify_koku_manifest_processing() {
     echo_info "Checking manifest and file processing status for cluster: $cluster_id"
 
     # Find postgres pod
-    local db_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=postgresql" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    local db_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=database" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
     if [ -z "$db_pod" ]; then
-        db_pod="postgres-0"
+        db_pod="cost-onprem-database-0"
     fi
 
     local wait_interval=10
@@ -1079,9 +1081,9 @@ verify_koku_summary_tables() {
     echo_info "Checking OCP usage summary data for cluster: $cluster_id"
 
     # Find postgres pod
-    local db_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=postgresql" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    local db_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=database" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
     if [ -z "$db_pod" ]; then
-        db_pod="postgres-0"
+        db_pod="cost-onprem-database-0"
     fi
 
     # Get the tenant schema via the manifest table which has cluster_id
