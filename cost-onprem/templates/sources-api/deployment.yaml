@@ -43,24 +43,23 @@ spec:
               containerPort: {{ .Values.sourcesApi.port }}
               protocol: TCP
           env:
-            # Sources API uses the infra chart's PostgreSQL (shares koku database)
-            # Sources provisions tables that Koku uses, so they must share the same database
+            # Sources API uses its own dedicated database on the unified PostgreSQL server
             - name: DATABASE_USER
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.costManagement.database.secretName }}
-                  key: sources-username
+                  name: {{ include "cost-onprem.database.secretName" . }}
+                  key: sources-user
             - name: DATABASE_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.costManagement.database.secretName }}
+                  name: {{ include "cost-onprem.database.secretName" . }}
                   key: sources-password
             - name: DATABASE_HOST
               value: {{ include "cost-onprem.koku.database.host" . }}
             - name: DATABASE_PORT
               value: {{ include "cost-onprem.koku.database.port" . | quote }}
             - name: DATABASE_NAME
-              value: {{ include "cost-onprem.koku.database.dbname" . }}
+              value: {{ .Values.database.sources.name | quote }}
             - name: LOG_LEVEL
               value: {{ .Values.sourcesApi.logLevel | quote }}
             - name: REDIS_CACHE_HOST

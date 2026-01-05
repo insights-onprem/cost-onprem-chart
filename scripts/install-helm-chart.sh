@@ -566,39 +566,6 @@ cleanup_downloaded_chart() {
     fi
 }
 
-# Function to deploy infrastructure chart (PostgreSQL, Redis)
-deploy_infrastructure_chart() {
-    echo_info "Deploying infrastructure chart (cost-onprem-infra)..."
-
-    local infra_script="$SCRIPT_DIR/bootstrap-infrastructure.sh"
-
-    if [ ! -f "$infra_script" ]; then
-        echo_error "Infrastructure bootstrap script not found at: $infra_script"
-        return 1
-    fi
-
-    # Check if infrastructure is already deployed
-    if helm status cost-onprem-infra -n "$NAMESPACE" >/dev/null 2>&1; then
-        echo_info "Infrastructure chart 'cost-onprem-infra' is already deployed in namespace '$NAMESPACE'"
-        echo_info "Skipping infrastructure deployment. Use --skip-migrations if you need to skip migration checks."
-        # Still run the script with --skip-deploy to ensure DB is ready and migrations are complete
-        if ! "$infra_script" --namespace "$NAMESPACE" --skip-deploy; then
-            echo_warning "Infrastructure validation had issues, continuing..."
-        fi
-        return 0
-    fi
-
-    # Run the bootstrap infrastructure script
-    echo_info "Running bootstrap-infrastructure.sh..."
-    if "$infra_script" --namespace "$NAMESPACE"; then
-        echo_success "✓ Infrastructure chart deployed successfully"
-        return 0
-    else
-        echo_error "Failed to deploy infrastructure chart"
-        return 1
-    fi
-}
-
 # Function to deploy Helm chart
 deploy_helm_chart() {
     echo_info "Deploying Cost Management On Premise Helm chart..."
@@ -1107,7 +1074,7 @@ cleanup() {
         shift
     done
 
-    echo_info "Cleaning up Cost Management On Premise Helm deployment..."
+    echo_info "Cleaning up Cost Management On Premise deployment..."
     echo_info "Note: This will NOT remove Strimzi/Kafka. To clean them up separately:"
     echo_info "  ./deploy-strimzi.sh cleanup"
     echo ""
@@ -1733,12 +1700,6 @@ main() {
     # Verify Strimzi operator and Kafka cluster are available
     if ! verify_strimzi_and_kafka; then
         echo_error "Strimzi/Kafka prerequisites not met"
-        exit 1
-    fi
-
-    # Deploy infrastructure chart (PostgreSQL, Redis)
-    if ! deploy_infrastructure_chart; then
-        echo_error "Failed to deploy infrastructure chart"
         exit 1
     fi
 

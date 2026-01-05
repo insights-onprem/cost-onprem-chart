@@ -595,36 +595,24 @@ Filesystem
 {{- end }}
 
 {{/*
-Cache service name (redis or valkey based on platform)
+Cache service name (valkey)
 */}}
 {{- define "cost-onprem.cache.name" -}}
-{{- if eq (include "cost-onprem.platform.isOpenShift" .) "true" -}}
 valkey
-{{- else -}}
-redis
-{{- end -}}
 {{- end }}
 
 {{/*
-Cache configuration (returns the appropriate config object)
+Cache configuration (returns valkey config object)
 */}}
 {{- define "cost-onprem.cache.config" -}}
-{{- if eq (include "cost-onprem.platform.isOpenShift" .) "true" -}}
 {{- .Values.valkey | toYaml -}}
-{{- else -}}
-{{- .Values.redis | toYaml -}}
-{{- end -}}
 {{- end }}
 
 {{/*
-Cache CLI command (redis-cli or valkey-cli based on platform)
+Cache CLI command (valkey-cli)
 */}}
 {{- define "cost-onprem.cache.cli" -}}
-{{- if eq (include "cost-onprem.platform.isOpenShift" .) "true" -}}
 valkey-cli
-{{- else -}}
-redis-cli
-{{- end -}}
 {{- end }}
 
 {{/*

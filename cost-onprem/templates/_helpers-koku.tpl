@@ -48,48 +48,41 @@ Usage: {{ include "cost-onprem.koku.celery.worker.name" (dict "context" . "type"
 {{- end -}}
 
 {{/*
-Koku database name
-*/}}
-{{- define "cost-onprem.koku.database.name" -}}
-{{- .Values.costManagement.database.name | default "koku" -}}
-{{- end -}}
-
-{{/*
 =============================================================================
 Database Connection Helpers
 =============================================================================
 */}}
 
-
 {{/*
-Koku database host
-
-Returns the PostgreSQL service hostname. Uses the explicit host from values.yaml,
-or defaults to "postgres" (the service name from the infrastructure chart).
+Koku database host - uses unified database server
 */}}
 {{- define "cost-onprem.koku.database.host" -}}
-{{- .Values.costManagement.database.host | default "postgres" -}}
+{{- if eq .Values.database.server.host "internal" -}}
+{{- printf "%s-database" (include "cost-onprem.fullname" .) -}}
+{{- else -}}
+{{- .Values.database.server.host -}}
+{{- end -}}
 {{- end -}}
 
 {{/*
 Koku database port
 */}}
 {{- define "cost-onprem.koku.database.port" -}}
-{{- .Values.costManagement.database.port | default 5432 -}}
+{{- .Values.database.server.port | default 5432 -}}
 {{- end -}}
 
 {{/*
 Koku database name
 */}}
 {{- define "cost-onprem.koku.database.dbname" -}}
-{{- .Values.costManagement.database.name | default "koku" -}}
+{{- .Values.database.koku.name | default "koku" -}}
 {{- end -}}
 
 {{/*
 Koku database user
 */}}
 {{- define "cost-onprem.koku.database.user" -}}
-{{- .Values.costManagement.database.user | default "koku" -}}
+{{- .Values.database.koku.user | default "koku" -}}
 {{- end -}}
 
 {{/*
@@ -107,23 +100,22 @@ Koku database connection URL (for Django)
 
 {{/*
 =============================================================================
-Redis Connection Helpers (uses shared Redis from infrastructure)
+Valkey Connection Helpers (cache/broker)
 =============================================================================
 */}}
 
 {{/*
-Redis host (uses shared Redis service from PR #27 infrastructure)
+Valkey host
 */}}
 {{- define "cost-onprem.koku.redis.host" -}}
-{{- /* Koku uses infrastructure chart's Redis, not cost-onprem's cache */ -}}
-redis
+{{- printf "%s-valkey" (include "cost-onprem.fullname" .) -}}
 {{- end -}}
 
 {{/*
-Redis port
+Valkey port
 */}}
 {{- define "cost-onprem.koku.redis.port" -}}
-6379
+{{- .Values.valkey.port | default 6379 -}}
 {{- end -}}
 
 {{/*
@@ -215,11 +207,11 @@ Django secret name
 {{- end -}}
 
 {{/*
-Koku database credentials secret name
+Koku database credentials secret name (uses unified secret)
 */}}
 {{- define "cost-onprem.koku.database.secretName" -}}
-{{- if .Values.costManagement.database.secretName -}}
-{{- .Values.costManagement.database.secretName -}}
+{{- if .Values.database.existingSecret -}}
+{{- .Values.database.existingSecret -}}
 {{- else -}}
 {{- printf "%s-db-credentials" (include "cost-onprem.fullname" .) -}}
 {{- end -}}
@@ -346,7 +338,7 @@ Common environment variables for Koku API and Celery
   valueFrom:
     secretKeyRef:
       name: {{ include "cost-onprem.koku.database.secretName" . }}
-      key: password
+      key: koku-password
 - name: REDIS_HOST
   value: {{ include "cost-onprem.koku.redis.host" . | quote }}
 - name: REDIS_PORT

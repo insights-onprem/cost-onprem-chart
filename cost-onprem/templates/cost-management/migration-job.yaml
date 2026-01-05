@@ -1,10 +1,10 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: migration
+  name: {{ include "cost-onprem.fullname" . }}-migration
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "cost-mgmt-infra.labels" . | nindent 4 }}
+    {{- include "cost-onprem.koku.labels" . | nindent 4 }}
     app.kubernetes.io/component: migration
   annotations:
     "helm.sh/hook": post-install,post-upgrade
@@ -15,15 +15,19 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "cost-mgmt-infra.labels" . | nindent 8 }}
+        {{- include "cost-onprem.koku.labels" . | nindent 8 }}
         app.kubernetes.io/component: migration
     spec:
       restartPolicy: Never
-      serviceAccountName: {{ include "cost-mgmt-infra.serviceAccountName" . }}
+      serviceAccountName: {{ include "cost-onprem.koku.serviceAccountName" . }}
+      securityContext:
+        {{- include "cost-onprem.securityContext.pod" . | nindent 8 }}
       containers:
       - name: migration
-        image: "{{ .Values.migration.image.repository }}:{{ .Values.migration.image.tag }}"
-        imagePullPolicy: {{ .Values.migration.image.pullPolicy | default "IfNotPresent" }}
+        image: {{ include "cost-onprem.koku.image" . }}
+        imagePullPolicy: {{ .Values.costManagement.api.image.pullPolicy | default "IfNotPresent" }}
+        securityContext:
+          {{- include "cost-onprem.securityContext.container" . | nindent 10 }}
         command:
         - bash
         - -c
@@ -31,25 +35,13 @@ spec:
           set -e
 
           echo "=========================================="
-          echo "Koku Django Migrations - Debug Mode"
+          echo "Koku Django Migrations"
           echo "=========================================="
           echo "Timestamp: $(date)"
           echo "Pod: $(hostname)"
           echo ""
 
           echo "=== Environment Configuration ==="
-          export DATABASE_SERVICE_NAME='DATABASE'
-          export DATABASE_SERVICE_HOST='{{ include "cost-mgmt-infra.postgresql.serviceName" . }}'
-          export DATABASE_SERVICE_PORT='5432'
-          export DATABASE_ENGINE='postgresql'
-          export DATABASE_NAME='{{ .Values.postgresql.auth.database }}'
-          export DATABASE_USER='{{ .Values.postgresql.auth.username }}'
-          export DATABASE_PASSWORD="${DATABASE_PASSWORD}"
-          export DJANGO_SECRET_KEY='migration-temp-key'
-          export CLOWDER_ENABLED=False
-          export DEVELOPMENT=False
-          export PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
-
           echo "Database Host: ${DATABASE_SERVICE_HOST}"
           echo "Database Port: ${DATABASE_SERVICE_PORT}"
           echo "Database Name: ${DATABASE_NAME}"
@@ -60,8 +52,8 @@ spec:
           echo "=== Testing Database Connectivity ==="
           echo "Attempting TCP connection to ${DATABASE_SERVICE_HOST}:${DATABASE_SERVICE_PORT}..."
           timeout 10 bash -c "cat < /dev/null > /dev/tcp/${DATABASE_SERVICE_HOST}/${DATABASE_SERVICE_PORT}" \
-            && echo "✅ TCP connection successful" \
-            || { echo "❌ TCP connection failed"; exit 1; }
+            && echo "TCP connection successful" \
+            || { echo "TCP connection failed"; exit 1; }
           echo ""
 
           echo "=== Preparing Migration Environment ==="
@@ -88,19 +80,42 @@ spec:
 
           echo "=========================================="
           if [ $migration_exit -eq 0 ]; then
-            echo "✅ Migrations completed successfully!"
+            echo "Migrations completed successfully!"
           else
-            echo "❌ Migrations failed with exit code: $migration_exit"
+            echo "Migrations failed with exit code: $migration_exit"
           fi
           echo "=========================================="
 
           exit $migration_exit
         env:
+        - name: DATABASE_SERVICE_NAME
+          value: "DATABASE"
+        - name: DATABASE_SERVICE_HOST
+          value: {{ include "cost-onprem.koku.database.host" . | quote }}
+        - name: DATABASE_SERVICE_PORT
+          value: {{ include "cost-onprem.koku.database.port" . | quote }}
+        - name: DATABASE_ENGINE
+          value: "postgresql"
+        - name: DATABASE_NAME
+          value: {{ include "cost-onprem.koku.database.dbname" . | quote }}
+        - name: DATABASE_USER
+          value: {{ include "cost-onprem.koku.database.user" . | quote }}
         - name: DATABASE_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: {{ include "cost-mgmt-infra.postgresql.secretName" . }}
-              key: password
+              name: {{ include "cost-onprem.koku.database.secretName" . }}
+              key: koku-password
+        - name: DJANGO_SECRET_KEY
+          value: "migration-temp-key"
+        - name: CLOWDER_ENABLED
+          value: "False"
+        - name: DEVELOPMENT
+          value: "False"
+        - name: PROMETHEUS_MULTIPROC_DIR
+          value: "/tmp/prometheus"
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
         resources:
           requests:
             cpu: 250m
@@ -108,4 +123,6 @@ spec:
           limits:
             cpu: 500m
             memory: 1Gi
-
+      volumes:
+      - name: tmp
+        emptyDir: {}
