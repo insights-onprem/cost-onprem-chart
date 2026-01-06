@@ -94,7 +94,7 @@ class SmokeValidationPhase:
         """Validate that files were processed successfully
 
         Checks CostUsageReportStatus to verify processing completion.
-        This is more reliable than summary tables which depend on Celery chord callbacks.
+        Also checks manifest state for summarization failures.
         """
         print("\n📋 Validating file processing...")
         print(f"  Expected from nise YAML:")
@@ -104,13 +104,15 @@ class SmokeValidationPhase:
 
         try:
             # Find recent manifests for this cluster
+            # Include summary state to check for failures
             result = self.db.execute_query(f"""
                 SELECT
                     m.id,
                     m.assembly_id,
                     m.num_total_files,
                     m.completed_datetime,
-                    m.state::jsonb->'processing'->>'end' as processing_end
+                    m.state::jsonb->'processing'->>'end' as processing_end,
+                    m.state::jsonb->'summary'->>'failed' as summary_failed
                 FROM reporting_common_costusagereportmanifest m
                 JOIN api_provider p ON m.provider_id = p.uuid
                 JOIN api_providerauthentication pa ON p.authentication_id = pa.id
@@ -123,16 +125,38 @@ class SmokeValidationPhase:
                 print(f"  ❌ No manifest found for cluster {self.cluster_id}")
                 return {'passed': False, 'error': 'No manifest found'}
 
-            if len(result[0]) < 5:
+            if len(result[0]) < 6:
                 print(f"  ❌ Manifest query returned incomplete data: {len(result[0])} columns")
-                return {'passed': False, 'error': f'Manifest query returned {len(result[0])} columns, expected 5'}
+                return {'passed': False, 'error': f'Manifest query returned {len(result[0])} columns, expected 6'}
 
-            manifest_id, assembly_id, num_files, completed_dt, processing_end = result[0]
+            manifest_id, assembly_id, num_files, completed_dt, processing_end, summary_failed = result[0]
 
             print(f"  ✅ Found manifest (ID: {manifest_id})")
             print(f"     Assembly ID: {assembly_id}")
             print(f"     Files: {num_files}")
             print(f"     Processing end: {processing_end}")
+
+            # Check if summarization failed
+            if summary_failed:
+                print(f"     ❌ Summary FAILED: {summary_failed}")
+                print()
+                return {
+                    'passed': False,
+                    'error': 'Summarization failed',
+                    'summary_failed': summary_failed,
+                    'manifest_id': manifest_id
+                }
+
+            # Check summary success (optional - may not be complete yet)
+            summary_success_result = self.db.execute_query(f"""
+                SELECT m.state::jsonb->'summary'->>'end' as summary_end
+                FROM reporting_common_costusagereportmanifest m
+                WHERE m.id = %s
+            """, (manifest_id,))
+            if summary_success_result and summary_success_result[0][0]:
+                print(f"     ✅ Summary completed: {summary_success_result[0][0]}")
+            else:
+                print(f"     ⏳ Summary: pending (may complete after file processing)")
             print()
 
             # Check file processing status
@@ -236,14 +260,15 @@ class SmokeValidationPhase:
 
         try:
             # Query 1: Validate aggregated totals
-            # Note: Use %% to escape % in LIKE patterns (Python % formatting converts %% to %)
+            # Note: Use request values (not usage) as they match the expected values from nise YAML
+            # Usage values can vary, but request values are deterministic
             result = self.db.execute_query(f"""
                 SELECT
                     COUNT(*) as row_count,
                     MIN(usage_start) as first_date,
                     MAX(usage_start) as last_date,
-                    SUM(pod_usage_cpu_core_hours) as total_cpu_hours,
-                    SUM(pod_usage_memory_gigabyte_hours) as total_memory_gb_hours,
+                    SUM(pod_request_cpu_core_hours) as total_cpu_hours,
+                    SUM(pod_request_memory_gigabyte_hours) as total_memory_gb_hours,
                     COUNT(DISTINCT node) as node_count,
                     COUNT(DISTINCT namespace) as namespace_count,
                     COUNT(DISTINCT resource_id) as pod_count
@@ -289,8 +314,8 @@ class SmokeValidationPhase:
             print(f"  Actual data:")
             print(f"    - Rows: {row_count} (expected: {self.expected['expected_rows']})")
             print(f"    - Date range: {first_date} to {last_date}")
-            print(f"    - CPU hours: {cpu_hours:.2f} (expected: {self.expected['expected_cpu_hours']:.2f})")
-            print(f"    - Memory GB-hours: {mem_gb_hours:.2f} (expected: {self.expected['expected_memory_gb_hours']:.2f})")
+            print(f"    - CPU request hours: {cpu_hours:.2f} (expected: {self.expected['expected_cpu_hours']:.2f})")
+            print(f"    - Memory request GB-hours: {mem_gb_hours:.2f} (expected: {self.expected['expected_memory_gb_hours']:.2f})")
             print(f"    - Unique nodes: {node_count}")
             print(f"    - Unique namespaces: {ns_count}")
             print(f"    - Unique pods: {pod_count}")
@@ -636,20 +661,32 @@ class SmokeValidationPhase:
 
         results = {}
 
-        # Test 1: File Processing (CRITICAL)
-        # Validates files were processed successfully
-        # This is reliable even if Celery chord callbacks are broken
+        # Test 1: File Processing and Summarization (CRITICAL)
+        # Validates files were processed AND summarization succeeded
+        # Catches koku application bugs that cause summarization to fail
         results['file_processing'] = self.validate_file_processing()
         if not results['file_processing']['passed']:
             print("\n❌ Smoke validation FAILED")
-            print(f"   Reason: {results['file_processing'].get('error', 'Unknown')}")
+            error = results['file_processing'].get('error', 'Unknown')
+            print(f"   Reason: {error}")
+
+            # Provide specific guidance for summarization failures
+            if results['file_processing'].get('summary_failed'):
+                print(f"   Summary failed at: {results['file_processing'].get('summary_failed')}")
+                print("\n   💡 Possible causes:")
+                print("      - Koku application bug (check celery-worker-ocp logs for errors)")
+                print("      - Database schema migration issues")
+                print("      - Trino/PostgreSQL compatibility issues")
+                print("\n   🔍 Recommended debugging:")
+                print("      oc logs -n cost-onprem deployment/cost-onprem-celery-worker-ocp --tail=100")
+
             if 'details' in results['file_processing']:
                 for detail in results['file_processing']['details']:
                     print(f"   - {detail}")
             return {
                 'passed': False,
                 'tests': results,
-                'reason': 'File processing validation failed'
+                'reason': error
             }
 
         # Test 2: Aggregated Data (OPTIONAL - depends on Celery chord callbacks)
