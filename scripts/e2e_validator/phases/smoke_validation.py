@@ -222,7 +222,7 @@ class SmokeValidationPhase:
             if not table_check or not table_check[0][0]:
                 print(f"  ⚠️  Summary table does not exist yet")
                 print(f"  ℹ️  This is expected if summary phase hasn't completed")
-                print(f"  ℹ️  For smoke tests, this means CSV → Parquet → Trino pipeline works")
+                print(f"  ℹ️  For smoke tests, this means CSV → PostgreSQL pipeline works")
                 print()
                 return {
                     'passed': True,  # Pipeline works, just needs more time for summary
@@ -664,7 +664,6 @@ class SmokeValidationPhase:
 
         # Determine overall pass/fail
         # For smoke test: file processing is REQUIRED, db/cost are OPTIONAL (async)
-        # Trino validation is done in a separate phase, so if we get here, Trino passed
         file_ok = results['file_processing'].get('passed', False)
         db_ok = results['database'].get('passed', False) and not results['database'].get('skipped', False)
         cost_ok = results['cost'].get('passed', False) and not results['cost'].get('skipped', False)

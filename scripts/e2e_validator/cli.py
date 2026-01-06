@@ -73,7 +73,7 @@ def discover_sources_api_info(namespace: str) -> tuple:
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
-@click.option('--namespace', default='cost-mgmt', help='Kubernetes namespace')
+@click.option('--namespace', default='cost-onprem', help='Kubernetes namespace')
 @click.option('--org-id', default='org1234567', help='Organization ID')
 @click.option('--provider-type', type=click.Choice(['aws', 'azure', 'gcp', 'ocp'], case_sensitive=False), default='aws', help='Cloud provider type to test')
 @click.option('--skip-migrations', is_flag=True, help='Skip database migrations')
@@ -158,7 +158,7 @@ def main(ctx, namespace, org_id, provider_type, skip_migrations, skip_provider, 
         print("  🔍 Discovering PostgreSQL pod...")
         postgres_pod = k8s.discover_postgresql_pod()
         if not postgres_pod:
-            print("  ❌ Failed to discover PostgreSQL pod with label app.kubernetes.io/component=postgresql")
+            print("  ❌ Failed to discover PostgreSQL pod with label app.kubernetes.io/component=database")
             ctx.exit(1)
 
         print(f"  ✓ Discovered PostgreSQL pod: {postgres_pod}")
@@ -173,16 +173,16 @@ def main(ctx, namespace, org_id, provider_type, skip_migrations, skip_provider, 
         print(f"  ✓ Discovered secret: {db_secret_info['secret_name']}")
 
         # Get DB credentials from discovered secret
-        db_password = k8s.get_secret(db_secret_info['secret_name'], db_secret_info['key'])
+        db_password = k8s.get_secret(db_secret_info['secret_name'], 'koku-password')
         if not db_password:
-            print(f"  ❌ Failed to get password from secret {db_secret_info['secret_name']}")
+            print(f"  ❌ Failed to get password from secret {db_secret_info['secret_name']} (key: koku-password)")
             ctx.exit(1)
 
         # Get database user from secret
-        db_user = k8s.get_secret(db_secret_info['secret_name'], 'username')
+        db_user = k8s.get_secret(db_secret_info['secret_name'], 'koku-user')
         if not db_user:
-            print(f"  ⚠️  Failed to get username from secret, defaulting to 'koku'")
-            db_user = 'koku'
+            print(f"  ❌ Failed to get username from secret {db_secret_info['secret_name']} (key: koku-user)")
+            ctx.exit(1)
 
         # Use kubectl exec for database queries - no port-forward needed!
         # This is more resilient to network issues than direct TCP connections
@@ -478,25 +478,13 @@ def main(ctx, namespace, org_id, provider_type, skip_migrations, skip_provider, 
                 failed_phase = 'processing'
 
         # Look up actual schema_name from Customer table (Koku prefixes 'org' to org_id)
-        # This is needed for both Trino and Validation phases
+        # This is needed for the Validation phase
         tenant_schema = db.get_schema_name_for_org(org_id)
         if not tenant_schema:
             tenant_schema = org_id  # Fallback to org_id if not found
         print(f"  ℹ️  Using tenant schema: {tenant_schema}")
 
-        # Phase 7: Trino validation
-        if should_skip_remaining:
-            results['trino'] = {'passed': False, 'skipped': True, 'reason': f'{failed_phase} failed'}
-        else:
-            from .phases.trino_validation import TrinoValidationPhase
-            trino_val = TrinoValidationPhase(k8s, tenant_schema, provider_type=provider_type)
-            results['trino'] = trino_val.run()
-            if not results['trino']['passed'] and not results['trino'].get('skipped'):
-                print("\n❌ Trino validation failed - skipping remaining phases")
-                should_skip_remaining = True
-                failed_phase = 'trino'
-
-        # Phase 8: Validation
+        # Phase 7: Validation (PostgreSQL-based)
         if should_skip_remaining:
             results['validation'] = {'passed': False, 'skipped': True, 'reason': f'{failed_phase} failed'}
         elif skip_tests:
@@ -549,10 +537,6 @@ def main(ctx, namespace, org_id, provider_type, skip_migrations, skip_provider, 
             critical_phases.append('iqe_tests')
 
         print(f"    DEBUG: final critical_phases={critical_phases}")
-
-        # Trino validation is critical for AWS/Azure/GCP (not for OCP-only)
-        if provider_type in ['AWS', 'AZURE', 'GCP']:
-            critical_phases.append('trino')
 
         # Check critical phase status
         critical_failures = []

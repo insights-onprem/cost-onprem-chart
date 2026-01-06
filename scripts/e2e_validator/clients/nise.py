@@ -33,13 +33,12 @@ class NiseClient:
     # PURPOSE: Validate API contract with predictable Nise data
     #
     # KEY INSIGHT: Nise generates deterministic input → IQE validates deterministic output
-    # The database layer (Trino+Hive+Postgres OR Pure Postgres) is transparent to these tests.
-    # Same input data + same API queries = same results, regardless of backend architecture.
+    # Same input data + same API queries = same results.
     #
     # This approach provides:
-    # 1. Regression testing for current Trino+Hive+Postgres setup
-    # 2. Migration confidence when switching to Pure Postgres
-    # 3. No code changes needed - same tests validate both architectures
+    # 1. Regression testing for PostgreSQL-based data processing
+    # 2. Predictable test data for validation
+    # 3. No code changes needed when data processing evolves
 
     SCENARIOS = {
         # ========================================================================

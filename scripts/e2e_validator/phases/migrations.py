@@ -21,16 +21,6 @@ class MigrationsPhase:
         self.k8s = k8s_client
         self.db = db_client
 
-    def check_hive_prerequisites(self) -> bool:
-        """Check if Hive role/database exist"""
-        return self.db.check_hive_database()
-
-    def create_hive_prerequisites(self):
-        """Create Hive role and database"""
-        print("    Creating Hive prerequisites...")
-        self.db.create_hive_prerequisites()
-        print("    ✓ Hive role and database created")
-
     def check_pg_stat_statements(self) -> bool:
         """Check if pg_stat_statements extension exists"""
         try:
@@ -129,11 +119,6 @@ class MigrationsPhase:
 
         # Create prerequisites
         print("\n📝 Creating database prerequisites...")
-
-        if not self.check_hive_prerequisites():
-            self.create_hive_prerequisites()
-        else:
-            print("    ✓ Hive prerequisites already exist")
 
         if not self.check_pg_stat_statements():
             self.create_pg_stat_statements()

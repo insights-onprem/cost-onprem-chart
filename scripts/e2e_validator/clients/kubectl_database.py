@@ -205,23 +205,20 @@ class KubectlDatabaseClient:
             "has_critical": has_polling
         }
 
-    def check_hive_database(self) -> bool:
-        """Check if Hive database and role exist"""
-        # Check role
-        has_role_result = self.execute_query("""
-            SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = 'hive')
-        """, fetch_one=True)
-        has_role = has_role_result and has_role_result[0] == 't'
+    def check_summary_tables(self) -> bool:
+        """Check if summary tables have been populated
 
-        # Check database
-        has_db_result = self.execute_query("""
+        Returns:
+            True if any summary data exists
+        """
+        result = self.execute_query("""
             SELECT EXISTS (
-                SELECT FROM pg_database WHERE datname = 'hive'
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = 'reporting_ocpusagelineitem_daily_summary'
+                AND table_schema NOT IN ('pg_catalog', 'information_schema', 'public')
             )
         """, fetch_one=True)
-        has_db = has_db_result and has_db_result[0] == 't'
-
-        return has_role and has_db
+        return result and result[0] == 't'
 
     # ========================================================================
     # Manifest Operations

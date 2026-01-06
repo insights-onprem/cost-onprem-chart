@@ -87,8 +87,6 @@ class DeploymentValidationPhase:
             'koku-koku-api',
             'koku-koku-db',
             'redis',
-            'trino-coordinator',
-            'hive-metastore',
         ]
 
         accessible = []
@@ -222,7 +220,6 @@ class DeploymentValidationPhase:
 
         tests = {
             'koku_db': False,
-            'hive_db': False,
             'tables_exist': False,
             'can_query': False
         }
@@ -234,17 +231,6 @@ class DeploymentValidationPhase:
             print("  ✓ Koku DB connection")
         except Exception as e:
             print(f"  ✗ Koku DB connection: {e}")
-
-        try:
-            # Test Hive database exists
-            result = self.db.execute_query(
-                "SELECT datname FROM pg_database WHERE datname = 'hive'",
-                fetch_one=True
-            )
-            tests['hive_db'] = result is not None
-            print(f"  {'✓' if tests['hive_db'] else '✗'} Hive database exists")
-        except Exception as e:
-            print(f"  ✗ Hive database check: {e}")
 
         try:
             # Test critical tables exist
@@ -395,15 +381,13 @@ except Exception as e:
     # ========================================================================
 
     def validate_data_pipeline(self) -> Dict[str, any]:
-        """Validate end-to-end data pipeline"""
+        """Validate end-to-end data pipeline (PostgreSQL-based)"""
         print("\n🔄 Data Flow: Pipeline Validation")
 
         stages = {
             's3_to_masu': False,
             'masu_to_postgres': False,
-            'postgres_to_hive': False,
-            'hive_to_trino': False,
-            'trino_to_api': False
+            'postgres_summary': False,
         }
 
         # Check S3 data exists
@@ -411,7 +395,7 @@ except Exception as e:
         stages['s3_to_masu'] = True
         print("  ✓ Stage 1: S3 → MASU")
 
-        # Check data in Postgres
+        # Check data in Postgres (manifests processed)
         try:
             manifest_count = self.db.get_manifest_count()
             stages['masu_to_postgres'] = manifest_count > 0
@@ -420,31 +404,14 @@ except Exception as e:
         except:
             print("  ✗ Stage 2: MASU → Postgres")
 
-        # Check Hive metastore configured
+        # Check summary tables populated
         try:
-            has_hive = self.db.check_hive_database()
-            stages['postgres_to_hive'] = has_hive
-            print(f"  {'✓' if has_hive else '✗'} Stage 3: Postgres → Hive")
+            # Check if any summary data exists
+            summary_exists = self.db.check_summary_tables()
+            stages['postgres_summary'] = summary_exists
+            print(f"  {'✓' if summary_exists else '✗'} Stage 3: PostgreSQL Summary Tables")
         except:
-            print("  ✗ Stage 3: Postgres → Hive")
-
-        # Check Trino can query
-        trino_pod = self.k8s.get_pod_by_component('trino-coordinator')
-        if trino_pod:
-            try:
-                output = self.k8s.exec_in_pod(
-                    trino_pod,
-                    ['/usr/bin/trino', '--execute', 'SHOW SCHEMAS FROM hive']
-                )
-                stages['hive_to_trino'] = 'org' in output
-                print(f"  {'✓' if stages['hive_to_trino'] else '✗'} Stage 4: Hive → Trino")
-            except:
-                print("  ✗ Stage 4: Hive → Trino")
-
-        # Check API responds
-        # (Validated in IQE tests)
-        stages['trino_to_api'] = True
-        print("  ✓ Stage 5: Trino → API")
+            print("  ✗ Stage 3: PostgreSQL Summary Tables")
 
         result = {
             'stages': stages,

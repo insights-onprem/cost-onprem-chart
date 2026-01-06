@@ -29,7 +29,7 @@ class ProviderPhase:
         self.org_id = org_id
         self.k8s = k8s_client
         self.sources_api = sources_api_client
-        self.postgres_pod = postgres_pod or (k8s_client.get_pod_by_component('postgresql') if k8s_client else None)
+        self.postgres_pod = postgres_pod or (k8s_client.get_pod_by_component('database') if k8s_client else None)
         self.database = 'koku'
 
     def get_existing_provider(self) -> Optional[Dict]:
@@ -178,10 +178,8 @@ except Exception as e:
         if not self.k8s:
             raise ValueError("KubernetesClient required for database operations")
 
-        # Try to find postgres pod (component label or by name)
-        postgres_pod = self.k8s.get_pod_by_component('postgresql')
-        if not postgres_pod:
-            postgres_pod = self.k8s.discover_postgresql_pod()
+        # Try to find postgres pod (component label)
+        postgres_pod = self.k8s.get_pod_by_component('database')
         if not postgres_pod:
             raise RuntimeError("Postgres pod not found")
 

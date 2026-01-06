@@ -16,7 +16,7 @@ import threading
 class KubernetesClient:
     """Native Kubernetes API client"""
 
-    def __init__(self, namespace: str = "cost-mgmt"):
+    def __init__(self, namespace: str = "cost-onprem"):
         """Initialize Kubernetes client
 
         Args:
@@ -45,7 +45,7 @@ class KubernetesClient:
         """Get first pod name for a component
 
         Args:
-            component: Component label value (e.g., "masu", "postgresql")
+            component: Component label value (e.g., "masu", "database")
 
         Returns:
             Pod name or None
@@ -60,20 +60,11 @@ class KubernetesClient:
             PostgreSQL pod name or None if not found
         """
         try:
-            # Look for pod with postgresql component label
-            pod_name = self.get_pod_by_component("postgresql")
-            if pod_name:
-                return pod_name
-
-            # Fallback: look for statefulset pod with postgres in name
-            pods = self.get_pods()
-            for pod in pods:
-                if 'postgres' in pod.metadata.name.lower() and pod.status.phase == "Running":
-                    return pod.metadata.name
+            # Look for pod with database component label (Helm chart uses 'database')
+            return self.get_pod_by_component("database")
         except Exception as e:
             print(f"  ⚠️  Failed to discover PostgreSQL pod: {e}")
-
-        return None
+            return None
 
     def get_pod_health(self) -> Dict[str, int]:
         """Get pod health statistics

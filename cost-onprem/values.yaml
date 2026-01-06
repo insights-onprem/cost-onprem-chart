@@ -129,9 +129,6 @@ ros:
 # =============================================================================
 # Koku is the Cost Management backend service that processes cost data
 # from various cloud providers (AWS, Azure, GCP, OCP)
-#
-# NOTE: Koku connects to the infrastructure chart's PostgreSQL and Trino,
-# NOT to this chart's unified database (which is for ROS, Kruize, Sources)
 
 costManagement:
   # ---------------------------------------------------------------------------

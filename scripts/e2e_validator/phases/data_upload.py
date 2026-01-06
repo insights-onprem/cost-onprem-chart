@@ -119,28 +119,23 @@ generators:
         return temp_yaml.name
 
     def cleanup_ocp_processing_artifacts(self) -> Dict[str, int]:
-        """Clean up old Parquet files and Trino tables for OCP
+        """Clean up old data files for OCP
 
-        This ensures a clean state for E2E tests by removing:
-        1. Old Parquet files from S3 (data/parquet/*/OCP/ and warehouse/)
-        2. Old Trino tables (openshift_pod_usage_line_items*)
+        This ensures a clean state for E2E tests by removing old data files from S3.
 
         Returns:
             Dict with counts of deleted artifacts:
-                - parquet_deleted: Number of Parquet files deleted
-                - tables_dropped: Number of Trino tables dropped
+                - files_deleted: Number of files deleted from S3
         """
-        parquet_deleted = 0
-        tables_dropped = 0
+        files_deleted = 0
 
-        # 1. Delete Parquet files from S3 (both data/parquet and warehouse paths)
-        parquet_prefixes = [
-            f'data/parquet/{self.org_id}/OCP/',
-            f'data/parquet/daily/{self.org_id}/OCP/',
-            f'warehouse/{self.org_id}.db/',  # Hive/Trino managed table data
+        # Delete data files from S3
+        data_prefixes = [
+            f'data/{self.org_id}/OCP/',
+            f'data/csv/{self.org_id}/OCP/',
         ]
 
-        for prefix in parquet_prefixes:
+        for prefix in data_prefixes:
             try:
                 # List all objects under this prefix
                 paginator = self.s3.get_paginator('list_objects_v2')
@@ -150,60 +145,21 @@ generators:
                     if 'Contents' in page:
                         for obj in page['Contents']:
                             self.s3.delete_object(Bucket=self.bucket, Key=obj['Key'])
-                            parquet_deleted += 1
+                            files_deleted += 1
             except Exception as e:
-                print(f"  ⚠️  Warning: Could not delete Parquet files from {prefix}: {e}")
-
-        # 2. Drop Trino tables
-        if self.k8s:
-            trino_tables = [
-                'openshift_pod_usage_line_items',
-                'openshift_pod_usage_line_items_daily',
-                'openshift_storage_usage_line_items',
-                'openshift_storage_usage_line_items_daily',
-                'openshift_vm_usage_line_items',
-                'openshift_vm_usage_line_items_daily',
-                'openshift_node_labels_line_items',
-                'openshift_node_labels_line_items_daily',
-                'openshift_namespace_labels_line_items',
-                'openshift_namespace_labels_line_items_daily'
-                # NOTE: Do NOT drop reporting_ocpusagelineitem_daily_summary
-                # It's a working table used by Koku for temporary aggregation staging
-            ]
-
-            trino_pod = self.k8s.get_pod_by_component('trino-coordinator')
-            if trino_pod:
-                for table in trino_tables:
-                    try:
-                        # Execute Trino SQL to drop table
-                        drop_sql = f"DROP TABLE IF EXISTS hive.{self.org_id}.{table}"
-                        result = self.k8s.run_pod_command(
-                            trino_pod,
-                            ['trino', '--execute', drop_sql]
-                        )
-                        tables_dropped += 1
-                    except Exception as e:
-                        print(f"  ⚠️  Warning: Could not drop table {table}: {e}")
-
-        # 3. Clear Redis cache and restart listener to fix stale table_exists cache
-        # This is a workaround for Koku bug where table_exists() is cached in Redis
-        # and prevents table recreation when tables are dropped
-        if self.k8s and (parquet_deleted > 0 or tables_dropped > 0):
-            self._restart_koku_components_for_cache_clear()
+                print(f"  ⚠️  Warning: Could not delete files from {prefix}: {e}")
 
         return {
-            'parquet_deleted': parquet_deleted,
-            'tables_dropped': tables_dropped
+            'files_deleted': files_deleted,
+            # Backwards compatibility
+            'parquet_deleted': files_deleted,
+            'tables_dropped': 0
         }
 
     def _restart_koku_components_for_cache_clear(self):
-        """Restart Redis and Koku listener to clear stale table_exists cache.
+        """Restart Redis and Koku listener to clear stale caches.
 
-        This is a workaround for a Koku bug where table_exists() results are cached
-        in Redis. When tables are dropped externally, the cache still returns True,
-        preventing table recreation.
-
-        See: docs/troubleshooting.md - "Trino Tables Not Created After Repeated Test Runs"
+        This ensures a clean state by clearing any cached processing state.
         """
         import subprocess
         import time
@@ -823,13 +779,12 @@ generators:
                 self.s3.delete_object(Bucket=self.bucket, Key=key)
             print(f"  ✅ Cleaned existing data")
 
-            # Also clean up S3 parquet/warehouse data and Trino tables
+            # Also clean up S3 data files
             # This ensures reports aren't seen as "already processed"
-            print(f"  🧹 Cleaning up processing artifacts (parquet/warehouse)...")
+            print(f"  🧹 Cleaning up processing artifacts...")
             cleanup_result = self.cleanup_ocp_processing_artifacts()
-            if cleanup_result['parquet_deleted'] > 0 or cleanup_result['tables_dropped'] > 0:
-                print(f"     - Deleted {cleanup_result['parquet_deleted']} S3 files")
-                print(f"     - Dropped {cleanup_result['tables_dropped']} Trino tables")
+            if cleanup_result.get('files_deleted', 0) > 0:
+                print(f"     - Deleted {cleanup_result['files_deleted']} S3 files")
 
         prefix_path = f'{self.report_prefix}/' if self.report_prefix else ''
         cluster_id = 'test-cluster-123'
