@@ -581,14 +581,18 @@ except Exception as e:
 
             # Always monitor summary population after processing attempt
             # (files may have been processed even if timeout occurred)
-            summary_result = self.monitor_summary_population(timeout=90)
+            summary_timeout = 90
+            summary_result = self.monitor_summary_population(timeout=summary_timeout)
             if summary_result.get('has_data'):
                 # Data found - processing was successful
                 monitor_result['success'] = True
                 monitor_result['summary_rows'] = summary_result.get('row_count', 0)
             else:
                 if 'timeout' in summary_result:
-                    print(f"  ⚠️  Summary not populated after 90s (may need more time)")
+                    print(f"  ⚠️  Summary not populated after {summary_timeout}s (may need more time)")
+                    print(f"  💡 To check summary table manually later:")
+                    print(f"     oc exec -n {self.k8s.namespace} {self.postgres_pod} -- psql -U koku -d koku -c \\")
+                    print(f"       \"SELECT COUNT(*), cluster_id FROM {summary_result.get('schema', self.org_id)}.reporting_ocpusagelineitem_daily_summary GROUP BY cluster_id;\"")
                 elif 'error' in summary_result:
                     print(f"  ⚠️  Summary check failed: {summary_result['error']}")
 
