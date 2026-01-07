@@ -1037,8 +1037,8 @@ ui:
       caCertEnabled: true
   app:
     image:
-      repository: quay.io/insights-onprem/koku-ui-mfe-on-prem
-      tag: "0.0.14"
+      repository: quay.io/insights-onprem/koku-ui-onprem:latest
+      tag: "latest"
       pullPolicy: IfNotPresent
     port: 8080
     resources:
