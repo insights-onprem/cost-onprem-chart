@@ -289,7 +289,7 @@ Phases: 7/7 passed
 - **Match Icons**: ✅ indicates values match within 5% tolerance
 
 **Requirements:**
-- Cost Management deployed with `cost-onprem` or `cost-onprem-infra` charts
+- Cost Management deployed with `cost-onprem` chart
 - Kafka cluster running (Strimzi)
 - S3/ODF storage accessible
 

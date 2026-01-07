@@ -17,17 +17,13 @@
 
 ## Deployment Architecture
 
-The Cost Management stack consists of two Helm charts deployed in sequence:
+The Cost Management stack consists of the cost-onprem Helm chart plus infrastructure dependencies:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    cost-onprem-infra (Chart 1)                  │
-│  PostgreSQL, Valkey                                             │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│                      cost-onprem (Chart 2)                      │
+│                         cost-onprem                             │
 │  Koku APIs, Celery Workers, ROS, Kruize, Sources, UI, Ingress   │
+│  PostgreSQL, Valkey                                             │
 └─────────────────────────────────────────────────────────────────┘
                               +
 ┌─────────────────────────────────────────────────────────────────┐

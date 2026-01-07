@@ -161,7 +161,7 @@ Usage: {{ include "cost-onprem.initContainer.waitForCache" . | nindent 8 }}
 
 {{/*
 Wait for Infrastructure PostgreSQL init container (for Koku and Sources API)
-This waits for the PostgreSQL deployed by the cost-onprem-infra chart
+This waits for the PostgreSQL database to be ready
 Usage: {{ include "cost-onprem.initContainer.waitForInfraDb" . | nindent 8 }}
 */}}
 {{- define "cost-onprem.initContainer.waitForInfraDb" -}}
