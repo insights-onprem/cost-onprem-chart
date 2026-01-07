@@ -469,7 +469,8 @@ def main(ctx, namespace, org_id, provider_type, skip_migrations, skip_provider, 
                 provider_uuid=provider_uuid,
                 org_id=org_id,
                 manifest_uuid=manifest_uuid,
-                provider_type=provider_type
+                provider_type=provider_type,
+                cluster_id='test-cluster-123'
             )
             results['processing'] = processing.run()
             if not results['processing']['passed'] and not results['processing'].get('skipped'):

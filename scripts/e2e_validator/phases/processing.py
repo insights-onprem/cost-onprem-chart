@@ -12,7 +12,7 @@ from typing import Dict
 class ProcessingPhase:
     """Phase 5-6: Trigger and monitor data processing"""
 
-    def __init__(self, k8s_client, db_client, timeout: int = 300, provider_uuid: str = None, org_id: str = "org1234567", manifest_uuid: str = None, provider_type: str = 'ocp'):
+    def __init__(self, k8s_client, db_client, timeout: int = 300, provider_uuid: str = None, org_id: str = "org1234567", manifest_uuid: str = None, provider_type: str = 'ocp', cluster_id: str = "test-cluster-123"):
         """Initialize processing phase
 
         Args:
@@ -23,6 +23,7 @@ class ProcessingPhase:
             org_id: Organization ID / tenant schema name
             manifest_uuid: Specific manifest UUID to monitor (if None, monitors all manifests)
             provider_type: Provider type (currently only 'ocp' is supported)
+            cluster_id: OpenShift cluster ID for OCP data queries
         """
         self.k8s = k8s_client
         self.db = db_client
@@ -31,6 +32,7 @@ class ProcessingPhase:
         self.org_id = org_id
         self.manifest_uuid = manifest_uuid
         self.provider_type = provider_type.lower()
+        self.cluster_id = cluster_id
 
         # Get postgres pod for kubectl exec queries (no port-forward needed)
         self.postgres_pod = k8s_client.get_pod_by_component('database')
@@ -379,7 +381,7 @@ except Exception as e:
                 FROM {schema}.reporting_ocpusagelineitem_daily_summary
                 WHERE cluster_id = %s
             """
-            verification_result = self.db.execute_query(verification_sql, (self.provider_uuid,))
+            verification_result = self.db.execute_query(verification_sql, (self.cluster_id,))
 
             if verification_result and verification_result[0]:
                 verification_count = int(verification_result[0][0])
@@ -407,7 +409,7 @@ except Exception as e:
                 WHERE cluster_id = %s
                 LIMIT 1
             """
-            quality_result = self.db.execute_query(quality_sql, (self.provider_uuid,))
+            quality_result = self.db.execute_query(quality_sql, (self.cluster_id,))
 
             if quality_result and quality_result[0]:
                 total_rows, unique_dates, rows_with_cpu = quality_result[0]
@@ -454,14 +456,17 @@ except Exception as e:
                 GROUP BY usage_start, namespace
                 ORDER BY usage_start DESC, total_cpu_hours DESC
                 LIMIT 5
-            """, (self.provider_uuid,))
+            """, (self.cluster_id,))
 
             if sample:
                 print(f"    📊 OCP Usage Sample ({current_count} total rows):")
                 for row in sample:
                     usage_start, namespace, cpu, memory, pods, items = row
-                    cpu_str = f"{cpu:.2f}h" if cpu else "0h"
-                    mem_str = f"{memory:.2f}GB" if memory else "0GB"
+                    # Convert string results from psql to float (kubectl exec returns strings)
+                    cpu_val = float(cpu) if cpu else 0.0
+                    mem_val = float(memory) if memory else 0.0
+                    cpu_str = f"{cpu_val:.2f}h"
+                    mem_str = f"{mem_val:.2f}GB"
                     namespace_display = namespace[:20] + "..." if len(str(namespace)) > 23 else namespace
                     print(f"       {usage_start} | {namespace_display:<23} | CPU: {cpu_str:>8} | Mem: {mem_str:>8} | {pods} pods | {items} items")
             else:
@@ -476,7 +481,7 @@ except Exception as e:
         Returns:
             Dict with summary data counts
         """
-        if not self.provider_uuid:
+        if not self.cluster_id:
             return {'has_data': False, 'row_count': 0}
 
         try:
@@ -493,14 +498,16 @@ except Exception as e:
 
             schema_name = schema_result[0][0]
 
-            # Check OCP daily summary table
+            # Check OCP daily summary table using cluster_id
             count_result = self.db.execute_query(f"""
                 SELECT COUNT(*)
                 FROM {schema_name}.reporting_ocpusagelineitem_daily_summary
                 WHERE cluster_id = %s
-            """, (self.provider_uuid,))
+            """, (self.cluster_id,))
 
-            row_count = count_result[0][0] if count_result else 0
+            row_count_raw = count_result[0][0] if count_result else 0
+            # Convert string result from psql to int (kubectl exec returns strings)
+            row_count = int(row_count_raw) if row_count_raw is not None else 0
 
             return {
                 'has_data': row_count > 0,
@@ -833,10 +840,10 @@ except Exception as e:
                         if row_count > 0:
                             print(f"     Found {row_count} rows but processing may still be ongoing")
 
-                    print(f"  💡 To check summary table manually:")
+                    print(f"  💡 To check summary table manually (looking for cluster_id='{self.cluster_id}'):")
                     schema = summary_result.get('schema', f"org{self.org_id}")
                     print(f"     oc exec -n {self.k8s.namespace} {self.postgres_pod} -- psql -U koku -d koku -c \\")
-                    print(f"       \"SELECT COUNT(*), cluster_id FROM {schema}.reporting_ocpusagelineitem_daily_summary GROUP BY cluster_id;\"")
+                    print(f"       \"SELECT COUNT(*) FROM {schema}.reporting_ocpusagelineitem_daily_summary WHERE cluster_id = '{self.cluster_id}';\"")
 
                 elif 'error' in summary_result:
                     print(f"  ❌ Summary check failed: {summary_result['error']}")
