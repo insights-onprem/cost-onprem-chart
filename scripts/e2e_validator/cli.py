@@ -480,8 +480,6 @@ def main(ctx, namespace, org_id, provider_type, skip_migrations, skip_provider, 
         # Look up actual schema_name from Customer table (Koku prefixes 'org' to org_id)
         # This is needed for the Validation phase
         tenant_schema = db.get_schema_name_for_org(org_id)
-        if not tenant_schema:
-            tenant_schema = org_id  # Fallback to org_id if not found
         print(f"  ℹ️  Using tenant schema: {tenant_schema}")
 
         # Phase 7: Validation (PostgreSQL-based)

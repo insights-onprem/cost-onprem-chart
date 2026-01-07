@@ -181,20 +181,24 @@ except Exception as e:
         except Exception as e:
             return {'marked_complete': 0, 'error': str(e)}
 
-    def monitor_summary_population(self, timeout: int = 60) -> Dict:
-        """Monitor summary table population with progress details and OCP usage samples
+    def monitor_summary_population(self, timeout: int = 60, stability_window: int = 30,
+                                 stability_checks: int = 3) -> Dict:
+        """Monitor summary table population with stability detection for ONPREM batch processing
 
         Args:
             timeout: Max wait time in seconds
+            stability_window: Time in seconds to wait for count to stabilize
+            stability_checks: Number of consecutive stable checks required
 
         Returns:
-            Dict with population status and sample data
+            Dict with population status and stability metrics
         """
-        print(f"\n📊 Monitoring summary table population (timeout: {timeout}s)...")
+        print(f"\n📊 Monitoring summary table population (timeout: {timeout}s, stability: {stability_window}s)...")
 
         start_time = time.time()
         last_count = 0
 
+        # Phase 1: Wait for data to appear
         while time.time() - start_time < timeout:
             elapsed = int(time.time() - start_time)
 
@@ -204,55 +208,267 @@ except Exception as e:
 
             if current_count > 0:
                 if current_count != last_count:
-                    schema = summary_result.get('schema', self.org_id)
-                    print(f"  [{elapsed:2d}s] ✅ Summary rows: {current_count} (schema: {schema})")
+                    schema = summary_result.get('schema', f"org{self.org_id}")
+                    print(f"  [{elapsed:2d}s] 📊 Summary data detected: {current_count} rows (schema: {schema})")
 
-                    # Show sample of OCP usage data
-                    try:
-                        sample = self.db.execute_query(f"""
-                            SELECT
-                                usage_start,
-                                namespace,
-                                SUM(pod_usage_cpu_core_hours) as total_cpu_hours,
-                                SUM(pod_usage_memory_gigabyte_hours) as total_memory_gb_hours,
-                                COUNT(DISTINCT resource_id) as pod_count,
-                                COUNT(*) as line_items
-                            FROM {schema}.reporting_ocpusagelineitem_daily_summary
-                            WHERE cluster_id = %s
-                            AND namespace NOT LIKE '%%unallocated%%'
-                            GROUP BY usage_start, namespace
-                            ORDER BY usage_start DESC, total_cpu_hours DESC
-                            LIMIT 5
-                        """, (self.provider_uuid,))
+                    # Show initial progress sample
+                    self._show_progress_sample(summary_result, current_count, elapsed)
 
-                        if sample:
-                            print(f"    📊 OCP Usage Breakdown:")
-                            for row in sample:
-                                usage_start, namespace, cpu, memory, pods, items = row
-                                cpu_str = f"{cpu:.2f}h" if cpu else "0h"
-                                mem_str = f"{memory:.2f}GB" if memory else "0GB"
-                                print(f"       {usage_start} | {namespace[:25]:25} | CPU: {cpu_str:>8} | Mem: {mem_str:>8} | {pods} pods | {items} items")
-                    except Exception as e:
-                        print(f"    ⚠️  Could not fetch usage samples: {str(e)[:50]}")
-
-                    return {
-                        'has_data': True,
-                        'row_count': current_count,
-                        'schema': schema
-                    }
+                    # Transition to Phase 2: Stability monitoring
+                    remaining_time = timeout - (time.time() - start_time)
+                    return self._monitor_stability(start_time, timeout, stability_window,
+                                                 stability_checks, current_count, summary_result)
 
                 last_count = current_count
             else:
-                # Still waiting
+                # Still waiting for data
                 if elapsed % 15 == 0:  # Print every 15s
                     print(f"  [{elapsed:2d}s] ⏳ Waiting for summary data...")
 
             time.sleep(5)
 
-        # Timeout
+        # Timeout waiting for initial data
         elapsed = int(time.time() - start_time)
-        print(f"  [{elapsed:2d}s] ⏱️  Summary table monitoring timeout")
-        return {'has_data': False, 'timeout': True, 'row_count': last_count}
+        print(f"  [{elapsed:2d}s] ⏱️  Timeout waiting for summary data to appear")
+        return {'has_data': False, 'timeout': True, 'row_count': last_count, 'phase': 'data_detection'}
+
+    def _monitor_stability(self, start_time: float, total_timeout: int, stability_window: int,
+                         stability_checks: int, initial_count: int, initial_result: Dict) -> Dict:
+        """Monitor summary population for stability indicating completion
+
+        Phase 2 of monitoring - waits for row count to stabilize before declaring success.
+        This prevents premature success when batch processing is still ongoing.
+
+        Args:
+            start_time: Original start time from Phase 1
+            total_timeout: Total timeout from original call
+            stability_window: Time to wait for stability
+            stability_checks: Number of consecutive stable checks required
+            initial_count: Row count when entering stability monitoring
+            initial_result: Initial summary result from check_summary_status()
+
+        Returns:
+            Dict with completion status and stability metrics
+        """
+        print(f"  📊 Entering stability monitoring phase (window: {stability_window}s, checks: {stability_checks})")
+
+        stable_start = None
+        stable_count = 0
+        last_count = initial_count
+        stability_interval = 5  # Start with 5s checks
+
+        while time.time() - start_time < total_timeout:
+            elapsed = int(time.time() - start_time)
+
+            # Check current row count
+            summary_result = self.check_summary_status()
+            current_count = summary_result.get('row_count', 0)
+
+            if current_count == last_count:
+                # Count is stable
+                if stable_start is None:
+                    stable_start = time.time()
+                    stable_count = 1
+                    print(f"  [{elapsed:2d}s] 🔒 Row count stable at {current_count}, monitoring for {stability_window}s...")
+                else:
+                    stable_duration = time.time() - stable_start
+                    stable_count += 1
+
+                    # Check if we've achieved stability
+                    if stable_duration >= stability_window and stable_count >= stability_checks:
+                        # Verify completion before declaring success
+                        if self._verify_completion(current_count, summary_result):
+                            print(f"  [{elapsed:2d}s] ✅ Summarization complete: {current_count} rows (stable for {stable_duration:.1f}s)")
+                            return {
+                                'has_data': True,
+                                'row_count': current_count,
+                                'schema': summary_result.get('schema', f"org{self.org_id}"),
+                                'stable_duration': stable_duration,
+                                'stable_checks': stable_count,
+                                'phase': 'stability_complete'
+                            }
+                        else:
+                            # Completion verification failed - reset stability and continue monitoring
+                            print(f"  [{elapsed:2d}s] ⚠️  Completion verification failed, continuing monitoring...")
+                            stable_start = None
+                            stable_count = 0
+                    else:
+                        # Still monitoring for stability
+                        if stable_count % 3 == 0:  # Log every 3rd check (every ~15s)
+                            remaining = stability_window - stable_duration
+                            print(f"  [{elapsed:2d}s] ⏳ Stable for {stable_duration:.1f}s (need {remaining:.1f}s more)")
+
+            else:
+                # Count changed - reset stability tracking
+                if stable_start is not None:
+                    print(f"  [{elapsed:2d}s] 📈 Row count changed: {last_count} → {current_count}, resetting stability")
+                else:
+                    print(f"  [{elapsed:2d}s] 📈 Row count increased: {last_count} → {current_count}")
+
+                stable_start = None
+                stable_count = 0
+                last_count = current_count
+
+                # Show progress on changes
+                self._show_progress_sample(summary_result, current_count, elapsed)
+
+            # Progressive backoff during stability monitoring (reduces database load)
+            if stable_count > 0:
+                stability_interval = min(stability_interval * 1.1, 15)  # Cap at 15s
+            else:
+                stability_interval = 5  # Reset to 5s when not stable
+
+            time.sleep(stability_interval)
+
+        # Timeout during stability monitoring
+        elapsed = int(time.time() - start_time)
+        stable_duration = time.time() - stable_start if stable_start else 0
+        print(f"  [{elapsed:2d}s] ⏱️  Stability monitoring timeout")
+
+        return {
+            'has_data': current_count > 0,
+            'timeout': True,
+            'row_count': current_count,
+            'stable_duration': stable_duration,
+            'stable_checks': stable_count,
+            'phase': 'stability_timeout'
+        }
+
+    def _verify_completion(self, row_count: int, summary_result: Dict) -> bool:
+        """Verify that summarization is truly complete vs. just paused
+
+        Performs multiple checks to ensure that summary population represents
+        actual completion rather than a temporary pause in batch processing.
+
+        Args:
+            row_count: Current row count from summary table
+            summary_result: Result from check_summary_status()
+
+        Returns:
+            bool: True if summarization appears complete, False otherwise
+        """
+        # Check 1: Row count should be reasonable (not empty)
+        if row_count == 0:
+            return False
+
+        # Check 2: Verify manifests are marked complete (if provider_uuid available)
+        if self.provider_uuid and self.postgres_pod:
+            try:
+                incomplete_manifests_sql = f"""
+                    SELECT COUNT(*)
+                    FROM reporting_common_costusagereportmanifest
+                    WHERE provider_id = '{self.provider_uuid}'
+                    AND completed_datetime IS NULL
+                """
+                incomplete_count = self.k8s.postgres_exec(
+                    self.postgres_pod,
+                    self.database,
+                    incomplete_manifests_sql
+                )
+                if incomplete_count and int(incomplete_count.strip()) > 0:
+                    return False  # Still have incomplete manifests
+            except Exception as e:
+                # If manifest check fails, continue with other verification
+                print(f"    ⚠️  Manifest completion check failed: {str(e)[:50]}...")
+
+        # Check 3: Verify we can actually query the summary data consistently
+        try:
+            schema = summary_result.get('schema', f"org{self.org_id}")
+            verification_sql = f"""
+                SELECT COUNT(*)
+                FROM {schema}.reporting_ocpusagelineitem_daily_summary
+                WHERE cluster_id = %s
+            """
+            verification_result = self.db.execute_query(verification_sql, (self.provider_uuid,))
+
+            if verification_result and verification_result[0]:
+                verification_count = int(verification_result[0][0])
+                # Allow small variance (e.g., +/- 1 row) due to potential timing
+                count_match = abs(verification_count - row_count) <= 1
+                if not count_match:
+                    print(f"    ⚠️  Row count verification mismatch: {verification_count} vs {row_count}")
+                    return False
+            else:
+                return False  # Query failed
+
+        except Exception as e:
+            print(f"    ⚠️  Data verification query failed: {str(e)[:50]}...")
+            return False  # If verification query fails, data might not be stable
+
+        # Check 4: Verify data quality (optional - basic sanity check)
+        try:
+            schema = summary_result.get('schema', f"org{self.org_id}")
+            quality_sql = f"""
+                SELECT
+                    COUNT(*) as total_rows,
+                    COUNT(DISTINCT usage_start) as unique_dates,
+                    SUM(CASE WHEN pod_usage_cpu_core_hours > 0 OR pod_request_cpu_core_hours > 0 THEN 1 ELSE 0 END) as rows_with_cpu
+                FROM {schema}.reporting_ocpusagelineitem_daily_summary
+                WHERE cluster_id = %s
+                LIMIT 1
+            """
+            quality_result = self.db.execute_query(quality_sql, (self.provider_uuid,))
+
+            if quality_result and quality_result[0]:
+                total_rows, unique_dates, rows_with_cpu = quality_result[0]
+                # Basic sanity checks
+                if int(total_rows) != row_count:
+                    return False  # Count inconsistency
+                if int(unique_dates) == 0:
+                    return False  # No date data
+                if int(rows_with_cpu) == 0:
+                    print(f"    ⚠️  No CPU usage data found (may be expected for some scenarios)")
+
+        except Exception as e:
+            # Quality check is optional - don't fail on this
+            print(f"    ⚠️  Data quality check failed: {str(e)[:50]}...")
+
+        return True  # All verifications passed
+
+    def _show_progress_sample(self, summary_result: Dict, current_count: int, elapsed: int):
+        """Show sample of OCP usage data for progress indication
+
+        Refactored from original monitor_summary_population to avoid early return.
+        Displays sample usage data to show progress but doesn't cause function exit.
+
+        Args:
+            summary_result: Result from check_summary_status()
+            current_count: Current row count
+            elapsed: Elapsed time in seconds
+        """
+        try:
+            schema = summary_result.get('schema', f"org{self.org_id}")
+
+            # Show sample of OCP usage data (same query as original implementation)
+            sample = self.db.execute_query(f"""
+                SELECT
+                    usage_start,
+                    namespace,
+                    SUM(pod_usage_cpu_core_hours) as total_cpu_hours,
+                    SUM(pod_usage_memory_gigabyte_hours) as total_memory_gb_hours,
+                    COUNT(DISTINCT resource_id) as pod_count,
+                    COUNT(*) as line_items
+                FROM {schema}.reporting_ocpusagelineitem_daily_summary
+                WHERE cluster_id = %s
+                AND namespace NOT LIKE '%%unallocated%%'
+                GROUP BY usage_start, namespace
+                ORDER BY usage_start DESC, total_cpu_hours DESC
+                LIMIT 5
+            """, (self.provider_uuid,))
+
+            if sample:
+                print(f"    📊 OCP Usage Sample ({current_count} total rows):")
+                for row in sample:
+                    usage_start, namespace, cpu, memory, pods, items = row
+                    cpu_str = f"{cpu:.2f}h" if cpu else "0h"
+                    mem_str = f"{memory:.2f}GB" if memory else "0GB"
+                    namespace_display = namespace[:20] + "..." if len(str(namespace)) > 23 else namespace
+                    print(f"       {usage_start} | {namespace_display:<23} | CPU: {cpu_str:>8} | Mem: {mem_str:>8} | {pods} pods | {items} items")
+            else:
+                print(f"    📊 {current_count} rows populated (no sample data available)")
+
+        except Exception as e:
+            print(f"    ⚠️  Could not fetch usage sample: {str(e)[:50]}")
 
     def check_summary_status(self) -> Dict:
         """Check if OCP summary tables have been populated
@@ -582,19 +798,55 @@ except Exception as e:
             # Always monitor summary population after processing attempt
             # (files may have been processed even if timeout occurred)
             summary_timeout = 90
-            summary_result = self.monitor_summary_population(timeout=summary_timeout)
+            summary_result = self.monitor_summary_population(
+                timeout=summary_timeout,
+                stability_window=30,  # 30s stability window for ONPREM batch processing
+                stability_checks=3    # 3 consecutive stable checks required
+            )
             if summary_result.get('has_data'):
                 # Data found - processing was successful
                 monitor_result['success'] = True
                 monitor_result['summary_rows'] = summary_result.get('row_count', 0)
+
+                # Include stability metrics for diagnostics
+                if summary_result.get('stable_duration') is not None:
+                    print(f"  ✅ Summary population stable for {summary_result['stable_duration']:.1f}s with {summary_result.get('stable_checks', 0)} checks")
             else:
+                # Enhanced failure mode distinction
+                phase = summary_result.get('phase', 'unknown')
+                row_count = summary_result.get('row_count', 0)
+
                 if 'timeout' in summary_result:
-                    print(f"  ⚠️  Summary not populated after {summary_timeout}s (may need more time)")
-                    print(f"  💡 To check summary table manually later:")
+                    if phase == 'data_detection':
+                        print(f"  ❌ No summary data appeared after {summary_timeout}s")
+                        print(f"  💡 This indicates summarization may not have started")
+                        print(f"     Check Celery worker logs for processing errors")
+                    elif phase == 'stability_timeout':
+                        stable_duration = summary_result.get('stable_duration', 0)
+                        stable_checks = summary_result.get('stable_checks', 0)
+                        print(f"  ⚠️  Summary data detected ({row_count} rows) but stability timeout after {summary_timeout}s")
+                        print(f"     Last stability: {stable_duration:.1f}s with {stable_checks} checks")
+                        print(f"  💡 Data may still be processing in batches (ONPREM characteristic)")
+                        print(f"     Consider increasing stability_window if this happens frequently")
+                    else:
+                        print(f"  ⚠️  Summary monitoring timeout in {phase} phase after {summary_timeout}s")
+                        if row_count > 0:
+                            print(f"     Found {row_count} rows but processing may still be ongoing")
+
+                    print(f"  💡 To check summary table manually:")
+                    schema = summary_result.get('schema', f"org{self.org_id}")
                     print(f"     oc exec -n {self.k8s.namespace} {self.postgres_pod} -- psql -U koku -d koku -c \\")
-                    print(f"       \"SELECT COUNT(*), cluster_id FROM {summary_result.get('schema', self.org_id)}.reporting_ocpusagelineitem_daily_summary GROUP BY cluster_id;\"")
+                    print(f"       \"SELECT COUNT(*), cluster_id FROM {schema}.reporting_ocpusagelineitem_daily_summary GROUP BY cluster_id;\"")
+
                 elif 'error' in summary_result:
-                    print(f"  ⚠️  Summary check failed: {summary_result['error']}")
+                    print(f"  ❌ Summary check failed: {summary_result['error']}")
+                    if phase:
+                        print(f"     Failure occurred in {phase} phase")
+
+                else:
+                    print(f"  ❌ Summary population failed for unknown reason")
+                    print(f"     Phase: {phase}, Row count: {row_count}")
+                    print(f"     Result: {summary_result}")
 
         return {
             'passed': monitor_result['success'],

@@ -267,14 +267,14 @@ class KubectlDatabaseClient:
         result = self.execute_query("SELECT COUNT(*) FROM api_tenant", fetch_one=True)
         return int(result[0]) if result and result[0] else 0
 
-    def get_schema_name_for_org(self, org_id: str) -> Optional[str]:
+    def get_schema_name_for_org(self, org_id: str) -> str:
         """Get schema name for an org_id
 
         Args:
             org_id: Organization ID (e.g., 'org1234567')
 
         Returns:
-            Schema name (e.g., 'orgorg1234567') or None
+            Schema name (e.g., 'orgorg1234567'), falls back to 'org' + org_id if not found
         """
         result = self.execute_query(f"""
             SELECT schema_name FROM api_customer
@@ -282,5 +282,6 @@ class KubectlDatabaseClient:
                OR schema_name LIKE '%{org_id.replace("'", "''")}%'
             LIMIT 1
         """, fetch_one=True)
-        return result[0] if result else None
+        # Koku prefixes 'org' to org_id for schema names
+        return result[0] if result else f"org{org_id}"
 

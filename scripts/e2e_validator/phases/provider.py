@@ -90,11 +90,12 @@ from django.db import connection
 import json
 
 org_id = "{self.org_id}"
+schema_name = "org" + org_id  # Koku prefixes 'org' to org_id for schema names
 provider_uuid = "{provider_uuid}"
 provider_type_str = "{provider_type}"
 
 # Check/create tenant
-tenant, tenant_created = Tenant.objects.get_or_create(schema_name=org_id)
+tenant, tenant_created = Tenant.objects.get_or_create(schema_name=schema_name)
 if tenant_created:
     print("TENANT_CREATED")
 else:
@@ -183,8 +184,10 @@ except Exception as e:
         if not postgres_pod:
             raise RuntimeError("Postgres pod not found")
 
+        # Koku prefixes 'org' to org_id for schema names
+        tenant_schema = f"org{self.org_id}"
         sync_sql = f"""
-        INSERT INTO {self.org_id}.reporting_tenant_api_provider (uuid, name, type, provider_id)
+        INSERT INTO {tenant_schema}.reporting_tenant_api_provider (uuid, name, type, provider_id)
         SELECT uuid, name, type, uuid FROM public.api_provider
         WHERE uuid = '{provider_uuid}'
         ON CONFLICT (uuid) DO NOTHING;
@@ -192,7 +195,7 @@ except Exception as e:
 
         try:
             result = self.k8s.postgres_exec(postgres_pod, 'koku', sync_sql)
-            print(f"  ✓ Provider {provider_uuid} synced to tenant schema {self.org_id}")
+            print(f"  ✓ Provider {provider_uuid} synced to tenant schema {tenant_schema}")
         except Exception as e:
             print(f"  ⚠️  Failed to sync provider to tenant schema: {e}")
             raise RuntimeError(f"Provider sync failed: {e}")
@@ -249,9 +252,11 @@ from django.core.management import call_command
 import uuid
 
 org_id = "{self.org_id}"
+schema_name = "org" + org_id  # Koku prefixes 'org' to org_id for schema names
 provider_type_str = "{provider_type}"
 
 print("DEBUG: org_id=" + org_id)
+print("DEBUG: schema_name=" + schema_name)
 print("DEBUG: provider_type_str=" + provider_type_str)
 
 try:
@@ -261,7 +266,7 @@ try:
     # Create Tenant record (CRITICAL: required for celery workers to find accounts)
     from api.models import Tenant
     tenant, tenant_created = Tenant.objects.get_or_create(
-        schema_name=org_id
+        schema_name=schema_name
     )
     if tenant_created:
         print("TENANT_RECORD_CREATED")
@@ -270,17 +275,17 @@ try:
 
     # Create PostgreSQL schema
     with connection.cursor() as cursor:
-        cursor.execute("CREATE SCHEMA IF NOT EXISTS " + org_id)
-        cursor.execute("GRANT ALL ON SCHEMA " + org_id + " TO " + connection.settings_dict['USER'])
+        cursor.execute("CREATE SCHEMA IF NOT EXISTS " + schema_name)
+        cursor.execute("GRANT ALL ON SCHEMA " + schema_name + " TO " + connection.settings_dict['USER'])
     print("TENANT_SCHEMA_CREATED")
 
     # Run tenant migrations (creates 217 reporting tables)
-    call_command('migrate_schemas', schema_name=org_id, verbosity=0)
+    call_command('migrate_schemas', schema_name=schema_name, verbosity=0)
     print("TENANT_MIGRATIONS_COMPLETE")
 
     # STEP 2: Create provider
     customer, _ = Customer.objects.get_or_create(
-        schema_name=org_id,
+        schema_name=schema_name,
         defaults={{"uuid": str(uuid.uuid4()), "org_id": org_id}}
     )
     provider, created = Provider.objects.get_or_create(
@@ -356,9 +361,9 @@ try:
     # CRITICAL: Sync provider to tenant schema for bill creation FK constraint
     # In production this happens automatically, but in E2E we need explicit sync
     with connection.cursor() as cursor:
-        sql = "INSERT INTO " + org_id + ".reporting_tenant_api_provider (uuid, name, type, provider_id) VALUES (%s, %s, %s, %s) ON CONFLICT (uuid) DO NOTHING"
+        sql = "INSERT INTO " + schema_name + ".reporting_tenant_api_provider (uuid, name, type, provider_id) VALUES (%s, %s, %s, %s) ON CONFLICT (uuid) DO NOTHING"
         cursor.execute(sql, (str(provider.uuid), provider.name, provider.type, str(provider.uuid)))
-    print("PROVIDER_SYNCED_TO_TENANT_SCHEMA")
+    print("PROVIDER_SYNCED_TO_TENANT_SCHEMA=" + schema_name)
 
     # CRITICAL: Create api_sources entry for account polling
     # Celery's check_report_updates task queries api_sources to find accounts
