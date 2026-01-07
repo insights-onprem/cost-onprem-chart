@@ -977,9 +977,11 @@ verify_koku_manifest_processing() {
 
     while [ $elapsed -lt $max_wait ]; do
         # Check for manifest associated with this cluster
-        # The cluster_id is stored directly on the manifest table
+        # The cluster_id is stored on the manifest table (from manifest.json in the uploaded tarball)
         local manifest_query="
-            SELECT m.id, m.assembly_id, m.num_total_files, m.completed_datetime
+            SELECT m.id, m.assembly_id, m.num_total_files, m.completed_datetime,
+                   m.state::jsonb->'processing'->>'end' as processing_end,
+                   m.state::jsonb->'summary'->>'failed' as summary_failed
             FROM reporting_common_costusagereportmanifest m
             WHERE m.cluster_id = '$cluster_id'
             ORDER BY m.creation_datetime DESC
@@ -995,11 +997,19 @@ verify_koku_manifest_processing() {
             local assembly_id=$(echo "$manifest_result" | cut -d'|' -f2)
             local num_files=$(echo "$manifest_result" | cut -d'|' -f3)
             local completed=$(echo "$manifest_result" | cut -d'|' -f4)
+            local processing_end=$(echo "$manifest_result" | cut -d'|' -f5)
+            local summary_failed=$(echo "$manifest_result" | cut -d'|' -f6)
 
             echo_info "  Manifest found (ID: $manifest_id)"
             echo_info "    Assembly ID: $assembly_id"
             echo_info "    Total files: $num_files"
             echo_info "    Completed: ${completed:-pending}"
+            if [ -n "$processing_end" ] && [ "$processing_end" != "" ]; then
+                echo_info "    Processing end: $processing_end"
+            fi
+            if [ "$summary_failed" = "true" ]; then
+                echo_warning "    ⚠ Summary failed flag is set"
+            fi
 
             # Check file processing status
             local status_query="
@@ -1053,6 +1063,9 @@ verify_koku_manifest_processing() {
         echo_info "Troubleshooting:"
         echo_info "  - Check Koku listener logs: oc logs -n $NAMESPACE -l app.kubernetes.io/component=listener --tail=50"
         echo_info "  - Check if upload notification reached Kafka"
+        echo_info "  - Check all manifests and their cluster_ids:"
+        echo_info "    oc exec -n $NAMESPACE $db_pod -- psql -U koku -d koku -c \\"
+        echo_info "      \"SELECT cluster_id, creation_datetime FROM reporting_common_costusagereportmanifest ORDER BY creation_datetime DESC LIMIT 5;\""
         return 1
     fi
 
@@ -1086,7 +1099,9 @@ verify_koku_summary_tables() {
         db_pod="cost-onprem-database-0"
     fi
 
-    # Get the tenant schema via the manifest table which has cluster_id
+    # Get the tenant schema via the manifest table's cluster_id
+    # The manifest is linked to provider -> customer, so we can get the schema name
+    # Note: Koku adds 'org' prefix to org_id when creating schema (e.g., org_id='12345' -> schema='org12345')
     local schema_query="
         SELECT c.schema_name
         FROM reporting_common_costusagereportmanifest m
@@ -1101,6 +1116,9 @@ verify_koku_summary_tables() {
 
     if [ -z "$schema_name" ]; then
         echo_error "Could not find tenant schema for cluster: $cluster_id"
+        echo_info "  This may indicate no manifest exists yet for this cluster"
+        echo_info "  Check: oc exec -n $NAMESPACE $db_pod -- psql -U koku -d koku -c \\"
+        echo_info "    \"SELECT cluster_id FROM reporting_common_costusagereportmanifest WHERE cluster_id = '$cluster_id';\""
         return 1
     fi
 
@@ -1179,9 +1197,11 @@ verify_koku_summary_tables() {
     echo_info "  Summary table population may still be in progress"
     echo_info "  This is handled by Celery tasks which may take additional time"
     echo_info ""
-    echo_info "  To check manually later:"
+    echo_info "  To check manually later (looking for cluster_id='$cluster_id'):"
     echo_info "    oc exec -n $NAMESPACE $db_pod -- psql -U koku -d koku -c \\"
-    echo_info "      \"SELECT COUNT(*) FROM ${schema_name}.reporting_ocpusagelineitem_daily_summary WHERE cluster_id = '$cluster_id'\""
+    echo_info "      \"SELECT COUNT(*) FROM ${schema_name}.reporting_ocpusagelineitem_daily_summary WHERE cluster_id = '$cluster_id';\""
+    echo_info ""
+    echo_info "  Schema '$schema_name' was looked up via manifest->provider->customer relationship"
     return 1
 }
 
