@@ -74,7 +74,7 @@ spec:
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "cost-onprem.fullname" . }}-db-credentials
+                  name: {{ include "cost-onprem.database.secretName" . }}
                   key: ros-password
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: {{ include "cost-onprem.kafka.bootstrapServers" . | quote }}

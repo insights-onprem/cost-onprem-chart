@@ -89,6 +89,14 @@ Sources API shares the koku database with Koku because Sources provisions tables
 {{- end }}
 
 {{/*
+Get the default database credentials secret name (chart-managed secret)
+Usage: {{ include "cost-onprem.database.defaultSecretName" . }}
+*/}}
+{{- define "cost-onprem.database.defaultSecretName" -}}
+{{- printf "%s-db-credentials" (include "cost-onprem.fullname" .) -}}
+{{- end -}}
+
+{{/*
 Get the database credentials secret name - returns existingSecret if set, otherwise returns generated secret name
 Usage: {{ include "cost-onprem.database.secretName" . }}
 */}}
@@ -96,7 +104,7 @@ Usage: {{ include "cost-onprem.database.secretName" . }}
 {{- if .Values.database.existingSecret -}}
 {{- .Values.database.existingSecret -}}
 {{- else -}}
-{{- printf "%s-db-credentials" (include "cost-onprem.fullname" .) -}}
+{{- include "cost-onprem.database.defaultSecretName" . -}}
 {{- end -}}
 {{- end }}
 

@@ -210,11 +210,7 @@ Django secret name
 Koku database credentials secret name (uses unified secret)
 */}}
 {{- define "cost-onprem.koku.database.secretName" -}}
-{{- if .Values.database.existingSecret -}}
-{{- .Values.database.existingSecret -}}
-{{- else -}}
-{{- printf "%s-db-credentials" (include "cost-onprem.fullname" .) -}}
-{{- end -}}
+{{- include "cost-onprem.database.secretName" . -}}
 {{- end -}}
 
 {{/*
