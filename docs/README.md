@@ -16,6 +16,7 @@ Welcome to the Resource Optimization Service (ROS) for OpenShift Container Platf
 | Document | Purpose | When to Use |
 |----------|---------|-------------|
 | **[Installation Guide](installation.md)** | Comprehensive installation instructions for Cost Management On-Premise | Production deployments requiring detailed configuration |
+| **[Sources API Production Flow](sources-api-production-flow.md)** | Provider creation flow using Sources API and Kafka | Understanding and setting up the production-like data ingestion pipeline |
 
 ### Authentication & Security
 
@@ -26,7 +27,7 @@ Welcome to the Resource Optimization Service (ROS) for OpenShift Container Platf
 | **[UI OAuth Authentication](ui-oauth-authentication.md)** | Complete guide for UI OAuth authentication with Keycloak OAuth proxy | Understanding and troubleshooting UI authentication on OpenShift |
 | **[TLS Certificate Options](tls-certificate-options.md)** | Guide to different TLS certificate configuration scenarios | Configuring TLS for Keycloak JWKS endpoint validation |
 | **[External Keycloak Scenario](external-keycloak-scenario.md)** | Analysis and architecture for using external Keycloak | Connecting Cost Management On-Premise to Keycloak outside the cluster |
-| **[Cost Management Operator TLS Config Setup](cost-management-operator-tls-config-setup.md)** | TLS configuration for the Cost Management Metrics Operator | Setting up secure communication between operator and ROS ingress |
+| **[Cost Management Operator TLS Config Setup](cost-management-operator-tls-config-setup.md)** | TLS configuration for the Cost Management Metrics Operator | Setting up secure communication between operator and ingress |
 
 ### Configuration
 
@@ -58,6 +59,7 @@ Welcome to the Resource Optimization Service (ROS) for OpenShift Container Platf
 2. Configure authentication using **[Keycloak JWT Authentication Setup](keycloak-jwt-authentication-setup.md)**
 3. Set up TLS using **[TLS Certificate Options](tls-certificate-options.md)**
 4. Review **[Configuration Reference](configuration.md)** for production settings
+5. Understand provider creation via **[Sources API Production Flow](sources-api-production-flow.md)**
 
 ### "I'm setting up authentication"
 1. Read **[Native JWT Authentication](native-jwt-authentication.md)** to understand the architecture
@@ -135,6 +137,24 @@ Welcome to the Resource Optimization Service (ROS) for OpenShift Container Platf
 - Installation steps
 - Post-installation configuration
 - Validation procedures
+
+---
+
+#### [Sources API Production Flow](sources-api-production-flow.md)
+**Purpose:** Comprehensive guide explaining the production-like provider creation flow using Sources API, Kafka, and Koku sources listener.
+
+**Use when:**
+- Understanding how providers are created via the Sources API
+- Setting up the data ingestion pipeline
+- Debugging source/provider creation issues
+- Learning the Kafka event-driven architecture
+
+**Key topics:**
+- Architecture overview (Sources API → Kafka → Koku Listener)
+- Source and provider creation workflow
+- Kafka topic configuration
+- Authentication setup for Sources API
+- Troubleshooting provider creation
 
 ---
 
@@ -237,11 +257,11 @@ Welcome to the Resource Optimization Service (ROS) for OpenShift Container Platf
 ---
 
 #### [Cost Management Operator TLS Config Setup](cost-management-operator-tls-config-setup.md)
-**Purpose:** Instructions for configuring TLS/JWT authentication between the Cost Management Metrics Operator and ROS ingress.
+**Purpose:** Instructions for configuring TLS/JWT authentication between the Cost Management Metrics Operator and ingress.
 
 **Use when:**
 - Setting up the Cost Management Metrics Operator
-- Configuring secure communication with ROS ingress
+- Configuring secure communication with ingress
 - Troubleshooting operator upload issues
 
 **Key topics:**
@@ -390,6 +410,6 @@ All documents are maintained and updated regularly. If you find outdated informa
 
 ---
 
-**Last Updated:** 2025-10-22
+**Last Updated:** 2025-12-16
 **Helm Chart Version:** 0.1.5+
 

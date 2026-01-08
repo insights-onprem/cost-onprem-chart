@@ -8,6 +8,9 @@ Complete installation methods, prerequisites, and upgrade procedures for the Cos
 - [OpenShift Prerequisites](#openshift-prerequisites)
 - [Upgrade Procedures](#upgrade-procedures)
 - [Verification](#verification)
+- [Resource Requirements by Component](#resource-requirements-by-component)
+- [E2E Validation (OCP Dataflow)](#e2e-validation-ocp-dataflow)
+- [Troubleshooting Installation](#troubleshooting-installation)
 
 ## Prerequisites
 
@@ -60,11 +63,11 @@ The easiest way to install using the automation script:
 ./scripts/install-helm-chart.sh
 
 # Custom namespace
-export NAMESPACE=ros-production
+export NAMESPACE=cost-onprem
 ./scripts/install-helm-chart.sh
 
 # Custom release name
-export HELM_RELEASE_NAME=ros-prod
+export HELM_RELEASE_NAME=cost-onprem
 ./scripts/install-helm-chart.sh
 
 # Use local chart for development
@@ -72,11 +75,27 @@ export USE_LOCAL_CHART=true
 ./scripts/install-helm-chart.sh
 ```
 
+**What the script does (Two-Phase Deployment):**
+
+The script deploys a unified chart containing all components:
+
+**Infrastructure:**
+- PostgreSQL (unified database for Koku, Sources, ROS, Kruize)
+- Valkey (caching and Celery broker)
+
+**Applications:**
+- Koku API (reads, writes, masu, listener)
+- Celery Workers (background processing)
+- ROS components (API, processor, housekeeper)
+- Sources API
+- UI and Ingress
+
 **Features:**
-- ✅ Always installs latest stable release
-- ✅ Automatic upgrade detection
+- ✅ Two-phase deployment (infrastructure first, then application)
+- ✅ Automatic secret creation (Django, Sources, S3 credentials)
+- ✅ Auto-discovers ODF S3 credentials
 - ✅ Platform detection (Kubernetes/OpenShift)
-- ✅ No version management required
+- ✅ Automatic upgrade detection
 - ✅ Perfect for CI/CD pipelines
 - ✅ Automatic fallback to local chart if GitHub unavailable
 
@@ -307,6 +326,50 @@ oc auth can-i create routes -n cost-onprem
 
 **See [Configuration Guide](configuration.md) for detailed requirements**
 
+### 5. Kafka (Strimzi)
+
+Kafka is required for the Cost Management data pipeline (OCP metrics ingestion).
+
+**Automated Deployment (Recommended):**
+```bash
+# Deploy Strimzi operator and Kafka cluster
+./scripts/deploy-strimzi.sh
+
+# Script will:
+# - Install Strimzi operator (version 0.45.1)
+# - Deploy Kafka cluster (version 3.8.0)
+# - Auto-detect platform (Kubernetes/OpenShift)
+# - Configure appropriate storage class
+# - Wait for cluster to be ready
+```
+
+**Customization:**
+```bash
+# Custom namespace
+KAFKA_NAMESPACE=my-kafka ./scripts/deploy-strimzi.sh
+
+# Custom Kafka cluster name
+KAFKA_CLUSTER_NAME=my-cluster ./scripts/deploy-strimzi.sh
+
+# For OpenShift with specific storage class
+STORAGE_CLASS=ocs-storagecluster-ceph-rbd ./scripts/deploy-strimzi.sh
+```
+
+**Manual Verification:**
+```bash
+# Check Strimzi operator
+oc get csv -A | grep strimzi
+
+# Check Kafka cluster
+oc get kafka -n kafka
+
+# Verify Kafka is ready
+oc wait kafka/cost-onprem-kafka --for=condition=Ready --timeout=300s -n kafka
+```
+
+**Required Kafka Topics:**
+- `platform.upload.announce` (created automatically by Koku on first message)
+
 ### 6. User Workload Monitoring (Required for ROS Metrics)
 
 User Workload Monitoring must be enabled for Prometheus to scrape ServiceMonitors deployed by this chart. Without it, the ROS data pipeline will not function - ServiceMonitors will be created but no metrics will be collected.
@@ -471,6 +534,115 @@ kubectl exec -it statefulset/cost-onprem-kafka -n cost-onprem -- \
 # Test MinIO/ODF access (Kubernetes)
 kubectl exec -it statefulset/cost-onprem-minio -n cost-onprem -- \
   mc admin info local
+```
+
+---
+
+## Resource Requirements by Component
+
+> **Note:** Resource allocations are aligned with the SaaS Clowder configuration from:
+> - **Koku:** `deploy/clowdapp.yaml` in [insights-onprem/koku](https://github.com/insights-onprem/koku)
+> - **ROS:** `clowdapp.yaml` in [insights-onprem/ros-ocp-backend](https://github.com/insights-onprem/ros-ocp-backend)
+
+### Infrastructure Components
+
+| Component | Pods | CPU Request | CPU Limit | Memory Request | Memory Limit |
+|-----------|------|-------------|-----------|----------------|--------------|
+| **PostgreSQL** | 1 | 500m | 1000m | 1Gi | 2Gi |
+| **Valkey** | 1 | 100m | 500m | 256Mi | 512Mi |
+| **Subtotal** | **2** | **600m** | **1.5 cores** | **1.25 GB** | **2.5 GB** |
+
+### Application Components
+
+| Component | Pods | CPU Request | CPU Limit | Memory Request | Memory Limit |
+|-----------|------|-------------|-----------|----------------|--------------|
+| **Koku API Reads** | 1-2 | 250m each | 500m each | 512Mi each | 1Gi each |
+| **Koku API Writes** | 1 | 250m | 500m | 512Mi | 1Gi |
+| **Koku API MASU** | 1 | 50m | 100m | 500Mi | 700Mi |
+| **Koku Listener** | 1 | 150m | 300m | 300Mi | 600Mi |
+| **Celery Beat** | 1 | 50m | 100m | 200Mi | 400Mi |
+| **Celery Workers** | 11-21 | 100m each | 200m each | 256Mi-512Mi | 400Mi-1Gi |
+| **ROS API** | 1 | 500m | 1000m | 1Gi | 1Gi |
+| **ROS Processor** | 1 | 500m | 1000m | 1Gi | 1Gi |
+| **ROS Poller** | 1 | 500m | 1000m | 1Gi | 1Gi |
+| **ROS Housekeeper** | 1 | 500m | 1000m | 1Gi | 1Gi |
+| **Kruize** | 1-2 | 200m | 1000m | 1Gi | 2Gi |
+| **Subtotal** | **18-28** | **~4-6 cores** | **~8-12 cores** | **~9-14 Gi** | **~14-22 Gi** |
+
+### Total Deployment Summary
+
+| Scenario | Pods | CPU Request | CPU Limit | Memory Request | Memory Limit |
+|----------|------|-------------|-----------|----------------|--------------|
+| **OCP-Only (minimal)** | ~24 | ~7.5 cores | ~15 cores | ~16 Gi | ~28 Gi |
+| **OCP on Cloud** | ~34 | ~9 cores | ~18 cores | ~21 Gi | ~36 Gi |
+
+**Note:** See [Worker Deployment Scenarios](worker-deployment-scenarios.md) for detailed worker requirements by scenario.
+
+---
+
+## E2E Validation (OCP Dataflow)
+
+After installation, validate the complete data pipeline using the OCP dataflow test.
+
+### Running the Test
+
+```bash
+cd scripts
+
+# Run E2E test (uses NISE-generated test data)
+./cost-mgmt-ocp-dataflow.sh --namespace cost-onprem
+
+# With force cleanup (recommended for repeated runs)
+./cost-mgmt-ocp-dataflow.sh --namespace cost-onprem --force
+```
+
+### What the Test Validates
+
+1. ✅ **Preflight** - Environment checks
+2. ✅ **Provider** - Creates OCP cost provider
+3. ✅ **Data Upload** - Generates and uploads test data (CSV → TAR.GZ → S3)
+4. ✅ **Kafka** - Publishes message to trigger processing
+5. ✅ **Processing** - CSV parsing and data ingestion
+6. ✅ **Database** - Validates data in PostgreSQL tables
+7. ✅ **Aggregation** - Summary table generation
+8. ✅ **Validation** - Verifies cost calculations
+
+### Expected Output
+
+```
+✅ E2E SMOKE TEST PASSED
+
+Phases: 8/8 passed
+  ✅ preflight
+  ✅ migrations
+  ✅ kafka_validation
+  ✅ provider
+  ✅ data_upload
+  ✅ processing
+  ✅ database
+  ✅ validation
+
+Total Time: ~2-3 minutes
+```
+
+### Verify Cost Data in PostgreSQL
+
+```bash
+# Port-forward to PostgreSQL
+kubectl port-forward -n cost-onprem pod/cost-onprem-database-0 5432:5432 &
+
+# Query aggregated cost data
+psql -h localhost -U koku -d koku -c "
+SELECT
+    cluster_id,
+    COUNT(*) as daily_rows,
+    SUM(pod_usage_cpu_core_hours) as total_cpu_usage,
+    SUM(pod_request_cpu_core_hours) as total_cpu_request
+FROM reporting_ocpusagelineitem_daily_summary
+WHERE cluster_id IS NOT NULL
+GROUP BY cluster_id
+LIMIT 5;
+"
 ```
 
 ---

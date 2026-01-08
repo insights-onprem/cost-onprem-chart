@@ -36,11 +36,14 @@ spec:
               protocol: TCP
           env:
             - name: POSTGRES_USER
-              value: {{ .Values.database.server.adminUser | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cost-onprem.database.defaultSecretName" . }}
+                  key: admin-user
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "cost-onprem.fullname" . }}-db-credentials
+                  name: {{ include "cost-onprem.database.defaultSecretName" . }}
                   key: admin-password
             - name: PGDATA
               value: "/var/lib/postgresql/data/pgdata"
@@ -53,9 +56,9 @@ spec:
           livenessProbe:
             exec:
               command:
-                - pg_isready
-                - -U
-                - {{ .Values.database.server.adminUser }}
+                - /bin/sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER"
             initialDelaySeconds: {{ .Values.probes.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.timeoutSeconds }}
@@ -63,9 +66,9 @@ spec:
           readinessProbe:
             exec:
               command:
-                - pg_isready
-                - -U
-                - {{ .Values.database.server.adminUser }}
+                - /bin/sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER"
             initialDelaySeconds: 5
             periodSeconds: {{ .Values.probes.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.timeoutSeconds }}

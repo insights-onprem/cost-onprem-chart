@@ -158,3 +158,26 @@ Usage: {{ include "cost-onprem.initContainer.waitForCache" . | nindent 8 }}
       done
       echo "{{ $cacheName | title }} is ready"
 {{- end -}}
+
+{{/*
+Wait for Infrastructure PostgreSQL init container (for Koku and Sources API)
+This waits for the PostgreSQL database to be ready
+Usage: {{ include "cost-onprem.initContainer.waitForInfraDb" . | nindent 8 }}
+*/}}
+{{- define "cost-onprem.initContainer.waitForInfraDb" -}}
+- name: wait-for-infra-db
+  image: "{{ .Values.global.initContainers.waitFor.repository }}:{{ .Values.global.initContainers.waitFor.tag }}"
+  securityContext:
+    {{- include "cost-onprem.securityContext.nonRoot" . | nindent 4 }}
+  command: ['bash', '-c']
+  args:
+    - |
+      DB_HOST="{{ include "cost-onprem.koku.database.host" . }}"
+      DB_PORT="{{ include "cost-onprem.koku.database.port" . }}"
+      echo "Waiting for infrastructure PostgreSQL at ${DB_HOST}:${DB_PORT}..."
+      until timeout 3 bash -c "echo > /dev/tcp/${DB_HOST}/${DB_PORT}" 2>/dev/null; do
+        echo "Infrastructure PostgreSQL not ready yet, retrying in 5 seconds..."
+        sleep 5
+      done
+      echo "Infrastructure PostgreSQL is ready"
+{{- end -}}

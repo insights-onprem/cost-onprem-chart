@@ -339,6 +339,39 @@ kubectl set resources deployment/strimzi-cluster-operator \
 kubectl get pods -n kafka -l name=strimzi-cluster-operator
 ```
 
+---
+
+## E2E Validation Script Issues
+
+### Starting Fresh: Complete E2E Test Environment Reset
+
+**Problem**: You need to completely reset the E2E test environment to start fresh.
+
+**When to use**: Only when you have corrupted state or need to test first-time installation behavior.
+
+**Steps**:
+
+```bash
+# 1. Clear Redis/Valkey cache (uses valkey-cli, Redis-compatible)
+REDIS_POD=$(kubectl get pod -n cost-onprem -l app.kubernetes.io/name=redis -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n cost-onprem $REDIS_POD -- valkey-cli FLUSHALL
+
+# 2. Restart Koku listener to clear in-memory state
+kubectl delete pod -n cost-onprem -l app.kubernetes.io/component=listener
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/component=listener -n cost-onprem --timeout=60s
+
+# 3. Delete test data from S3
+kubectl exec -n cost-onprem -l app.kubernetes.io/name=minio -- \
+    mc rm --recursive --force myminio/koku-bucket/reports/
+
+# 4. Run E2E test
+./scripts/cost-mgmt-ocp-dataflow.sh --force
+```
+
+**Warning**: This is a destructive operation. Only use when you need a complete reset.
+
+---
+
 ### Debug Commands
 
 ```bash

@@ -1,6 +1,38 @@
-# Cost Management On-Premise Helm Chart
+# Cost Management On-Premise Helm Charts
 
-Kubernetes Helm chart for deploying the complete Cost Management On-Premise solution, including Resource Optimization Service (ROS) and future cost management capabilities.
+This repository contains a Helm chart for deploying cost management solutions on-premise:
+
+**`cost-onprem/`** - Unified chart containing all components: ROS, Kruize, Sources API, Koku (Cost Management), PostgreSQL, and Valkey
+
+---
+
+## 📊 Cost Management (Koku) Deployment
+
+Complete Helm chart for deploying the full Cost Management stack with OCP cost analytics capabilities.
+
+**🚀 Quick Start:**
+```bash
+# Automated deployment (recommended)
+./scripts/install-helm-chart.sh
+```
+
+**📖 Documentation:**
+- **[Cost Management Installation Guide](docs/cost-management-installation.md)** - Complete deployment guide
+- **Prerequisites**: OpenShift 4.18+, ODF (150GB+), Kafka/Strimzi
+- **Architecture**: Single unified chart with all components
+- **E2E Testing**: Automated validation with `./scripts/cost-mgmt-ocp-dataflow.sh`. Basic sanity with `./scripts/test-ocp-dataflow-jwt.sh`
+
+**Key Features:**
+- 📊 Complete OCP cost data pipeline (Kafka → CSV → PostgreSQL)
+- 🗄️ PostgreSQL-based data processing and analytics
+- 🔄 Optimized Kubernetes resources with production-ready defaults
+- 🧪 Comprehensive E2E validation framework
+
+---
+
+## 🎯 Resource Optimization Service (ROS)
+
+Kubernetes Helm chart for deploying the Resource Optimization Service (ROS) with Kruize integration and future cost management capabilities.
 
 ## 🚀 Quick Start
 
@@ -53,7 +85,7 @@ helm install cost-onprem cost-onprem/cost-onprem --namespace cost-onprem --creat
 
 **Need more?** Configuration, security, templates, and specialized guides are available in the [Complete Documentation Index](docs/README.md).
 
-## 🏗️ Chart Structure
+## 🏗️ Repository Structure
 
 ```
 cost-onprem-chart/
@@ -78,7 +110,7 @@ cost-onprem-chart/
 ## 📦 Services Deployed
 
 ### Stateful Services
-- **PostgreSQL** (3 instances): ROS, Kruize, Sources databases
+- **PostgreSQL**: Unified database server hosting ROS, Kruize, Koku, and Sources databases
 - **MinIO/ODF**: Object storage (MinIO for Kubernetes, ODF for OpenShift)
 
 ### Kafka Infrastructure (Managed by Install Script)
@@ -106,9 +138,18 @@ cost-onprem-chart/
 ## ⚙️ Configuration
 
 ### Resource Requirements
-- **Memory**: 8GB+ (12GB+ recommended)
-- **CPU**: 4+ cores
-- **Storage**: 30GB+ persistent storage
+
+Complete Cost Management deployment requires significant cluster resources:
+
+| Resource | Minimum | Recommended |
+|----------|---------|-------------|
+| **CPU** | 10 cores | 12-14 cores |
+| **Memory** | 24 Gi | 32-40 Gi |
+| **Worker Nodes** | 3 × 8 Gi | 3 × 16 Gi |
+| **Storage** | 300 Gi | 400+ Gi |
+| **Pods** | ~55 | - |
+
+**📖 See [Resource Requirements Guide](docs/resource-requirements.md) for detailed breakdown by component.**
 
 ### Storage Options
 - **Kubernetes/KIND**: MinIO (automatically deployed)

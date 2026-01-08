@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cost-onprem.koku.api.reads.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-onprem.koku.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cost-management-api
+    api-type: reads
+spec:
+  replicas: {{ .Values.costManagement.api.reads.replicas }}
+  selector:
+    matchLabels:
+      {{- include "cost-onprem.koku.api.reads.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cost-onprem.koku.labels" . | nindent 8 }}
+        app.kubernetes.io/component: cost-management-api
+        api-type: reads
+    spec:
+      serviceAccountName: {{ include "cost-onprem.koku.serviceAccountName" . }}
+
+      securityContext:
+        {{- include "cost-onprem.securityContext.pod" . | nindent 8 }}
+
+      initContainers:
+      {{- include "cost-onprem.koku.initContainer.combineCA" . | nindent 6 }}
+      # Run Django migrations before starting the API
+      # This ensures migrations are complete before listeners check for them
+      {{- include "cost-onprem.koku.initContainer.migrations" . | nindent 6 }}
+
+      containers:
+      - name: koku-api
+        image: "{{ include "cost-onprem.koku.image" . }}"
+        imagePullPolicy: {{ .Values.costManagement.api.image.pullPolicy }}
+
+        # Use image's default entrypoint (./scripts/entrypoint.sh)
+        # which handles migrations and starts gunicorn correctly
+
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+
+        env:
+        {{- include "cost-onprem.koku.commonEnv" . | nindent 8 }}
+        # POD_CPU_LIMIT is required for gunicorn worker calculation
+        # Without it, gunicorn spawns workers based on host CPU count, causing OOM
+        - name: POD_CPU_LIMIT
+          valueFrom:
+            resourceFieldRef:
+              containerName: koku-api
+              resource: limits.cpu
+        {{- range $key, $value := .Values.costManagement.api.reads.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+
+        livenessProbe:
+          {{- toYaml .Values.costManagement.api.reads.livenessProbe | nindent 10 }}
+
+        readinessProbe:
+          {{- toYaml .Values.costManagement.api.reads.readinessProbe | nindent 10 }}
+
+        resources:
+          {{- toYaml .Values.costManagement.api.reads.resources | nindent 10 }}
+
+        volumeMounts:
+        {{- include "cost-onprem.koku.volumeMounts" . | nindent 8 }}
+
+        securityContext:
+          {{- include "cost-onprem.securityContext.container" . | nindent 10 }}
+
+      volumes:
+      {{- include "cost-onprem.koku.volumes" . | nindent 6 }}
+

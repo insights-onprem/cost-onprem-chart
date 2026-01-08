@@ -2,8 +2,8 @@ apiVersion: v2
 name: cost-onprem
 description: Cost Management On-Premise solution for Kubernetes/OpenShift
 type: application
-version: 0.2.3
-appVersion: "latest"
+version: 0.3.0
+appVersion: "postgres"
 
 keywords:
   - insights

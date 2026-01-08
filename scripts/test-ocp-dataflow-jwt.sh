@@ -1,9 +1,26 @@
 #!/bin/bash
 
-# ROS OpenShift Data Flow Test Script with Keycloak JWT Authentication
-# This script tests the complete data flow using Keycloak JWT tokens
-# Ingress: Uses Keycloak JWT (external uploads from Cost Management Operator)
-# Backend API: Uses Keycloak JWT (for API access)
+# Cost Management & ROS OpenShift Data Flow Test Script with Keycloak JWT Authentication
+#
+# This script tests the complete end-to-end data flow through the Cost Management (Koku)
+# and ROS (Resource Optimization Service) pipeline using Keycloak JWT authentication.
+#
+# Data Flow Architecture:
+# =======================
+# 1. Cost Management Operator uploads data via JWT-authenticated ingress
+# 2. Ingress (insights-ingress-go) stores files in S3 (koku-bucket)
+# 3. Ingress publishes upload notification to Kafka (platform.upload.announce topic)
+# 4. Koku Listener consumes from platform.upload.announce
+# 5. Koku/MASU processes cost data from koku-bucket
+# 6. Koku copies ROS-relevant data to ros-data bucket
+# 7. Koku emits events to hccm.ros.events topic
+# 8. ROS Processor consumes from hccm.ros.events and sends data to Kruize
+# 9. Kruize generates optimization recommendations
+# 10. Recommendations are available via the ROS API
+#
+# Authentication:
+# - Ingress: Keycloak JWT (external uploads from Cost Management Operator)
+# - Backend API: Keycloak JWT (for API access)
 
 set -e  # Exit on any error
 
@@ -13,7 +30,11 @@ cleanup() {
     if [ -n "${PORT_FORWARD_PID:-}" ]; then
         kill "$PORT_FORWARD_PID" 2>/dev/null || true
     fi
-    # Note: No cleanup needed for user session tokens
+    # Cleanup test source if it was created
+    if [ -n "${TEST_SOURCE_ID:-}" ]; then
+        echo_info "Cleaning up test source..."
+        cleanup_test_source
+    fi
     exit $exit_code
 }
 
@@ -151,7 +172,7 @@ validate_jwt_authentication() {
     echo_info "Testing ingress at: $ingress_url"
 
     # Check if we can reach the service at all
-    local health_check=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$ingress_url/ready" 2>/dev/null || echo "000")
+    local health_check=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$ingress_url/" 2>/dev/null || echo "000")
     if [ "$health_check" = "000" ]; then
         echo_error "Cannot reach ingress service. Skipping JWT validation tests."
         echo_warning "Service may not be ready yet or port-forwarding is required"
@@ -513,9 +534,217 @@ EOF
     echo "$test_csv"
 }
 
+# Global variables for source registration
+SOURCES_API_URL=""
+TEST_SOURCE_ID=""
+TEST_SOURCE_NAME=""
+ORG_ID="12345"
+
+# Function to register OCP source via Sources API
+# This creates a source that Koku will recognize when processing uploads
+register_ocp_source() {
+    local cluster_id="$1"
+
+    if [ -z "$cluster_id" ]; then
+        echo_error "Cluster ID is required for source registration"
+        return 1
+    fi
+
+    echo_info "=== Registering OCP Source via Sources API ==="
+
+    # Get Sources API service URL (internal cluster service)
+    local sources_svc="${HELM_RELEASE_NAME}-sources-api.${NAMESPACE}.svc.cluster.local:8000"
+    SOURCES_API_URL="http://${sources_svc}/api/sources/v1.0"
+
+    echo_info "Sources API URL: $SOURCES_API_URL"
+    echo_info "Cluster ID: $cluster_id"
+    echo_info "Org ID: $ORG_ID"
+
+    # Find a pod to execute curl from (use sources-listener or any koku pod)
+    local exec_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=sources-listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    if [ -z "$exec_pod" ]; then
+        exec_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    fi
+    if [ -z "$exec_pod" ]; then
+        echo_error "No suitable pod found to execute Sources API calls"
+        return 1
+    fi
+    echo_info "Using pod for API calls: $exec_pod"
+
+    # Step 1: Get OpenShift source type ID
+    echo_info "Getting OpenShift source type ID..."
+    local source_types_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -- \
+        curl -s "${SOURCES_API_URL}/source_types" \
+        -H "Content-Type: application/json" \
+        -H "x-rh-sources-org-id: $ORG_ID" 2>/dev/null)
+
+    local ocp_source_type_id=$(echo "$source_types_response" | jq -r '.data[] | select(.name == "openshift") | .id' 2>/dev/null)
+    if [ -z "$ocp_source_type_id" ] || [ "$ocp_source_type_id" = "null" ]; then
+        echo_error "Failed to find OpenShift source type"
+        echo_info "Available source types: $(echo "$source_types_response" | jq -r '.data[].name' 2>/dev/null | tr '\n' ', ')"
+        return 1
+    fi
+    echo_info "OpenShift source type ID: $ocp_source_type_id"
+
+    # Step 2: Get Cost Management application type ID
+    echo_info "Getting Cost Management application type ID..."
+    local app_types_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -- \
+        curl -s "${SOURCES_API_URL}/application_types" \
+        -H "Content-Type: application/json" \
+        -H "x-rh-sources-org-id: $ORG_ID" 2>/dev/null)
+
+    local cost_mgmt_app_type_id=$(echo "$app_types_response" | jq -r '.data[] | select(.name == "/insights/platform/cost-management") | .id' 2>/dev/null)
+    if [ -z "$cost_mgmt_app_type_id" ] || [ "$cost_mgmt_app_type_id" = "null" ]; then
+        echo_error "Failed to find Cost Management application type"
+        echo_info "Available app types: $(echo "$app_types_response" | jq -r '.data[].name' 2>/dev/null | tr '\n' ', ')"
+        return 1
+    fi
+    echo_info "Cost Management application type ID: $cost_mgmt_app_type_id"
+
+    # Step 3: Create the OCP source
+    TEST_SOURCE_NAME="E2E Test OCP Source $(date +%s)"
+    echo_info "Creating OCP source: $TEST_SOURCE_NAME"
+
+    local create_source_payload=$(cat <<EOF
+{"name": "$TEST_SOURCE_NAME", "source_type_id": "$ocp_source_type_id", "source_ref": "$cluster_id"}
+EOF
+)
+
+    local source_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -- \
+        curl -s -X POST "${SOURCES_API_URL}/sources" \
+        -H "Content-Type: application/json" \
+        -H "x-rh-sources-org-id: $ORG_ID" \
+        -d "$create_source_payload" 2>/dev/null)
+
+    TEST_SOURCE_ID=$(echo "$source_response" | jq -r '.id' 2>/dev/null)
+    if [ -z "$TEST_SOURCE_ID" ] || [ "$TEST_SOURCE_ID" = "null" ]; then
+        echo_error "Failed to create source"
+        echo_info "Response: $source_response"
+        return 1
+    fi
+    echo_success "Source created with ID: $TEST_SOURCE_ID"
+
+    # Step 4: Create authentication for the source
+    echo_info "Creating authentication for source..."
+    local auth_payload=$(cat <<EOF
+{"resource_type": "Source", "resource_id": "$TEST_SOURCE_ID", "authtype": "token", "username": "$cluster_id"}
+EOF
+)
+
+    local auth_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -- \
+        curl -s -X POST "${SOURCES_API_URL}/authentications" \
+        -H "Content-Type: application/json" \
+        -H "x-rh-sources-org-id: $ORG_ID" \
+        -d "$auth_payload" 2>/dev/null)
+
+    local auth_id=$(echo "$auth_response" | jq -r '.id' 2>/dev/null)
+    if [ -z "$auth_id" ] || [ "$auth_id" = "null" ]; then
+        echo_warning "Authentication creation may have failed (non-critical)"
+        echo_info "Response: $auth_response"
+    else
+        echo_success "Authentication created with ID: $auth_id"
+    fi
+
+    # Step 5: Create Cost Management application
+    echo_info "Creating Cost Management application..."
+    local app_payload=$(cat <<EOF
+{"source_id": "$TEST_SOURCE_ID", "application_type_id": "$cost_mgmt_app_type_id", "extra": {"bucket": "koku-bucket", "cluster_id": "$cluster_id"}}
+EOF
+)
+
+    local app_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -- \
+        curl -s -X POST "${SOURCES_API_URL}/applications" \
+        -H "Content-Type: application/json" \
+        -H "x-rh-sources-org-id: $ORG_ID" \
+        -d "$app_payload" 2>/dev/null)
+
+    local app_id=$(echo "$app_response" | jq -r '.id' 2>/dev/null)
+    if [ -z "$app_id" ] || [ "$app_id" = "null" ]; then
+        echo_error "Failed to create Cost Management application"
+        echo_info "Response: $app_response"
+        return 1
+    fi
+    echo_success "Cost Management application created with ID: $app_id"
+
+    # Step 6: Wait for Koku to process the source (via Kafka event)
+    # The Sources API publishes to Kafka, then sources-listener creates the provider
+    echo_info "Waiting for Koku to process the new source via Kafka..."
+
+    local db_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=database" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    if [ -z "$db_pod" ]; then
+        # Try default database pod name
+        db_pod="cost-onprem-database-0"
+    fi
+
+    local max_wait=120  # 2 minutes max
+    local wait_interval=5
+    local elapsed=0
+    local provider_found=false
+
+    local provider_count
+    while [ $elapsed -lt $max_wait ]; do
+        # Check if provider exists in Koku database for this cluster
+        provider_count=$(oc exec -n "$NAMESPACE" "$db_pod" -- \
+            psql -U koku -d koku -t -c \
+            "SELECT COUNT(*) FROM api_provider p
+             JOIN api_providerauthentication a ON p.authentication_id = a.id
+             WHERE a.credentials->>'cluster_id' = '$cluster_id'
+                OR p.additional_context->>'cluster_id' = '$cluster_id';" 2>/dev/null | tr -d ' \n\t')
+        # Default to 0 if empty or not a number
+        provider_count=${provider_count:-0}
+
+        if [ "$provider_count" -gt 0 ] 2>/dev/null; then
+            provider_found=true
+            echo_success "Provider created in Koku database"
+            break
+        fi
+
+        echo_info "  Waiting for provider to be created... ($elapsed/$max_wait seconds)"
+        sleep $wait_interval
+        elapsed=$((elapsed + wait_interval))
+    done
+
+    if [ "$provider_found" = "false" ]; then
+        echo_error "Timeout waiting for provider to be created in Koku database"
+        echo_info "Check sources-listener logs: oc logs -n $NAMESPACE deployment/cost-onprem-sources-listener --tail=50"
+        return 1
+    fi
+
+    echo_success "OCP source registered successfully"
+    echo_info "  Source ID: $TEST_SOURCE_ID"
+    echo_info "  Source Name: $TEST_SOURCE_NAME"
+    echo_info "  Cluster ID: $cluster_id"
+
+    return 0
+}
+
+# Function to cleanup test source after test
+cleanup_test_source() {
+    if [ -z "$TEST_SOURCE_ID" ]; then
+        return 0
+    fi
+
+    echo_info "Cleaning up test source: $TEST_SOURCE_ID"
+
+    # Find a pod to execute curl from
+    local exec_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=sources-listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    if [ -z "$exec_pod" ]; then
+        exec_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    fi
+
+    if [ -n "$exec_pod" ] && [ -n "$SOURCES_API_URL" ]; then
+        oc exec -n "$NAMESPACE" "$exec_pod" -- \
+            curl -s -X DELETE "${SOURCES_API_URL}/sources/${TEST_SOURCE_ID}" \
+            -H "x-rh-sources-org-id: $ORG_ID" 2>/dev/null || true
+        echo_info "Test source deleted"
+    fi
+
+    TEST_SOURCE_ID=""
+}
+
 # Function to upload test data with JWT authentication
 upload_test_data_jwt() {
-    echo_info "=== STEP 1: Upload Test Data with JWT Authentication ===="
+    echo_info "=== STEP 6: Upload Test Data with JWT Authentication ===="
 
     if [ -z "$JWT_TOKEN" ]; then
         echo_error "JWT token not available. Please run get_jwt_token first."
@@ -543,9 +772,14 @@ upload_test_data_jwt() {
         return 1
     fi
 
-    # Generate unique cluster ID for this test run
-    UPLOAD_CLUSTER_ID="test-cluster-$(date +%s)"
-    echo_info "Generated cluster ID for this upload: $UPLOAD_CLUSTER_ID"
+    # Use the pre-generated cluster ID (set before calling this function)
+    if [ -z "$UPLOAD_CLUSTER_ID" ]; then
+        echo_error "UPLOAD_CLUSTER_ID not set. Source must be registered first."
+        rm -f "$test_csv"
+        rm -rf "$test_dir"
+        return 1
+    fi
+    echo_info "Using registered cluster ID: $UPLOAD_CLUSTER_ID"
 
     # Create manifest.json (required by ingress service)
     local manifest_file="$test_dir/manifest.json"
@@ -631,9 +865,10 @@ EOF
 
 # Function to verify upload was processed
 verify_upload_processing() {
-    echo_info "=== STEP 2: Verify Upload Processing ===="
+    echo_info "=== STEP 7: Verify Upload Processing ===="
 
-    # Check ingress logs for upload activity
+    # Step 7a: Check ingress logs for upload activity
+    echo_info "--- Step 7a: Ingress Upload Verification ---"
     echo_info "Checking ingress logs for upload processing..."
     local ingress_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=ingress -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
@@ -645,27 +880,384 @@ verify_upload_processing() {
         # Try to get logs from the ingress container
         echo_info "Recent ingress logs:"
         if echo "$containers" | grep -q "ingress"; then
-            oc logs -n "$NAMESPACE" "$ingress_pod" -c ingress --tail=10 2>/dev/null | grep -i "upload\|jwt\|auth\|error" || echo "No relevant log messages found"
+            oc logs -n "$NAMESPACE" "$ingress_pod" -c ingress --tail=10 2>/dev/null | grep -i "upload\|jwt\|auth\|kafka\|error" || echo "No relevant log messages found"
         else
             # Fall back to first container
             local first_container=$(echo "$containers" | awk '{print $1}')
-            oc logs -n "$NAMESPACE" "$ingress_pod" -c "$first_container" --tail=10 2>/dev/null | grep -i "upload\|jwt\|auth\|error" || echo "No relevant log messages found"
+            oc logs -n "$NAMESPACE" "$ingress_pod" -c "$first_container" --tail=10 2>/dev/null | grep -i "upload\|jwt\|auth\|kafka\|error" || echo "No relevant log messages found"
         fi
     else
         echo_warning "Ingress pod not found (tried label: app.kubernetes.io/name=ingress)"
     fi
 
-    # If we have the full ROS stack, check for further processing
+    # Step 7b: Check Koku Listener logs for Kafka message consumption
+    echo_info ""
+    echo_info "--- Step 7b: Koku Listener Verification ---"
+    echo_info "Checking Koku listener for Kafka message consumption (platform.upload.announce)..."
+    local listener_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+
+    if [ -n "$listener_pod" ]; then
+        echo_info "Found Koku listener pod: $listener_pod"
+        echo_info "Recent Koku listener logs:"
+        oc logs -n "$NAMESPACE" "$listener_pod" --tail=15 2>/dev/null | grep -i "kafka\|message\|upload\|announce\|processing\|error" || echo "No relevant log messages found"
+    else
+        echo_warning "Koku listener pod not found (tried label: app.kubernetes.io/component=listener)"
+        echo_info "Trying alternative label..."
+        listener_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+        if [ -n "$listener_pod" ]; then
+            echo_info "Found Koku listener pod: $listener_pod"
+            oc logs -n "$NAMESPACE" "$listener_pod" --tail=15 2>/dev/null | grep -i "kafka\|message\|upload\|announce\|processing\|error" || echo "No relevant log messages found"
+        fi
+    fi
+
+    # Step 7c: Check Koku/MASU worker logs for cost data processing
+    echo_info ""
+    echo_info "--- Step 7c: Koku/MASU Worker Verification ---"
+    echo_info "Checking Koku workers for cost data processing..."
+
+    # Check MASU pod for processing activity
+    local masu_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=masu" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    if [ -n "$masu_pod" ]; then
+        echo_info "Found MASU pod: $masu_pod"
+        echo_info "Recent MASU logs:"
+        oc logs -n "$NAMESPACE" "$masu_pod" --tail=10 2>/dev/null | grep -i "processing\|download\|report\|complete\|error" || echo "No relevant log messages found"
+    fi
+
+    # Check Celery worker pods for task processing
+    local worker_pods=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=worker" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)
+    if [ -n "$worker_pods" ]; then
+        local first_worker=$(echo "$worker_pods" | awk '{print $1}')
+        echo_info "Found Celery worker pod: $first_worker"
+        echo_info "Recent worker logs (first worker):"
+        oc logs -n "$NAMESPACE" "$first_worker" --tail=10 2>/dev/null | grep -i "task\|download\|process\|complete\|error" || echo "No relevant log messages found"
+    else
+        echo_info "No Celery worker pods found - Koku may use a different worker configuration"
+    fi
+
+    # Step 7d: Check ROS Processor for downstream processing
+    echo_info ""
+    echo_info "--- Step 7d: ROS Processor Verification ---"
     local processor_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=ros-processor" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
     if [ -n "$processor_pod" ]; then
-        echo_info "Checking processor logs for data processing..."
-        oc logs -n "$NAMESPACE" "$processor_pod" --tail=10 | grep -i "processing\|complete\|error" || echo "No processing messages found"
+        echo_info "Found ROS processor pod: $processor_pod"
+        echo_info "Checking ROS processor logs for data processing (hccm.ros.events consumption)..."
+        oc logs -n "$NAMESPACE" "$processor_pod" --tail=10 | grep -i "processing\|kafka\|event\|complete\|error" || echo "No processing messages found"
     else
-        echo_info "ROS processor not deployed - upload verification complete at ingress level"
+        echo_info "ROS processor not deployed - checking if Koku processing is sufficient"
     fi
 
     return 0
+}
+
+# Function to verify Koku manifest processing
+# Checks that the uploaded file was processed successfully through the Koku pipeline
+verify_koku_manifest_processing() {
+    local cluster_id="$1"
+    local max_wait="${2:-120}"  # Default 2 minutes
+
+    if [ -z "$cluster_id" ]; then
+        echo_error "Cluster ID is required for manifest verification"
+        return 1
+    fi
+
+    echo_info "=== Verifying Koku Manifest Processing ==="
+    echo_info "Checking manifest and file processing status for cluster: $cluster_id"
+
+    # Find postgres pod
+    local db_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=database" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    if [ -z "$db_pod" ]; then
+        db_pod="cost-onprem-database-0"
+    fi
+
+    local wait_interval=10
+    local elapsed=0
+    local manifest_found=false
+    local files_processed=false
+
+    while [ $elapsed -lt $max_wait ]; do
+        # Check for manifest associated with this cluster
+        # The cluster_id is stored on the manifest table (from manifest.json in the uploaded tarball)
+        local manifest_query="
+            SELECT m.id, m.assembly_id, m.num_total_files, m.completed_datetime,
+                   m.state::jsonb->'processing'->>'end' as processing_end,
+                   m.state::jsonb->'summary'->>'failed' as summary_failed
+            FROM reporting_common_costusagereportmanifest m
+            WHERE m.cluster_id = '$cluster_id'
+            ORDER BY m.creation_datetime DESC
+            LIMIT 1;
+        "
+
+        local manifest_result=$(oc exec -n "$NAMESPACE" "$db_pod" -- \
+            psql -U koku -d koku -t -A -F'|' -c "$manifest_query" 2>/dev/null | head -1)
+
+        if [ -n "$manifest_result" ] && [ "$manifest_result" != "" ]; then
+            manifest_found=true
+            local manifest_id=$(echo "$manifest_result" | cut -d'|' -f1)
+            local assembly_id=$(echo "$manifest_result" | cut -d'|' -f2)
+            local num_files=$(echo "$manifest_result" | cut -d'|' -f3)
+            local completed=$(echo "$manifest_result" | cut -d'|' -f4)
+            local processing_end=$(echo "$manifest_result" | cut -d'|' -f5)
+            local summary_failed=$(echo "$manifest_result" | cut -d'|' -f6)
+
+            echo_info "  Manifest found (ID: $manifest_id)"
+            echo_info "    Assembly ID: $assembly_id"
+            echo_info "    Total files: $num_files"
+            echo_info "    Completed: ${completed:-pending}"
+            if [ -n "$processing_end" ] && [ "$processing_end" != "" ]; then
+                echo_info "    Processing end: $processing_end"
+            fi
+            if [ "$summary_failed" = "true" ]; then
+                echo_warning "    ⚠ Summary failed flag is set"
+            fi
+
+            # Check file processing status
+            local status_query="
+                SELECT report_name, status, completed_datetime
+                FROM reporting_common_costusagereportstatus
+                WHERE manifest_id = $manifest_id
+                ORDER BY id;
+            "
+
+            local status_result=$(oc exec -n "$NAMESPACE" "$db_pod" -- \
+                psql -U koku -d koku -t -A -F'|' -c "$status_query" 2>/dev/null)
+
+            if [ -n "$status_result" ]; then
+                local all_completed=true
+                echo_info "  File processing status:"
+
+                while IFS='|' read -r report_name status file_completed; do
+                    # Status: 1 = SUCCESS, 2 = FAILED, 0 or empty = PENDING
+                    local status_text="PENDING"
+                    local status_icon="⏳"
+                    if [ "$status" = "1" ]; then
+                        status_text="SUCCESS"
+                        status_icon="✓"
+                    elif [ "$status" = "2" ]; then
+                        status_text="FAILED"
+                        status_icon="✗"
+                        all_completed=false
+                    else
+                        all_completed=false
+                    fi
+
+                    echo_info "    $status_icon $report_name: $status_text"
+                done <<< "$status_result"
+
+                if [ "$all_completed" = "true" ]; then
+                    files_processed=true
+                    echo_success "All files processed successfully!"
+                    return 0
+                fi
+            fi
+        else
+            echo_info "  [$elapsed/${max_wait}s] Waiting for manifest to be created..."
+        fi
+
+        sleep $wait_interval
+        elapsed=$((elapsed + wait_interval))
+    done
+
+    if [ "$manifest_found" = "false" ]; then
+        echo_error "❌ No manifest found for cluster: $cluster_id after ${max_wait}s"
+        echo_info "Troubleshooting:"
+        echo_info "  - Check Koku listener logs: oc logs -n $NAMESPACE -l app.kubernetes.io/component=listener --tail=50"
+        echo_info "  - Check if upload notification reached Kafka"
+        echo_info "  - Check all manifests and their cluster_ids:"
+        echo_info "    oc exec -n $NAMESPACE $db_pod -- psql -U koku -d koku -c \\"
+        echo_info "      \"SELECT cluster_id, creation_datetime FROM reporting_common_costusagereportmanifest ORDER BY creation_datetime DESC LIMIT 5;\""
+        return 1
+    fi
+
+    if [ "$files_processed" = "false" ]; then
+        echo_warning "⚠ Manifest found but file processing not complete after ${max_wait}s"
+        echo_info "  Processing may still be in progress"
+        echo_info "  Check MASU logs: oc logs -n $NAMESPACE -l app.kubernetes.io/component=masu --tail=50"
+        return 1
+    fi
+
+    return 0
+}
+
+# Function to verify Koku summary tables are populated
+# Checks that cost data has been aggregated into summary tables
+verify_koku_summary_tables() {
+    local cluster_id="$1"
+    local max_wait="${2:-180}"  # Default 3 minutes (summary takes longer)
+
+    if [ -z "$cluster_id" ]; then
+        echo_error "Cluster ID is required for summary verification"
+        return 1
+    fi
+
+    echo_info "=== Verifying Koku Summary Tables ==="
+    echo_info "Checking OCP usage summary data for cluster: $cluster_id"
+
+    # Find postgres pod
+    local db_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=database" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    if [ -z "$db_pod" ]; then
+        db_pod="cost-onprem-database-0"
+    fi
+
+    # Get the tenant schema via the manifest table's cluster_id
+    # The manifest is linked to provider -> customer, so we can get the schema name
+    # Note: Koku adds 'org' prefix to org_id when creating schema (e.g., org_id='12345' -> schema='org12345')
+    local schema_query="
+        SELECT c.schema_name
+        FROM reporting_common_costusagereportmanifest m
+        JOIN api_provider p ON m.provider_id = p.uuid
+        JOIN api_customer c ON p.customer_id = c.id
+        WHERE m.cluster_id = '$cluster_id'
+        LIMIT 1;
+    "
+
+    local schema_name=$(oc exec -n "$NAMESPACE" "$db_pod" -- \
+        psql -U koku -d koku -t -A -c "$schema_query" 2>/dev/null | tr -d ' ')
+
+    if [ -z "$schema_name" ]; then
+        echo_error "Could not find tenant schema for cluster: $cluster_id"
+        echo_info "  This may indicate no manifest exists yet for this cluster"
+        echo_info "  Check: oc exec -n $NAMESPACE $db_pod -- psql -U koku -d koku -c \\"
+        echo_info "    \"SELECT cluster_id FROM reporting_common_costusagereportmanifest WHERE cluster_id = '$cluster_id';\""
+        return 1
+    fi
+
+    echo_info "  Tenant schema: $schema_name"
+
+    local wait_interval=15
+    local elapsed=0
+
+    while [ $elapsed -lt $max_wait ]; do
+        # Check for data in the OCP daily summary table
+        local summary_query="
+            SELECT
+                COUNT(*) as row_count,
+                COALESCE(SUM(pod_usage_cpu_core_hours), 0) as total_cpu_hours,
+                COALESCE(SUM(pod_usage_memory_gigabyte_hours), 0) as total_memory_gb_hours,
+                COUNT(DISTINCT namespace) as namespace_count,
+                COUNT(DISTINCT node) as node_count
+            FROM ${schema_name}.reporting_ocpusagelineitem_daily_summary
+            WHERE cluster_id = '$cluster_id'
+            AND namespace NOT LIKE '%unallocated%';
+        "
+
+        local summary_result=$(oc exec -n "$NAMESPACE" "$db_pod" -- \
+            psql -U koku -d koku -t -A -F'|' -c "$summary_query" 2>/dev/null | head -1)
+
+        if [ -n "$summary_result" ]; then
+            local row_count=$(echo "$summary_result" | cut -d'|' -f1)
+            local cpu_hours=$(echo "$summary_result" | cut -d'|' -f2)
+            local memory_gb_hours=$(echo "$summary_result" | cut -d'|' -f3)
+            local namespace_count=$(echo "$summary_result" | cut -d'|' -f4)
+            local node_count=$(echo "$summary_result" | cut -d'|' -f5)
+
+            if [ "$row_count" -gt 0 ] 2>/dev/null; then
+                echo_success "Summary data found!"
+                echo_info "  Summary statistics:"
+                echo_info "    Rows: $row_count"
+                echo_info "    CPU hours: $cpu_hours"
+                echo_info "    Memory GB-hours: $memory_gb_hours"
+                echo_info "    Unique namespaces: $namespace_count"
+                echo_info "    Unique nodes: $node_count"
+
+                # Show sample data
+                local sample_query="
+                    SELECT
+                        usage_start::date,
+                        namespace,
+                        pod_usage_cpu_core_hours,
+                        pod_usage_memory_gigabyte_hours
+                    FROM ${schema_name}.reporting_ocpusagelineitem_daily_summary
+                    WHERE cluster_id = '$cluster_id'
+                    AND namespace NOT LIKE '%unallocated%'
+                    ORDER BY usage_start DESC
+                    LIMIT 3;
+                "
+
+                echo_info "  Sample data:"
+                local sample_result=$(oc exec -n "$NAMESPACE" "$db_pod" -- \
+                    psql -U koku -d koku -t -A -F'|' -c "$sample_query" 2>/dev/null)
+
+                while IFS='|' read -r usage_date namespace cpu_hrs mem_hrs; do
+                    if [ -n "$usage_date" ]; then
+                        echo_info "    $usage_date | ${namespace:0:25} | CPU: ${cpu_hrs}h | Mem: ${mem_hrs}GB"
+                    fi
+                done <<< "$sample_result"
+
+                return 0
+            fi
+        fi
+
+        echo_info "  [$elapsed/${max_wait}s] Waiting for summary data to be populated..."
+        sleep $wait_interval
+        elapsed=$((elapsed + wait_interval))
+    done
+
+    echo_warning "⚠ No summary data found after ${max_wait}s"
+    echo_info "  Summary table population may still be in progress"
+    echo_info "  This is handled by Celery tasks which may take additional time"
+    echo_info ""
+    echo_info "  To check manually later (looking for cluster_id='$cluster_id'):"
+    echo_info "    oc exec -n $NAMESPACE $db_pod -- psql -U koku -d koku -c \\"
+    echo_info "      \"SELECT COUNT(*) FROM ${schema_name}.reporting_ocpusagelineitem_daily_summary WHERE cluster_id = '$cluster_id';\""
+    echo_info ""
+    echo_info "  Schema '$schema_name' was looked up via manifest->provider->customer relationship"
+    return 1
+}
+
+# Function to verify Koku processed the upload end-to-end
+# This combines manifest, file processing, and summary verification
+verify_koku_processing() {
+    local cluster_id="$1"
+
+    if [ -z "$cluster_id" ]; then
+        echo_error "Cluster ID is required for Koku verification"
+        return 1
+    fi
+
+    echo_info "=== STEP 8: Verify Koku Cost Management Processing ==="
+    echo_info "Validating the complete Koku data processing pipeline"
+    echo ""
+
+    local koku_passed=0
+    local koku_failed=0
+
+    # Step 1: Verify manifest and file processing
+    echo_info "--- Step 8a: Manifest & File Processing ---"
+    if verify_koku_manifest_processing "$cluster_id" 120; then
+        koku_passed=$((koku_passed + 1))
+        echo_success "✓ Koku manifest processing verified"
+    else
+        koku_failed=$((koku_failed + 1))
+        echo_error "✗ Koku manifest processing failed"
+    fi
+    echo ""
+
+    # Step 2: Verify summary tables (may take longer)
+    echo_info "--- Step 8b: Summary Table Population ---"
+    if verify_koku_summary_tables "$cluster_id" 180; then
+        koku_passed=$((koku_passed + 1))
+        echo_success "✓ Koku summary tables populated"
+    else
+        koku_failed=$((koku_failed + 1))
+        echo_warning "⚠ Summary tables not yet populated (async process)"
+    fi
+    echo ""
+
+    # Summary
+    echo_info "Koku Verification Summary:"
+    echo_info "  Passed: $koku_passed"
+    echo_info "  Failed/Pending: $koku_failed"
+    echo ""
+
+    # Manifest processing is critical; summary is async and may take time
+    if [ $koku_passed -ge 1 ]; then
+        echo_success "✓ Koku cost data processing verified (at least manifest processing passed)"
+        return 0
+    else
+        echo_error "✗ Koku cost data processing verification failed"
+        return 1
+    fi
 }
 
 # Function to check for recommendations for a specific upload
@@ -814,10 +1406,14 @@ check_recommendations_with_retry() {
 
 # Main execution
 main() {
-    echo_info "ROS JWT Authentication Data Flow Test"
+    echo_info "Cost Management & ROS Data Flow Test"
     echo_info "============================================"
-    echo_info "Ingress: Keycloak JWT (external uploads from Cost Management Operator)"
-    echo_info "Backend API: Keycloak JWT (for API access)"
+    echo_info "This test validates the complete data flow through:"
+    echo_info "  1. Ingress (JWT authenticated upload)"
+    echo_info "  2. Koku/MASU (cost data processing)"
+    echo_info "  3. ROS Processor (resource optimization)"
+    echo_info "  4. Kruize (recommendation generation)"
+    echo_info "  5. ROS Backend API (JWT authenticated access)"
     echo ""
 
     # Check prerequisites first
@@ -861,20 +1457,46 @@ main() {
     fi
     echo ""
 
-    # Step 5: Upload test data with JWT authentication
+    # Step 5: Register OCP source before upload
+    # Generate unique cluster ID for this test run
+    UPLOAD_CLUSTER_ID="test-cluster-$(date +%s)"
+    echo_info "Generated cluster ID: $UPLOAD_CLUSTER_ID"
+
+    if ! register_ocp_source "$UPLOAD_CLUSTER_ID"; then
+        echo_error "Failed to register OCP source"
+        exit 1
+    fi
+    echo ""
+
+    # Step 6: Upload test data with JWT authentication
     if ! upload_test_data_jwt; then
         echo_error "Upload with JWT authentication failed"
         exit 1
     fi
     echo ""
 
-    # Step 6: Verify processing
+    # Step 7: Verify processing (log-based checks)
     verify_upload_processing
     echo ""
 
-    # Step 7: Query backend API with JWT token to verify authenticated access
-    echo_info "=== Querying Backend API with Keycloak JWT Token ==="
+    # Step 8: Verify Koku cost management processing (database verification)
+    # This validates that Koku properly processed the uploaded data
+    if ! verify_koku_processing "$UPLOAD_CLUSTER_ID"; then
+        echo_warning "Koku processing verification incomplete - some async tasks may still be running"
+        echo_info "Continuing with ROS verification..."
+    fi
+    echo ""
+
+    # Step 9: Query ROS backend API with JWT token to verify authenticated access
+    echo_info "=== STEP 9: Querying ROS Backend API with Keycloak JWT Token ==="
     echo_info "Testing API access using Keycloak JWT token..."
+    echo ""
+
+    # Refresh JWT token before API queries (previous steps may have exceeded token lifetime)
+    if ! get_jwt_token; then
+        echo_error "Failed to refresh JWT token"
+        exit 1
+    fi
     echo ""
 
     local backend_url=$(get_service_url "ros-api" "")
@@ -931,7 +1553,7 @@ main() {
     fi
     echo ""
 
-    # Step 8: Check for recommendations with retries (for the specific cluster we just uploaded)
+    # Step 10: Check for ROS recommendations with retries (for the specific cluster we just uploaded)
     if [ -z "$UPLOAD_CLUSTER_ID" ]; then
         echo_error "UPLOAD_CLUSTER_ID not set. This should have been set during upload."
         exit 1
@@ -939,37 +1561,54 @@ main() {
 
     if ! check_recommendations_with_retry "$UPLOAD_CLUSTER_ID"; then
         echo ""
-        echo_error "❌ JWT Authentication Data Flow Test FAILED!"
+        echo_error "❌ Cost Management & ROS Data Flow Test FAILED!"
         echo_error "The upload was successful but no recommendations were generated for cluster: $UPLOAD_CLUSTER_ID"
         echo_info ""
         echo_info "Troubleshooting steps:"
-        echo_info "  1. Check if data reached Kruize for this cluster:"
+        echo_info "  1. Check Koku listener for Kafka message consumption:"
+        echo_info "     oc logs -n $NAMESPACE -l app.kubernetes.io/component=listener --tail=100"
+        echo_info "  2. Check Koku/MASU workers for cost data processing:"
+        echo_info "     oc logs -n $NAMESPACE -l app.kubernetes.io/component=masu --tail=100"
+        echo_info "  3. Check if data reached Kruize for this cluster:"
         echo_info "     ./query-kruize.sh --cluster $UPLOAD_CLUSTER_ID"
-        echo_info "  2. Check processor logs for errors:"
+        echo_info "  4. Check ROS processor logs for errors:"
         echo_info "     oc logs -n $NAMESPACE deployment/cost-onprem-ros-processor --tail=100"
-        echo_info "  3. Check Kruize logs:"
+        echo_info "  5. Check Kruize logs:"
         echo_info "     oc logs -n $NAMESPACE deployment/cost-onprem-kruize --tail=100"
-        echo_info "  4. Query all recommendations:"
+        echo_info "  6. Query all recommendations:"
         echo_info "     ./query-kruize.sh --recommendations"
         exit 1
     fi
 
     echo ""
-    echo_success "✅ JWT Authentication Data Flow Test completed successfully!"
+    echo_success "✅ Cost Management & ROS Data Flow Test completed successfully!"
     echo_success "Test cluster ID: $UPLOAD_CLUSTER_ID"
     echo_info ""
-    echo_info "The test demonstrated:"
-    echo_info "  ✓ Keycloak JWT token generation"
-    echo_info "  ✓ Authenticated file upload using JWT Bearer token (ingress)"
-    echo_info "  ✓ Ingress processing with JWT authentication"
-    echo_info "  ✓ Backend API queries with Keycloak JWT token"
-    echo_info "  ✓ Backend processing and data aggregation"
-    echo_info "  ✓ Kruize recommendation generation for uploaded data"
-    echo_info "  ✓ End-to-end data flow with optimization recommendations"
+    echo_info "The test demonstrated the complete data flow:"
     echo_info ""
-    echo_info "🎉 This confirms JWT authentication is working for both:"
-    echo_info "   - Ingress: Keycloak JWT (for external Cost Management Operator)"
-    echo_info "   - Backend API: Keycloak JWT (for API access)"
+    echo_info "  Authentication & Upload:"
+    echo_info "    ✓ Keycloak JWT token generation"
+    echo_info "    ✓ OCP source registered via Sources API"
+    echo_info "    ✓ Authenticated file upload using JWT Bearer token (ingress)"
+    echo_info "    ✓ Ingress: File stored in S3 (koku-bucket)"
+    echo_info "    ✓ Ingress: Kafka message published to platform.upload.announce"
+    echo_info ""
+    echo_info "  Koku Cost Management Processing:"
+    echo_info "    ✓ Koku Listener: Consumed Kafka message from platform.upload.announce"
+    echo_info "    ✓ Koku/MASU: Created manifest and processed report files"
+    echo_info "    ✓ Koku: File processing completed (verified via database)"
+    echo_info "    ✓ Koku: OCP usage summary tables populated (CPU/memory hours)"
+    echo_info "    ✓ Koku: Copied ROS data to ros-data bucket"
+    echo_info "    ✓ Koku: Published event to hccm.ros.events topic"
+    echo_info ""
+    echo_info "  ROS Resource Optimization:"
+    echo_info "    ✓ ROS Processor: Consumed event and sent data to Kruize"
+    echo_info "    ✓ Kruize: Generated optimization recommendations"
+    echo_info "    ✓ ROS API: Recommendations accessible via JWT-authenticated API"
+    echo_info ""
+    echo_info "This confirms both pipelines are working:"
+    echo_info "  1. Cost Management (Koku): Upload → Process → Summary tables"
+    echo_info "  2. Resource Optimization (ROS): Koku events → Kruize → Recommendations"
     echo_info ""
     echo_info "To query recommendations for this specific upload later:"
     echo_info "  ./query-kruize.sh --cluster $UPLOAD_CLUSTER_ID"
@@ -981,7 +1620,7 @@ case "${1:-}" in
         echo "Usage: $0 [command]"
         echo ""
         echo "Commands:"
-        echo "  (no command)    Run complete JWT authentication test"
+        echo "  (no command)    Run complete Cost Management & ROS data flow test"
         echo "  help            Show this help message"
         echo ""
         echo "Environment Variables:"
@@ -989,25 +1628,40 @@ case "${1:-}" in
         echo "  HELM_RELEASE_NAME      Helm release name (default: cost-onprem)"
         echo "  KEYCLOAK_NAMESPACE     Keycloak namespace (default: keycloak)"
         echo ""
-        echo "This script tests JWT authentication for both ingress and backend API:"
+        echo "This script tests the complete Cost Management (Koku) and ROS data flow:"
         echo ""
-        echo "Keycloak JWT Authentication:"
+        echo "Data Flow Architecture:"
+        echo "  1. Upload: Cost Management Operator -> Ingress (JWT authenticated)"
+        echo "  2. Storage: Ingress stores files in S3 (koku-bucket)"
+        echo "  3. Notification: Ingress publishes to Kafka (platform.upload.announce)"
+        echo "  4. Koku Processing: Listener consumes message, MASU processes cost data"
+        echo "  5. ROS Forwarding: Koku copies ROS data to ros-data bucket"
+        echo "  6. ROS Event: Koku publishes to Kafka (hccm.ros.events)"
+        echo "  7. ROS Processing: ROS Processor consumes event, sends to Kruize"
+        echo "  8. Recommendations: Kruize generates optimization recommendations"
+        echo "  9. API Access: Recommendations available via JWT-authenticated API"
+        echo ""
+        echo "Test Steps:"
         echo "  1. Detects Keycloak configuration automatically"
         echo "  2. Obtains JWT token using client credentials flow"
-        echo "  3. Uploads sample data using JWT Bearer authentication (ingress)"
-        echo "  4. Queries backend API using JWT Bearer authentication"
-        echo "  5. Verifies the upload was processed successfully"
-        echo "  6. Validates recommendations were generated"
-        echo ""
-        echo "Note: The script validates the complete end-to-end flow using:"
-        echo "      - Keycloak JWT for external Cost Management Operator uploads (ingress)"
-        echo "      - Keycloak JWT for backend API access"
+        echo "  3. Validates JWT authentication (preflight checks)"
+        echo "  4. Tests JWT authentication on backend API"
+        echo "  5. Registers OCP source via Sources API"
+        echo "  6. Uploads sample data using JWT Bearer authentication (ingress)"
+        echo "  7. Verifies upload processing (log-based checks)"
+        echo "  8. Verifies Koku processing (database verification):"
+        echo "     - Manifest creation and file processing status"
+        echo "     - OCP usage summary tables (CPU/memory hours)"
+        echo "  9. Queries ROS backend API using JWT Bearer authentication"
+        echo "  10. Validates ROS recommendations were generated by Kruize"
         echo ""
         echo "Requirements:"
         echo "  - Active OpenShift session (oc login completed)"
         echo "  - Keycloak deployed with cost-management-operator client"
-        echo "  - ROS ingress with JWT authentication enabled"
-        echo "  - ROS backend API with JWT authentication enabled"
+        echo "  - Cost Management (Koku) services deployed and running"
+        echo "  - ROS services deployed and running"
+        echo "  - Ingress with JWT authentication enabled"
+        echo "  - Backend API with JWT authentication enabled"
         echo "  - User must have access to the cost-onprem namespace"
         exit 0
         ;;

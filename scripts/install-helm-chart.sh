@@ -433,6 +433,71 @@ create_storage_credentials_secret() {
     fi
 }
 
+# Function to create S3 buckets (required for data storage)
+# This function MUST succeed for the installation to continue.
+# - If buckets already exist: prints notification and continues
+# - If buckets don't exist and creation fails: exits with error
+create_s3_buckets() {
+    echo_info "Creating S3 buckets..."
+
+    local secret_name="${HELM_RELEASE_NAME}-storage-credentials"
+
+    # Get S3 credentials from the storage credentials secret
+    local access_key=$(kubectl get secret "$secret_name" -n "$NAMESPACE" -o jsonpath='{.data.access-key}' 2>/dev/null | base64 -d)
+    local secret_key=$(kubectl get secret "$secret_name" -n "$NAMESPACE" -o jsonpath='{.data.secret-key}' 2>/dev/null | base64 -d)
+
+    if [ -z "$access_key" ] || [ -z "$secret_key" ]; then
+        echo_error "S3 credentials not found in secret $secret_name"
+        echo_error "Cannot proceed without S3 storage. Aborting installation."
+        exit 1
+    fi
+
+    # Determine S3 endpoint based on platform
+    local s3_url mc_insecure
+    if [ "$PLATFORM" = "openshift" ]; then
+        s3_url="https://s3.openshift-storage.svc:443"
+        mc_insecure="--insecure"
+    else
+        s3_url="http://${HELM_RELEASE_NAME}-minio:9000"
+        mc_insecure=""
+    fi
+
+    echo_info "Creating buckets at ${s3_url}..."
+
+    # Use kubectl run --rm for one-shot bucket creation (auto-cleanup)
+    # Using alpine image since minio/mc doesn't have a shell
+    # Real failures (connectivity, permissions) will cause non-zero exit
+    local output
+    if output=$(kubectl run bucket-setup --rm -i --restart=Never \
+        --image=alpine:latest \
+        -n "$NAMESPACE" \
+        -- sh -c "
+            set -e
+            wget -q https://dl.min.io/client/mc/release/linux-amd64/mc -O /usr/local/bin/mc && chmod +x /usr/local/bin/mc
+            mc alias set s3 ${s3_url} '${access_key}' '${secret_key}' ${mc_insecure}
+            for bucket in insights-upload-perma koku-bucket ros-data; do
+                if mc ls s3/\${bucket} ${mc_insecure} >/dev/null 2>&1; then
+                    echo \"ℹ️  Bucket \${bucket} already exists\"
+                else
+                    mc mb s3/\${bucket} ${mc_insecure}
+                    echo \"✅ Created bucket: \${bucket}\"
+                fi
+            done
+            echo ''
+            echo 'Available buckets:'
+            mc ls s3 ${mc_insecure}
+        " 2>&1); then
+        echo "$output"
+        echo_success "S3 buckets ready"
+        return 0
+    else
+        echo "$output"
+        echo_error "Failed to create S3 buckets. Cannot proceed without storage."
+        echo_error "Check S3 connectivity and credentials."
+        exit 1
+    fi
+}
+
 # Function to download latest chart from GitHub
 download_latest_chart() {
     echo_info "Downloading latest Helm chart from GitHub..."
@@ -870,7 +935,7 @@ run_health_checks() {
             kubectl port-forward -n "$NAMESPACE" pod/"$ingress_pod" 18080:${ingress_internal_port} --request-timeout=90s >/dev/null 2>&1 &
             ingress_pf_pid=$!
             sleep 3
-            if kill -0 "$ingress_pf_pid" 2>/dev/null && curl -f -s --connect-timeout 60 --max-time 90 http://localhost:18080/ready >/dev/null 2>&1; then
+            if kill -0 "$ingress_pf_pid" 2>/dev/null && curl -f -s --connect-timeout 60 --max-time 90 http://localhost:18080/ >/dev/null 2>&1; then
                 echo_success "✓ Ingress API service is healthy (port-forward, internal port ${ingress_internal_port})"
             else
                 echo_error "✗ Ingress API service is not responding (port-forward)"
@@ -1009,7 +1074,7 @@ cleanup() {
         shift
     done
 
-    echo_info "Cleaning up Cost Management On Premise Helm deployment..."
+    echo_info "Cleaning up Cost Management On Premise deployment..."
     echo_info "Note: This will NOT remove Strimzi/Kafka. To clean them up separately:"
     echo_info "  ./deploy-strimzi.sh cleanup"
     echo ""
@@ -1309,6 +1374,42 @@ create_ui_secrets() {
     fi
 }
 
+# Function to create Django secret for Koku
+# This secret is used by Koku for Django's SECRET_KEY
+create_django_secret() {
+    echo_info "Creating Django secret for Koku..."
+
+    local secret_name="cost-onprem-django-secret"
+
+    # Check if secret already exists
+    if kubectl get secret "$secret_name" -n "$NAMESPACE" >/dev/null 2>&1; then
+        echo_info "Django secret '$secret_name' already exists in namespace '$NAMESPACE'"
+        return 0
+    fi
+
+    # Generate a random 50-character secret key
+    local secret_key=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 50)
+
+    if [ -z "$secret_key" ]; then
+        echo_error "Failed to generate Django secret key"
+        return 1
+    fi
+
+    # Create the secret
+    echo_info "Creating secret '$secret_name' in namespace '$NAMESPACE'..."
+    kubectl create secret generic "$secret_name" \
+        --from-literal=secret-key="$secret_key" \
+        --namespace="$NAMESPACE"
+
+    if [ $? -eq 0 ]; then
+        echo_success "✓ Created Django secret '$secret_name'"
+        return 0
+    else
+        echo_error "Failed to create Django secret"
+        return 1
+    fi
+}
+
 # Function to create Keycloak CA certificate secret for oauth2-proxy TLS trust
 create_keycloak_ca_secret() {
     echo_info "Creating Keycloak CA certificate secret for TLS trust..."
@@ -1493,15 +1594,30 @@ main() {
 
     while [ $# -gt 0 ]; do
         case "$1" in
+            --namespace|-n)
+                # Script argument - set namespace
+                NAMESPACE="$2"
+                shift 2
+                ;;
+            --values|-f)
+                # Script argument - set values file
+                VALUES_FILE="$2"
+                shift 2
+                ;;
             --set|--set-string|--set-file|--set-json)
                 # These are Helm arguments, collect them
                 HELM_EXTRA_ARGS+=("$1" "$2")
                 shift 2
                 ;;
-            --*)
-                # Other Helm arguments
-                HELM_EXTRA_ARGS+=("$1")
-                shift
+            --help|-h)
+                echo "Usage: $0 [OPTIONS]"
+                echo ""
+                echo "Options:"
+                echo "  --namespace, -n NAME    Set the namespace (default: cost-onprem)"
+                echo "  --values, -f FILE       Specify values file"
+                echo "  --set KEY=VALUE         Set Helm values"
+                echo "  --help, -h              Show this help"
+                exit 0
                 ;;
             *)
                 # Unknown argument, skip it
@@ -1555,6 +1671,11 @@ main() {
         exit 1
     fi
 
+    # Create S3 buckets (required for data storage)
+    if ! create_s3_buckets; then
+        echo_warning "Failed to create S3 buckets. Data storage may not work correctly."
+    fi
+
     # Create UI secrets (cookie + OAuth client) - required before helm install
     if [ "$JWT_AUTH_ENABLED" = "true" ] && [ -n "$KEYCLOAK_NAMESPACE" ]; then
         if ! create_ui_secrets; then
@@ -1569,6 +1690,11 @@ main() {
             echo_warning "Failed to create Keycloak CA secret. oauth2-proxy may have TLS issues."
             echo_info "  You may need to manually create the keycloak-ca-cert secret"
         fi
+    fi
+
+    # Create Django secret for Koku (if costManagement is enabled)
+    if ! create_django_secret; then
+        echo_warning "Failed to create Django secret. Koku may not start correctly."
     fi
 
     # Verify Strimzi operator and Kafka cluster are available

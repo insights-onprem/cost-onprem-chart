@@ -38,8 +38,9 @@ jobs:
       - name: Get current chart version
         id: current_version
         run: |
+          # Get cost-onprem version
           CURRENT_VERSION=$(grep '^version:' cost-onprem/Chart.yaml | sed 's/version: *//' | tr -d '"' | tr -d "'")
-          echo "Current chart version: $CURRENT_VERSION"
+          echo "cost-onprem version: $CURRENT_VERSION"
           echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
 
           # Validate current version is valid semver
@@ -152,10 +153,8 @@ jobs:
             echo "  Minor: $(semver bump minor $LATEST_VERSION)"
             echo "  Major: $(semver bump major $LATEST_VERSION)"
             echo ""
-            echo "Update cost-onprem/Chart.yaml with one of the suggested versions:"
-            echo "  version: $(semver bump patch $LATEST_VERSION)  # For bug fixes"
-            echo "  version: $(semver bump minor $LATEST_VERSION)  # For new features"
-            echo "  version: $(semver bump major $LATEST_VERSION)  # For breaking changes"
+            echo "Update cost-onprem/Chart.yaml with the new version:"
+            echo "  version: $(semver bump patch $LATEST_VERSION)"
           fi
 
       - name: Create version check summary
@@ -211,7 +210,7 @@ jobs:
             **Latest release**: \`${{ steps.latest_release.outputs.version }}\`
 
             ### 💡 Suggested fixes:
-            Update the \`version\` field in \`cost-onprem/Chart.yaml\` to one of:
+            Update the \`version\` field in \`cost-onprem/Chart.yaml\`:
             - \`$(semver bump patch ${{ steps.latest_release.outputs.version }})\` for bug fixes
             - \`$(semver bump minor ${{ steps.latest_release.outputs.version }})\` for new features
             - \`$(semver bump major ${{ steps.latest_release.outputs.version }})\` for breaking changes

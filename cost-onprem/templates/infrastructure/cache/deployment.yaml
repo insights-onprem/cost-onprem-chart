@@ -1,7 +1,4 @@
-{{- $isOpenShift := eq (include "cost-onprem.platform.isOpenShift" .) "true" }}
 {{- $cacheName := include "cost-onprem.cache.name" . }}
-{{- $cacheConfig := ternary .Values.valkey .Values.redis $isOpenShift }}
-{{- $cacheCliCommand := include "cost-onprem.cache.cli" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -13,6 +10,8 @@ metadata:
     app.kubernetes.io/name: {{ $cacheName }}
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "cost-onprem.selectorLabels" . | nindent 6 }}
@@ -29,41 +28,50 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      securityContext:
+        {{- include "cost-onprem.securityContext.pod" . | nindent 8 }}
       containers:
         - name: {{ $cacheName }}
-          image: "{{ $cacheConfig.image.repository }}:{{ $cacheConfig.image.tag }}"
-          imagePullPolicy: {{ .Values.global.pullPolicy }}
+          image: "{{ .Values.valkey.image.repository }}:{{ .Values.valkey.image.tag }}"
+          imagePullPolicy: {{ .Values.valkey.image.pullPolicy | default .Values.global.pullPolicy }}
+          securityContext:
+            {{- include "cost-onprem.securityContext.container" . | nindent 12 }}
           ports:
             - name: {{ $cacheName }}
-              containerPort: 6379
+              containerPort: {{ .Values.valkey.port }}
               protocol: TCP
-          {{- if not $isOpenShift }}
-          env:
-            - name: REDIS_MAXMEMORY
-              value: {{ .Values.redis.maxMemory | quote }}
-            - name: REDIS_MAXMEMORY_POLICY
-              value: {{ .Values.redis.maxMemoryPolicy | quote }}
-          {{- else }}
           command:
             - valkey-server
           args:
             - --bind
-            - "{{ $cacheConfig.bindAddress }}"
+            - "{{ .Values.valkey.bindAddress }}"
             - --port
-            - "6379"
+            - "{{ .Values.valkey.port }}"
             - --protected-mode
             - "no"
+            {{- if .Values.valkey.persistence.enabled }}
+            # RDB persistence
+            - --save
+            - "900 1 300 10 60 10000"
+            # AOF persistence for durability
+            - --appendonly
+            - "yes"
+            - --appendfsync
+            - "everysec"
+            - --dir
+            - "/data"
+            {{- else }}
             - --save
             - ""
+            {{- end }}
             - --maxmemory
-            - "{{ $cacheConfig.maxMemory }}"
+            - "{{ .Values.valkey.maxMemory }}"
             - --maxmemory-policy
-            - "{{ $cacheConfig.maxMemoryPolicy }}"
-          {{- end }}
+            - "{{ .Values.valkey.maxMemoryPolicy }}"
           livenessProbe:
             exec:
               command:
-                - {{ $cacheCliCommand }}
+                - valkey-cli
                 - ping
             initialDelaySeconds: {{ .Values.probes.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.periodSeconds }}
@@ -72,11 +80,22 @@ spec:
           readinessProbe:
             exec:
               command:
-                - {{ $cacheCliCommand }}
+                - valkey-cli
                 - ping
             initialDelaySeconds: 5
             periodSeconds: {{ .Values.probes.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.timeoutSeconds }}
             failureThreshold: {{ .Values.probes.failureThreshold }}
           resources:
-            {{- toYaml .Values.resources.application | nindent 12 }}
+            {{- toYaml .Values.valkey.resources | nindent 12 }}
+          {{- if .Values.valkey.persistence.enabled }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          {{- end }}
+      {{- if .Values.valkey.persistence.enabled }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "cost-onprem.fullname" . }}-valkey-data
+      {{- end }}

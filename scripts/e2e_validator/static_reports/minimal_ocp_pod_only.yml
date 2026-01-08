@@ -1,0 +1,29 @@
+---
+# Minimal OCP Static Report - IQE Flat Format
+# Purpose: Validate E2E pipeline with minimal data
+
+generators:
+  - OCPGenerator:
+      start_date: 2025-11-01
+      end_date: 2025-11-02
+      nodes:
+        - node:
+          node_name: test-node-1
+          cpu_cores: 2
+          memory_gig: 8
+          resource_id: test-resource-1
+          namespaces:
+            test-namespace:
+              pods:
+                - pod:
+                  pod_name: test-pod-1
+                  cpu_request: 0.5
+                  mem_request_gig: 1
+                  cpu_limit: 1
+                  mem_limit_gig: 2
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 0.25
+                  mem_usage_gig:
+                    full_period: 0.5
+                  labels: environment:test|app:smoke-test

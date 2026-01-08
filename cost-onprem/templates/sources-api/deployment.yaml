@@ -28,7 +28,8 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       initContainers:
-        {{- include "cost-onprem.initContainer.waitForDb" (list . "sources") | nindent 8 }}
+        # Sources API uses infra chart's PostgreSQL (shares koku database)
+        {{- include "cost-onprem.initContainer.waitForInfraDb" . | nindent 8 }}
         {{- if .Values.kafka.bootstrapServers }}
         {{- include "cost-onprem.initContainer.waitForKafka" . | nindent 8 }}
         {{- end }}
@@ -42,6 +43,7 @@ spec:
               containerPort: {{ .Values.sourcesApi.port }}
               protocol: TCP
           env:
+            # Sources API uses its own dedicated database on the unified PostgreSQL server
             - name: DATABASE_USER
               valueFrom:
                 secretKeyRef:
@@ -53,9 +55,9 @@ spec:
                   name: {{ include "cost-onprem.database.secretName" . }}
                   key: sources-password
             - name: DATABASE_HOST
-              value: {{ include "cost-onprem.sources.databaseHost" . }}
+              value: {{ include "cost-onprem.koku.database.host" . }}
             - name: DATABASE_PORT
-              value: {{ .Values.database.server.port | quote }}
+              value: {{ include "cost-onprem.koku.database.port" . | quote }}
             - name: DATABASE_NAME
               value: {{ .Values.database.sources.name | quote }}
             - name: LOG_LEVEL
