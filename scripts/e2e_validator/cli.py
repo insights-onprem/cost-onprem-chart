@@ -134,32 +134,22 @@ def fetch_org_id_from_keycloak(keycloak_namespace: str = "keycloak", username: s
 
 
 def discover_sources_api_info(namespace: str) -> tuple:
-    """Auto-discover Sources API service and route info
+    """Auto-discover Sources API service info.
+
+    With the centralized gateway architecture, Sources API is accessed
+    internally via the Kubernetes service, not via an external route.
 
     Args:
         namespace: Kubernetes namespace
 
     Returns:
         Tuple of (route_url, service_ip, route_hostname) or (None, None, None)
+        Note: route_url and route_hostname may be None if no external route exists
     """
     try:
         from kubernetes import client
 
-        # Get route info
-        custom_api = client.CustomObjectsApi()
-        route = custom_api.get_namespaced_custom_object(
-            group="route.openshift.io",
-            version="v1",
-            namespace=namespace,
-            plural="routes",
-            name="sources-api"
-        )
-        route_host = route['spec']['host']
-        tls = route['spec'].get('tls')
-        scheme = 'https' if tls else 'http'
-        route_url = f"{scheme}://{route_host}"
-
-        # Get service ClusterIP (for --resolve fallback)
+        # Get service ClusterIP - this is what we actually use for internal access
         v1 = client.CoreV1Api()
         service = v1.read_namespaced_service(
             name="cost-onprem-sources-api",
@@ -168,12 +158,33 @@ def discover_sources_api_info(namespace: str) -> tuple:
         service_ip = service.spec.cluster_ip
 
         print(f"  ✓ Auto-discovered Sources API:")
-        print(f"    Route: {route_url}")
-        print(f"    Service IP: {service_ip} (for --resolve if needed)")
+        print(f"    Service IP: {service_ip}")
+        print(f"    Internal URL: http://cost-onprem-sources-api:8000")
+
+        # Route is optional - with centralized gateway, external access goes through gateway
+        route_url = None
+        route_host = None
+        try:
+            custom_api = client.CustomObjectsApi()
+            route = custom_api.get_namespaced_custom_object(
+                group="route.openshift.io",
+                version="v1",
+                namespace=namespace,
+                plural="routes",
+                name="sources-api"
+            )
+            route_host = route['spec']['host']
+            tls = route['spec'].get('tls')
+            scheme = 'https' if tls else 'http'
+            route_url = f"{scheme}://{route_host}"
+            print(f"    External Route: {route_url}")
+        except Exception:
+            # No external route - this is expected with centralized gateway
+            print(f"    External Route: N/A (uses centralized gateway)")
 
         return (route_url, service_ip, route_host)
     except Exception as e:
-        print(f"  ℹ️  Sources API not found: {e}")
+        print(f"  ℹ️  Sources API service not found: {e}")
         return (None, None, None)
 
 
