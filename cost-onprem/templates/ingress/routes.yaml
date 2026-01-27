@@ -1,91 +1,32 @@
-{{- /* Define a common host for all API routes that go through the ingress service */}}
+{{- /* Define a common host for all API routes that go through the gateway */}}
 {{- $clusterDomain := include "cost-onprem.platform.clusterDomain" . }}
-{{- $defaultApiHost := printf "%s-ingress-%s.%s" (include "cost-onprem.fullname" .) .Release.Namespace $clusterDomain }}
+{{- $defaultApiHost := printf "%s-gateway-%s.%s" (include "cost-onprem.fullname" .) .Release.Namespace $clusterDomain }}
 {{- $apiHost := (index .Values.serviceRoute.hosts 0).host | default $defaultApiHost }}
 {{- /*
-ROUTES CONFIGURATION
+ROUTES CONFIGURATION (Centralized Gateway Architecture)
 
-This file contains routes required for external access:
+This file contains 2 routes for external access:
 
-1. Main route (/) - ROS API status and recommendations endpoints
-2. Ingress route (/api/ingress) - File upload and version check
-3. Cost Management API route (/api/cost-management) - Koku API (JWT validated via Envoy)
-4. Sources API route (/api/sources) - Provider management (JWT validated via Envoy)
-5. UI route (/) - User interface
+1. API route (/api/) - All API traffic through centralized Envoy Gateway
+   - Handles JWT authentication via Keycloak
+   - Routes to: koku-api-reads, koku-api-writes, sources-api, ingress, ros-api
+   - Injects X-Rh-Identity header for backend services
 
-All API routes go through the Envoy ingress proxy for JWT authentication.
-The Envoy proxy validates JWT tokens and injects X-Rh-Identity headers.
+2. UI route (/) - User interface with OAuth proxy
+
+The centralized Envoy Gateway handles:
+- JWT validation for all API requests
+- Path-based routing to appropriate backend services
+- Method-based routing (GET/HEAD vs POST/PUT/DELETE) for Koku read/write split
+- X-Rh-Identity header injection for backend authentication
 
 INTERNAL-ONLY SERVICES (no routes, accessed via network policies):
 - Kruize - Accessed only by internal services (processor, poller, housekeeper)
-
-REMOVED ROUTES (previously defined, not needed):
-- Kruize route (/api/kruize) - Internal only, blocked by network policy
-- ROS API route (/api/ros) - Alternative API path
-- MinIO Console route (/minio) - Not needed for ODF
+- ROS /status endpoint - Use port-forward if external access needed
 */ -}}
 ---
-# Main route for ROS API (serves as main entry point in OCP)
-apiVersion: route.openshift.io/v1
-kind: Route
-metadata:
-  name: {{ include "cost-onprem.fullname" . }}-main
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "cost-onprem.labels" . | nindent 4 }}
-    app.kubernetes.io/component: main
-  annotations:
-    {{- with .Values.serviceRoute.annotations }}
-    {{- toYaml . | nindent 4 }}
-    {{- end }}
-spec:
-  {{- with (index .Values.serviceRoute.hosts 0) }}
-  {{- if .host }}
-  host: {{ .host | quote }}
-  {{- end }}
-  {{- end }}
-  path: /
-  to:
-    kind: Service
-    name: {{ include "cost-onprem.fullname" . }}-ros-api
-    weight: 100
-  port:
-    targetPort: http
-  {{- if and .Values.serviceRoute.tls .Values.serviceRoute.tls.termination }}
-  tls:
-    termination: {{ .Values.serviceRoute.tls.termination }}
-    {{- if .Values.serviceRoute.tls.insecureEdgeTerminationPolicy }}
-    insecureEdgeTerminationPolicy: {{ .Values.serviceRoute.tls.insecureEdgeTerminationPolicy }}
-    {{- end }}
-  {{- end }}
----
-# Route for file upload service
-apiVersion: route.openshift.io/v1
-kind: Route
-metadata:
-  name: {{ include "cost-onprem.fullname" . }}-ingress
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "cost-onprem.labels" . | nindent 4 }}
-    app.kubernetes.io/component: ingress
-spec:
-  host: {{ $apiHost | quote }}
-  path: /api/ingress
-  to:
-    kind: Service
-    name: {{ include "cost-onprem.fullname" . }}-ingress
-    weight: 100
-  port:
-    targetPort: http
-  {{- if and .Values.serviceRoute.tls .Values.serviceRoute.tls.termination }}
-  tls:
-    termination: {{ .Values.serviceRoute.tls.termination }}
-    {{- if .Values.serviceRoute.tls.insecureEdgeTerminationPolicy }}
-    insecureEdgeTerminationPolicy: {{ .Values.serviceRoute.tls.insecureEdgeTerminationPolicy }}
-    {{- end }}
-  {{- end }}
----
-# Route for Cost Management API (through Envoy for JWT validation)
+# Unified API route - All API traffic through centralized gateway
+# Cost Management Metrics Operator and all API clients use this route with JWT auth
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
@@ -93,39 +34,19 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "cost-onprem.labels" . | nindent 4 }}
-    app.kubernetes.io/component: api
-spec:
-  host: {{ $apiHost | quote }}
-  path: /api/cost-management
-  to:
-    kind: Service
-    name: {{ include "cost-onprem.fullname" . }}-ingress
-    weight: 100
-  port:
-    targetPort: http
-  {{- if and .Values.serviceRoute.tls .Values.serviceRoute.tls.termination }}
-  tls:
-    termination: {{ .Values.serviceRoute.tls.termination }}
-    {{- if .Values.serviceRoute.tls.insecureEdgeTerminationPolicy }}
-    insecureEdgeTerminationPolicy: {{ .Values.serviceRoute.tls.insecureEdgeTerminationPolicy }}
+    app.kubernetes.io/component: gateway
+  annotations:
+    {{- with .Values.serviceRoute.annotations }}
+    {{- toYaml . | nindent 4 }}
     {{- end }}
-  {{- end }}
----
-# Route for Sources API (through Envoy for JWT validation)
-apiVersion: route.openshift.io/v1
-kind: Route
-metadata:
-  name: {{ include "cost-onprem.fullname" . }}-sources
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "cost-onprem.labels" . | nindent 4 }}
-    app.kubernetes.io/component: sources-api
+    # Extended timeout for large API responses
+    haproxy.router.openshift.io/timeout: "60s"
 spec:
   host: {{ $apiHost | quote }}
-  path: /api/sources
+  path: /api
   to:
     kind: Service
-    name: {{ include "cost-onprem.fullname" . }}-ingress
+    name: {{ include "cost-onprem.fullname" . }}-gateway
     weight: 100
   port:
     targetPort: http
@@ -160,21 +81,3 @@ spec:
   tls:
     termination: reencrypt
     insecureEdgeTerminationPolicy: Redirect
----
-# Sources API route - Required for Cost Management Operator and E2E testing
-# Sources API provisions tables in the koku database that Koku uses
-apiVersion: route.openshift.io/v1
-kind: Route
-metadata:
-  name: sources-api
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "cost-onprem.labels" . | nindent 4 }}
-    app.kubernetes.io/component: sources-api
-spec:
-  to:
-    kind: Service
-    name: {{ include "cost-onprem.fullname" . }}-sources-api
-    weight: 100
-  port:
-    targetPort: 8000

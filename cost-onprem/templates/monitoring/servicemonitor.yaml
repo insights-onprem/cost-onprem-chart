@@ -130,5 +130,28 @@ spec:
       path: /metrics
       scheme: http
       scrapeTimeout: 10s
+---
+# API Gateway metrics (Envoy admin endpoint)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "cost-onprem.fullname" . }}-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-onprem.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "cost-onprem.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: gateway
+  endpoints:
+    - port: admin
+      interval: {{ .Values.monitoring.scrapeInterval }}
+      path: /stats/prometheus
+      scheme: http
 {{- end }}
 

@@ -1,5 +1,6 @@
 ---
-# NetworkPolicy to allow external traffic to Ingress service for file uploads via Envoy sidecar
+# NetworkPolicy to allow traffic to Ingress service for file uploads
+# Traffic comes from centralized gateway which handles JWT authentication
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -16,25 +17,13 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    # Allow traffic from OpenShift router/ingress to Envoy sidecar for JWT validation
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              network.openshift.io/policy-group: ingress
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: openshift-ingress
-      ports:
-        - protocol: TCP
-          port: {{ .Values.jwtAuth.envoy.port }}  # Envoy sidecar port (9080 by default)
-    # Allow traffic from UI pods within the same namespace for API proxying
-    # UI nginx connects via service port (8080), which routes to Envoy container port (9080)
+    # Allow traffic from centralized gateway (pre-authenticated)
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/component: ui
               app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: gateway
       ports:
         - protocol: TCP
-          port: {{ .Values.jwtAuth.envoy.port }}  # Envoy container port (9080 by default)
+          port: 8081  # Ingress container port
 

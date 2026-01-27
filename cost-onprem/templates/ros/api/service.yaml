@@ -9,16 +9,12 @@ metadata:
 spec:
   type: {{ .Values.service.type }}
   ports:
-    # Expose Envoy proxy port for external traffic (JWT auth)
-    - port: {{ .Values.ros.api.port }}
-      targetPort: http-proxy  # Route to Envoy sidecar
+    # Expose ros-api container port directly
+    # Traffic is pre-authenticated by centralized gateway
+    - port: 8000
+      targetPort: http
       protocol: TCP
       name: http
-    # Also expose Envoy admin port for debugging (internal use)
-    - port: {{ .Values.jwtAuth.envoy.adminPort }}
-      targetPort: admin
-      protocol: TCP
-      name: envoy-admin
     - port: {{ .Values.ros.api.metricsPort }}
       targetPort: metrics
       protocol: TCP

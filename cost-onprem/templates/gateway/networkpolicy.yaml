@@ -1,0 +1,52 @@
+---
+# NetworkPolicy to allow external traffic to API Gateway for JWT authentication and routing
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cost-onprem.fullname" . }}-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-onprem.labels" . | nindent 4 }}
+    app.kubernetes.io/component: networkpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow traffic from OpenShift router/ingress for external API access
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: ingress
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-ingress
+      ports:
+        - protocol: TCP
+          port: {{ .Values.jwtAuth.envoy.port }}  # Gateway Envoy port (9080)
+    # Allow traffic from UI pods within the same namespace for API proxying
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: ui
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.jwtAuth.envoy.port }}  # Gateway Envoy port (9080)
+    # Allow Prometheus from openshift-monitoring namespace to scrape metrics
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: openshift-monitoring
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-monitoring
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: monitoring
+      ports:
+        - protocol: TCP
+          port: {{ .Values.jwtAuth.envoy.adminPort }}  # Admin port for Prometheus metrics (9901)

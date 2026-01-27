@@ -10,96 +10,126 @@ This document provides detailed information about the Helm templates used in the
 
 ### Overview
 
-**Two backend services** are deployed with Envoy proxy sidecars on OpenShift:
+**Centralized Gateway** handles JWT authentication for all external traffic:
 
 | Template File | Service | Purpose |
 |---------------|---------|---------|
-| `ingress/deployment.yaml` | Ingress | JWT validation from Cost Management Operator |
-| `ros/api/deployment.yaml` | ROS API | X-Rh-Identity authentication for API requests |
+| `gateway/deployment.yaml` | Gateway | Centralized JWT validation and routing for all APIs |
+| `gateway/envoy-config.yaml` | Gateway Config | Envoy configuration with JWT filter and Lua scripts |
 
-**Services without Envoy sidecars** (protected by network policies):
+**Backend Services** (protected by gateway and network policies):
 
 | Template File | Service | Authentication Method |
 |---------------|---------|----------------------|
-| `sources-api/deployment.yaml` | Sources API | Mixed: X-Rh-Identity middleware for protected endpoints, some endpoints unauthenticated for internal use |
+| `ingress/deployment.yaml` | Ingress | Receives pre-authenticated requests from Gateway |
+| `ros/api/deployment.yaml` | ROS API | Receives pre-authenticated requests from Gateway |
+| `sources-api/deployment.yaml` | Sources API | Mixed: X-Rh-Identity middleware for protected endpoints |
 | `kruize/deployment.yaml` | Kruize | Internal service accessed via ROS API |
 
-**Common Sidecar Configuration:**
-- Envoy listens on port **8080** (public-facing, authenticated)
-- Application container listens on internal port (**8001** for ROS API, **8081** for Ingress)
-- Network policies provide defense-in-depth for services without sidecars
+**Gateway Architecture:**
+- Gateway Envoy listens on port **8080** (public-facing, authenticated)
+- Gateway routes to backend services on their internal ports
+- Network policies restrict backend access to gateway only
 - Metrics endpoints remain accessible to Prometheus
 
-### `cost-onprem/templates/ingress/deployment.yaml`
+### `cost-onprem/templates/gateway/deployment.yaml`
 
-**Purpose**: Enhanced ingress deployment with Envoy sidecar for native JWT authentication from Cost Management Operator.
+**Purpose**: Centralized gateway deployment with Envoy for JWT authentication and API routing.
 
 **Key Features**:
-- Envoy proxy sidecar with native JWT filter
-- Inline JWT validation (no external authorization service)
-- Lua filter for JWT claims extraction
-- Port configuration for sidecar routing
-- Health probe adjustments
+- Single Envoy instance handling all external API traffic
+- Native JWT filter for token validation
+- Lua filter for JWT claims extraction and header injection
+- Routes requests to appropriate backend services
+- Eliminates need for per-service Envoy sidecars
 
 **Container Configuration**:
-
-When JWT authentication is enabled (automatic on OpenShift):
-- **Ingress container**: Listens on port `8081` (internal)
-- **Envoy sidecar**: Listens on port `8080` (public-facing)
-- **Flow**: Client → Envoy (8080) → JWT validation → Ingress (8081)
+- **Gateway container**: Envoy listening on port `8080` (public-facing)
+- **Flow**: Client → Gateway (8080) → JWT validation → Backend services
 
 **Key Environment Variables**:
-| Variable | Value (JWT enabled) | Description |
-|----------|---------------------|-------------|
-| `AUTH_ENABLED` | `"true"` | Ingress trusts X-ROS headers from Envoy |
-| `SERVER_PORT` | `8081` | Ingress listens on internal port |
-| `UPLOAD_REQUIRE_AUTH` | `"true"` | Upload endpoint requires authentication |
+| Variable | Description |
+|----------|-------------|
+| `ENVOY_UID` | User ID for Envoy process |
 
 **Volume Mounts**:
 - `envoy-config`: Mounted at `/etc/envoy/envoy.yaml` (Envoy configuration)
+- `ca-bundle`: Mounted at `/etc/ca-certificates/` (CA certificates for Keycloak TLS)
 
 **Example Template Snippet**:
 ```yaml
-- name: envoy-proxy
-  image: "{{ .Values.jwtAuth.envoy.image.repository }}:{{ .Values.jwtAuth.envoy.image.tag }}"
+- name: gateway
+  image: "{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag }}"
   ports:
     - name: http
-      containerPort: {{ .Values.jwtAuth.envoy.port }}
+      containerPort: {{ .Values.gateway.port }}
     - name: admin
-      containerPort: {{ .Values.jwtAuth.envoy.adminPort }}
+      containerPort: {{ .Values.gateway.adminPort }}
   volumeMounts:
     - name: envoy-config
       mountPath: /etc/envoy
       readOnly: true
+    - name: ca-bundle
+      mountPath: /etc/ca-certificates
+      readOnly: true
 ```
+
+### `cost-onprem/templates/ingress/deployment.yaml`
+
+**Purpose**: Ingress deployment for file upload handling (receives pre-authenticated requests from Gateway).
+
+**Key Features**:
+- Processes file uploads from Cost Management Operator
+- Trusts X-ROS headers injected by Gateway
+- No longer requires Envoy sidecar
+
+**Container Configuration**:
+- **Ingress container**: Listens on port `8080`
+- **Flow**: Gateway → Ingress (8080) with authentication headers
+
+**Key Environment Variables**:
+| Variable | Value | Description |
+|----------|-------|-------------|
+| `AUTH_ENABLED` | `"true"` | Ingress trusts X-ROS headers from Gateway |
+| `SERVER_PORT` | `8080` | Ingress listens on standard port |
+| `UPLOAD_REQUIRE_AUTH` | `"true"` | Upload endpoint requires authentication |
 
 ---
 
-### `cost-onprem/templates/ros/api/envoy-config.yaml`
+### `cost-onprem/templates/gateway/envoy-config.yaml`
 
-**Purpose**: Envoy proxy configuration with native JWT authentication filter.
+**Purpose**: Centralized Envoy gateway configuration with JWT authentication and API routing.
 
 **Architecture**:
 ```mermaid
 graph TB
-    subgraph Envoy["Envoy Listener (Port 8080)"]
+    subgraph Gateway["Gateway Envoy (Port 8080)"]
         direction TB
         HCM["HTTP Connection Manager"]
         JWT["jwt_authn filter<br/>└─ Validates JWT signature<br/>└─ Extracts claims"]
-        Lua["Lua filter<br/>└─ Injects X-ROS-* headers"]
-        Router["Router filter<br/>└─ Forwards to backend"]
+        Lua["Lua filter<br/>└─ Injects X-ROS-* headers<br/>└─ Injects X-Rh-Identity"]
+        Router["Router filter<br/>└─ Routes to backends"]
 
         HCM --> JWT
         JWT --> Lua
         Lua --> Router
     end
 
-    Backend["Ingress Backend<br/>(Port 8081)<br/><br/>- Trusts X-RH-Identity headers<br/>- Processes authenticated req"]
+    Ingress["Ingress Backend<br/>/api/ingress/*"]
+    RosAPI["ROS API Backend<br/>/api/ros/*"]
+    Koku["Koku API Backend<br/>/api/cost-management/*"]
+    Sources["Sources API Backend<br/>/api/sources/*"]
 
-    Router --> Backend
+    Router --> Ingress
+    Router --> RosAPI
+    Router --> Koku
+    Router --> Sources
 
-    style Envoy fill:#fff59d,stroke:#333,stroke-width:2px,color:#000
-    style Backend fill:#a5d6a7,stroke:#333,stroke-width:2px,color:#000
+    style Gateway fill:#fff59d,stroke:#333,stroke-width:2px,color:#000
+    style Ingress fill:#a5d6a7,stroke:#333,stroke-width:2px,color:#000
+    style RosAPI fill:#a5d6a7,stroke:#333,stroke-width:2px,color:#000
+    style Koku fill:#a5d6a7,stroke:#333,stroke-width:2px,color:#000
+    style Sources fill:#a5d6a7,stroke:#333,stroke-width:2px,color:#000
     style HCM fill:#90caf9,stroke:#333,stroke-width:2px,color:#000
     style JWT fill:#f48fb1,stroke:#333,stroke-width:2px,color:#000
     style Lua fill:#ce93d8,stroke:#333,stroke-width:2px,color:#000
@@ -161,14 +191,20 @@ end
 
 #### 3. Cluster Configuration
 
-**Backend Cluster** (`ingress-backend`):
-- **Type**: STATIC
-- **Address**: `127.0.0.1:8081` (same pod, different port)
-- **Timeout**: 5 seconds
+**Backend Clusters** (Gateway routes to multiple backends):
+- **ingress-backend**: Ingress service for file uploads (`/api/ingress/*`)
+- **ros-api-backend**: ROS API service (`/api/ros/*`)
+- **koku-api-backend**: Koku API service (`/api/cost-management/*`)
+- **sources-api-backend**: Sources API service (`/api/sources/*`)
+
+All backends use:
+- **Type**: STRICT_DNS
+- **Load Balancing**: ROUND_ROBIN
+- **Timeout**: 60 seconds
 
 **JWKS Cluster** (`keycloak_jwks`):
 - **Type**: STRICT_DNS
-- **Address**: Keycloak hostname (extracted from `jwt_auth.keycloak.url`)
+- **Address**: Keycloak hostname (extracted from `gateway.keycloak.url`)
 - **Port**: 443 (HTTPS)
 - **TLS**: UpstreamTlsContext with SNI
 - **Timeout**: 5 seconds
@@ -179,39 +215,29 @@ transport_socket:
   name: envoy.transport_sockets.tls
   typed_config:
     "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
-    sni: {{ .Values.jwtAuth.keycloak.url | replace "https://" "" }}
+    sni: {{ .Values.gateway.keycloak.url | replace "https://" "" }}
 ```
 
 ---
 
-### `cost-onprem/templates/service-ingress.yaml`
+### `cost-onprem/templates/gateway/service.yaml`
 
-**Purpose**: Kubernetes Service for ingress with Envoy proxy endpoints.
+**Purpose**: Kubernetes Service exposing the centralized gateway.
 
 **Port Configuration**:
-
-When JWT is enabled:
 ```yaml
 ports:
   - name: http
-    port: 80
-    targetPort: {{ .Values.jwtAuth.envoy.port }}  # 8080 (Envoy)
-  - name: http-ingress
-    port: 8081
-    targetPort: 8081  # Direct ingress access (internal)
-```
-
-When JWT is disabled:
-```yaml
-ports:
-  - name: http
-    port: 80
-    targetPort: 8080  # Direct ingress access
+    port: 8080
+    targetPort: 8080  # Gateway Envoy
+  - name: admin
+    port: 9901
+    targetPort: 9901  # Envoy admin interface
 ```
 
 **Service Discovery**:
-- **Selector**: `app.kubernetes.io/name: ingress`
-- **Type**: ClusterIP (internal) or LoadBalancer (if configured)
+- **Selector**: `app.kubernetes.io/component: gateway`
+- **Type**: ClusterIP (internal, exposed via OpenShift Route)
 
 ---
 
@@ -221,13 +247,13 @@ ports:
 
 **Key Functions**:
 
-#### JWT Authentication
-JWT authentication is always enabled. Envoy sidecars handle JWT validation with Keycloak OIDC.
+#### Gateway Configuration
+The centralized gateway handles JWT validation with Keycloak OIDC for all external API traffic.
 
 **Configuration**:
 ```yaml
-jwtAuth:
-  # JWT authentication is always enabled
+gateway:
+  # Gateway configuration
   keycloak:
     url: ""  # Auto-detected from Keycloak CR, or set manually
     realm: kubernetes

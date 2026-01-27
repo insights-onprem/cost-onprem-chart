@@ -130,8 +130,8 @@ spec:
 The external Keycloak hostname must be resolvable from within pods:
 
 ```bash
-# Test from a pod
-kubectl exec -n cost-onprem deploy/cost-onprem-ingress -c envoy-proxy -- \
+# Test from gateway pod
+kubectl exec -n cost-onprem deploy/cost-onprem-gateway -- \
   nslookup keycloak.external-company.com
 
 # Should return a valid IP address
@@ -223,19 +223,19 @@ Failed to fetch JWKS from https://keycloak.external-company.com/...
 ```
 
 **Cause:**
-- Envoy pods cannot reach external Keycloak (egress blocked)
+- Gateway cannot reach external Keycloak (egress blocked)
 - DNS resolution fails
 - Certificate validation fails (CA bundle incomplete)
 
 **Debug:**
 
 ```bash
-# Test connectivity from Envoy pod
-kubectl exec -n cost-onprem deploy/cost-onprem-ingress -c envoy-proxy -- \
+# Test connectivity from gateway pod
+kubectl exec -n cost-onprem deploy/cost-onprem-gateway -- \
   curl -v https://keycloak.external-company.com/auth/realms/production/protocol/openid-connect/certs
 
 # Test CA validation
-kubectl exec -n cost-onprem deploy/cost-onprem-ingress -c envoy-proxy -- \
+kubectl exec -n cost-onprem deploy/cost-onprem-gateway -- \
   openssl s_client -connect keycloak.external-company.com:443 \
     -CAfile /etc/ca-certificates/ca-bundle.crt
 ```
@@ -311,28 +311,28 @@ cat external-keycloak-ca.crt
 ### 1. Test DNS Resolution
 
 ```bash
-kubectl exec -n cost-onprem deploy/cost-onprem-ingress -c envoy-proxy -- \
+kubectl exec -n cost-onprem deploy/cost-onprem-gateway -- \
   nslookup keycloak.external-company.com
 ```
 
 ### 2. Test Network Connectivity
 
 ```bash
-kubectl exec -n cost-onprem deploy/cost-onprem-ingress -c envoy-proxy -- \
+kubectl exec -n cost-onprem deploy/cost-onprem-gateway -- \
   curl -v https://keycloak.external-company.com/auth/realms/production
 ```
 
 ### 3. Test CA Bundle
 
 ```bash
-kubectl exec -n cost-onprem deploy/cost-onprem-ingress -c envoy-proxy -- \
+kubectl exec -n cost-onprem deploy/cost-onprem-gateway -- \
   cat /etc/ca-certificates/ca-bundle.crt | grep -c "BEGIN CERTIFICATE"
 ```
 
 ### 4. Test JWKS Endpoint
 
 ```bash
-kubectl exec -n cost-onprem deploy/cost-onprem-ingress -c envoy-proxy -- \
+kubectl exec -n cost-onprem deploy/cost-onprem-gateway -- \
   curl -v --cacert /etc/ca-certificates/ca-bundle.crt \
   https://keycloak.external-company.com/auth/realms/production/protocol/openid-connect/certs
 ```

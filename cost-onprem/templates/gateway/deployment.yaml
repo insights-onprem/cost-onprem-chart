@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cost-onprem.fullname" . }}-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-onprem.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "cost-onprem.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: gateway
+  template:
+    metadata:
+      labels:
+        {{- include "cost-onprem.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: gateway
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        {{- include "cost-onprem.initContainer.prepareCABundle" . | nindent 8 }}
+      containers:
+        - name: envoy
+          image: "{{ .Values.jwtAuth.envoy.image.repository }}:{{ .Values.jwtAuth.envoy.image.tag }}"
+          imagePullPolicy: {{ .Values.jwtAuth.envoy.image.pullPolicy | default .Values.global.pullPolicy }}
+          securityContext:
+            readOnlyRootFilesystem: true
+            {{- include "cost-onprem.securityContext.nonRoot" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.jwtAuth.envoy.port }}
+              protocol: TCP
+            - name: admin
+              containerPort: {{ .Values.jwtAuth.envoy.adminPort }}
+              protocol: TCP
+          command:
+            - /usr/local/bin/envoy
+          args:
+            - -c
+            - /etc/envoy/envoy.yaml
+            - --log-level
+            - {{ .Values.jwtAuth.envoy.logLevel | default "info" }}
+          volumeMounts:
+            - name: envoy-config
+              mountPath: /etc/envoy
+              readOnly: true
+            - name: ca-bundle
+              mountPath: /etc/ca-certificates
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: {{ .Values.jwtAuth.envoy.adminPort }}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: {{ .Values.jwtAuth.envoy.adminPort }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.jwtAuth.envoy.resources | nindent 12 }}
+      volumes:
+        # Envoy configuration volume
+        - name: envoy-config
+          configMap:
+            name: {{ include "cost-onprem.fullname" . }}-gateway-envoy-config
+            items:
+              - key: envoy.yaml
+                path: envoy.yaml
+        # CA bundle preparation volumes
+        - name: ca-scripts
+          configMap:
+            name: {{ include "cost-onprem.fullname" . }}-ca-scripts
+            items:
+              - key: combine-ca.sh
+                path: combine-ca.sh
+                mode: 0755
+        - name: ca-source
+          configMap:
+            name: {{ include "cost-onprem.fullname" . }}-ca-scripts
+        - name: ca-bundle
+          emptyDir: {}
+        # Temporary directory for Envoy (required with read-only root filesystem)
+        - name: tmp
+          emptyDir: {}

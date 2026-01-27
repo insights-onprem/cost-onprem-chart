@@ -1400,7 +1400,7 @@ display_summary() {
 
     echo_info "Next Steps:"
     echo_info "  1. Access Keycloak admin console at: https://$hostname"
-    echo_info "  2. Test JWT token generation with: ./test-ocp-dataflow-jwt.sh"
+    echo_info "  2. Test JWT authentication with: NAMESPACE=cost-onprem ./run-pytest.sh --auth"
     echo_info "  3. Configure your applications to use the JWT authentication"
     echo ""
 
