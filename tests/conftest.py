@@ -218,19 +218,6 @@ def ingress_url(gateway_url: str) -> str:
 
 
 @pytest.fixture(scope="session")
-def backend_api_url(cluster_config: ClusterConfig) -> str:
-    """Get the backend API URL."""
-    # Try different route name patterns
-    for route_suffix in ["main", "ros-api"]:
-        route_name = f"{cluster_config.helm_release_name}-{route_suffix}"
-        url = get_route_url(cluster_config.namespace, route_name)
-        if url:
-            return url
-
-    pytest.skip("Backend API route not found")
-
-
-@pytest.fixture(scope="session")
 def database_config(cluster_config: ClusterConfig) -> DatabaseConfig:
     """Get database configuration for Koku."""
     # Find database pod
