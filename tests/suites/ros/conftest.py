@@ -4,7 +4,7 @@ ROS (Resource Optimization Service) suite fixtures.
 
 import pytest
 
-from utils import get_pod_by_label, get_secret_value, get_route_url
+from utils import get_pod_by_label, get_secret_value, get_route_url, run_oc_command
 
 
 @pytest.fixture(scope="module")
@@ -31,12 +31,18 @@ def kruize_credentials(cluster_config) -> dict:
 
 @pytest.fixture(scope="module")
 def ros_api_url(cluster_config) -> str:
-    """Get ROS API URL."""
-    # Try different route name patterns
-    for route_suffix in ["main", "ros-api"]:
-        route_name = f"{cluster_config.helm_release_name}-{route_suffix}"
-        url = get_route_url(cluster_config.namespace, route_name)
-        if url:
-            return url
-    
-    pytest.skip("ROS API route not found")
+    """Get ROS API URL via the centralized gateway."""
+    # With centralized gateway, all API traffic goes through cost-onprem-api route
+    route_name = f"{cluster_config.helm_release_name}-api"
+    url = get_route_url(cluster_config.namespace, route_name)
+    if not url:
+        pytest.skip("API gateway route not found")
+
+    # Get the route path (e.g., /api)
+    result = run_oc_command([
+        "get", "route", route_name, "-n", cluster_config.namespace,
+        "-o", "jsonpath={.spec.path}"
+    ], check=False)
+    route_path = result.stdout.strip().rstrip("/")
+
+    return f"{url}{route_path}" if route_path else url
