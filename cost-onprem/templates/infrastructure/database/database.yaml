@@ -81,16 +81,6 @@ spec:
                 secretKeyRef:
                   name: {{ include "cost-onprem.database.defaultSecretName" . }}
                   key: koku-password
-            - name: SOURCES_USER
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "cost-onprem.database.defaultSecretName" . }}
-                  key: sources-user
-            - name: SOURCES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "cost-onprem.database.defaultSecretName" . }}
-                  key: sources-password
           volumeMounts:
             - name: postgres-storage
               mountPath: /var/lib/postgresql/data

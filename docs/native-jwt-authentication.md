@@ -37,8 +37,7 @@ The Ingress Envoy proxy handles JWT authentication and routes requests to multip
 
 | Path | Backend | Description |
 |------|---------|-------------|
-| `/api/cost-management/*` | Koku API (port 8000) | Cost management reports and analytics |
-| `/api/sources/*` | Sources API (port 8000) | Provider and source management |
+| `/api/cost-management/*` | Koku API (port 8000) | Cost management reports, analytics, and Sources API |
 | `/api/ingress/*` | Ingress (port 8081) | File uploads |
 | `/` (default) | Ingress (port 8081) | Default route |
 
@@ -46,8 +45,7 @@ The Ingress Envoy proxy handles JWT authentication and routes requests to multip
 
 | Service | Port | Authentication Method |
 |---------|------|----------------------|
-| **Koku API** | 8000 | X-Rh-Identity header from Envoy |
-| **Sources API** | 8000 | X-Rh-Identity header from Envoy or internal access |
+| **Koku API** | 8000 | X-Rh-Identity header from Envoy (includes Sources API endpoints) |
 | **Kruize** | 8080 | Internal service (accessed via ROS API) |
 | **Cost Management On-Premise Processor** | N/A | Kafka consumer (no HTTP API) |
 | **Cost Management On-Premise Recommendation Poller** | N/A | Internal service (no external API) |
@@ -56,9 +54,8 @@ The Ingress Envoy proxy handles JWT authentication and routes requests to multip
 **How It Works:**
 1. **Ingress Service (Envoy sidecar)**: Validates JWT from Keycloak, extracts claims (`org_id`, `account_number`, `access`), builds `X-Rh-Identity` header, and routes to appropriate backend based on path
 2. **ROS API (Envoy sidecar)**: Validates JWT and transforms to headers for ROS-specific endpoints
-3. **Koku API (no sidecar)**: Receives `X-Rh-Identity` header from Envoy, uses it for tenant identification and RBAC
-4. **Sources API (no sidecar)**: Receives `X-Rh-Identity` header from Envoy for protected endpoints; certain endpoints (e.g., `/application_types`) are unauthenticated for internal service access
-5. **Internal Services**: Communicate with each other using service accounts or inherit authentication context
+3. **Koku API (no sidecar)**: Receives `X-Rh-Identity` header from Envoy, uses it for tenant identification and RBAC. Sources API endpoints are part of Koku API and use the same authentication.
+4. **Internal Services**: Communicate with each other using service accounts or inherit authentication context
 
 ### X-Rh-Identity Header Format
 
@@ -391,13 +388,13 @@ Network policies are automatically deployed on OpenShift to secure service-to-se
   - Ingress from OpenShift router/ingress (for external REST API access via Envoy sidecar on port 9080)
 - **Applies to**: Cost Management On-Premise API
 
-#### 5. Sources API Network Policy
+#### 5. Koku API Access Network Policy
 
-**File**: `cost-onprem/templates/sources-api/networkpolicy.yaml`
+**File**: `cost-onprem/templates/cost-management/api/networkpolicy.yaml`
 
 - **Allows**:
-  - Ingress from `cost-onprem` namespace (for internal service communication on port 8000)
-- **Applies to**: Sources API (accessed by cost-onprem-housekeeper)
+  - Ingress from `openshift-ingress` namespace (for external REST API access via Envoy sidecar on port 9080)
+- **Applies to**: Koku API (includes Sources API endpoints)
 
 ### Prometheus Metrics Access
 
@@ -418,32 +415,31 @@ Network policies are automatically deployed on OpenShift to secure service-to-se
 - **Cost Management On-Premise Processor**: `http://ros-processor:9000/metrics`
 - **Cost Management On-Premise Recommendation Poller**: `http://ros-recommendation-poller:9000/metrics`
 
-### Sources API Authentication Details
+### Koku Sources API Authentication Details
 
-**Architecture**: Sources API is a Go application using the Echo web framework with middleware-based authentication.
+**Architecture**: Sources API is now integrated in Koku API (Django application) and uses the same authentication mechanism as other Koku endpoints.
 
 **Authentication Model**:
-- **Has X-Rh-Identity validation middleware**: The application includes middleware to parse and validate `X-Rh-Identity` headers for protected endpoints
-- **Per-endpoint protection**: Authentication is applied selectively via middleware configuration in `routes.go`
-- **BYPASS_RBAC configuration**: When `BYPASS_RBAC=true`, RBAC authorization checks are skipped (useful for development)
+- **X-Rh-Identity header**: All Sources API endpoints use Koku's standard authentication middleware
+- **JWT validation**: Requests go through Envoy sidecar which validates JWT and injects `X-Rh-Identity` header
+- **Tenant isolation**: Uses `org_id` from `X-Rh-Identity` header for multi-tenancy
 
 **Endpoint Categories**:
 
 1. **Protected Endpoints** (require `X-Rh-Identity` header):
-   - Source management: `POST/PATCH/DELETE /sources`
-   - Application management: `POST/PATCH/DELETE /applications`
-   - Authentication management: `POST/PATCH/DELETE /authentications`
-   - Uses `permissionMiddleware` and `tenancyMiddleware`
+   - Source management: `POST/PATCH/DELETE /api/cost-management/v1/sources/`
+   - Application management: `POST/PATCH/DELETE /api/cost-management/v1/applications/`
+   - Authentication management: `POST/PATCH/DELETE /api/cost-management/v1/authentications/`
 
-2. **Unauthenticated Endpoints** (no header required):
-   - Application types: `GET /application_types` - Used by cost-onprem-housekeeper for internal lookups
-   - Source types: `GET /source_types`
-   - Metadata: `GET /app_meta_data`
-   - Health check: `GET /health`
+2. **On-Premise Mode**:
+   - When `ONPREM=true`, application type ID is hardcoded to `0` for cost-management applications
+   - ros-ocp-backend housekeeper no longer queries for application type ID
+   - Receives Kafka events directly from Koku via `platform.sources.event-stream` topic
 
 **Internal Service Communication**:
-- **cost-onprem-housekeeper** → Sources API: Calls unauthenticated `/application_types` endpoint to look up cost-management application type ID
-- No `X-Rh-Identity` header needed for this specific endpoint
+- **ros-ocp-backend housekeeper**: Uses `ONPREM` environment variable and hardcoded application type ID
+- **Kafka events**: Koku publishes source deletion events (`source.delete`, `application.delete`) to `platform.sources.event-stream` topic, which are consumed by ros-ocp-backend housekeeper for cleanup
+- **Environment Variable**: `SOURCES_EVENT_TOPIC: "platform.sources.event-stream"` configures the topic name in ros-ocp-backend
 - Network policies restrict access to internal `cost-onprem` namespace
 
 ### Troubleshooting Network Policies

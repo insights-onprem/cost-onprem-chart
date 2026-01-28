@@ -21,7 +21,7 @@ This document provides detailed information about the Helm templates used in the
 
 | Template File | Service | Authentication Method |
 |---------------|---------|----------------------|
-| `sources-api/deployment.yaml` | Sources API | Mixed: X-Rh-Identity middleware for protected endpoints, some endpoints unauthenticated for internal use |
+| `cost-management/api/deployment.yaml` | Koku API | X-Rh-Identity header from Envoy (includes Sources API endpoints) |
 | `kruize/deployment.yaml` | Kruize | Internal service accessed via ROS API |
 
 **Common Sidecar Configuration:**

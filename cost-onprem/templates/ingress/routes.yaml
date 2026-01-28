@@ -111,32 +111,6 @@ spec:
     {{- end }}
   {{- end }}
 ---
-# Route for Sources API (through Envoy for JWT validation)
-apiVersion: route.openshift.io/v1
-kind: Route
-metadata:
-  name: {{ include "cost-onprem.fullname" . }}-sources
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "cost-onprem.labels" . | nindent 4 }}
-    app.kubernetes.io/component: sources-api
-spec:
-  host: {{ $apiHost | quote }}
-  path: /api/sources
-  to:
-    kind: Service
-    name: {{ include "cost-onprem.fullname" . }}-ingress
-    weight: 100
-  port:
-    targetPort: http
-  {{- if and .Values.serviceRoute.tls .Values.serviceRoute.tls.termination }}
-  tls:
-    termination: {{ .Values.serviceRoute.tls.termination }}
-    {{- if .Values.serviceRoute.tls.insecureEdgeTerminationPolicy }}
-    insecureEdgeTerminationPolicy: {{ .Values.serviceRoute.tls.insecureEdgeTerminationPolicy }}
-    {{- end }}
-  {{- end }}
----
 # UI route
 apiVersion: route.openshift.io/v1
 kind: Route
@@ -160,21 +134,3 @@ spec:
   tls:
     termination: reencrypt
     insecureEdgeTerminationPolicy: Redirect
----
-# Sources API route - Required for Cost Management Operator and E2E testing
-# Sources API provisions tables in the koku database that Koku uses
-apiVersion: route.openshift.io/v1
-kind: Route
-metadata:
-  name: sources-api
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "cost-onprem.labels" . | nindent 4 }}
-    app.kubernetes.io/component: sources-api
-spec:
-  to:
-    kind: Service
-    name: {{ include "cost-onprem.fullname" . }}-sources-api
-    weight: 100
-  port:
-    targetPort: 8000

@@ -189,6 +189,49 @@ def execute_db_query(
 
 
 # =============================================================================
+# Authentication Utilities
+# =============================================================================
+
+
+def create_rh_identity_header(org_id: str, account_number: str = None) -> str:
+    """Create X-Rh-Identity header value for Koku authentication.
+    
+    The X-Rh-Identity header is a base64-encoded JSON structure required by
+    Koku middleware for tenant identification and authorization.
+    
+    Args:
+        org_id: Organization ID for the tenant
+        account_number: Account number (defaults to org_id if not provided)
+    
+    Returns:
+        Base64-encoded identity JSON string
+    """
+    if account_number is None:
+        account_number = org_id
+    
+    identity_json = {
+        "org_id": org_id,
+        "identity": {
+            "org_id": org_id,
+            "account_number": account_number,
+            "type": "User",
+            "user": {
+                "username": "test",
+                "email": "test@example.com",
+                "is_org_admin": True,
+            },
+        },
+        "entitlements": {
+            "cost_management": {
+                "is_entitled": True,
+            },
+        },
+    }
+    
+    return base64.b64encode(json.dumps(identity_json).encode()).decode()
+
+
+# =============================================================================
 # Upload Package Creation
 # =============================================================================
 

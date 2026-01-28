@@ -54,7 +54,7 @@ ros:
   # All ROS services (api, processor, recommendationPoller, housekeeper, partitionCleaner)
   # use the same image
   image:
-    repository: quay.io/insights-onprem/ros-ocp-backend
+    repository: quay.io/ehendler/ros-ocp-backend
     tag: "latest"
     pullPolicy: Always
 
@@ -152,8 +152,8 @@ costManagement:
     enabled: true
 
     image:
-      repository: quay.io/insights-onprem/koku
-      tag: "postgres"
+      repository: quay.io/ehendler/koku
+      tag: "latest"
       pullPolicy: Always
 
     reads:
@@ -713,23 +713,6 @@ kruize:
         cpu: "300m"
 
 # -----------------------------------------------------------------------------
-# Sources API (Top-level Service - Shared by ROS and Cost Management)
-# -----------------------------------------------------------------------------
-sourcesApi:
-  image:
-    repository: quay.io/insights-onprem/sources-api-go
-    tag: "latest"
-    pullPolicy: Always
-
-  port: 8000
-  logLevel: DEBUG
-  bypassRbac: true
-  sourcesEnv: prod
-  # encryptionKey removed - stored in cost-onprem-sources-credentials secret
-  # Created by: scripts/install-helm-chart.sh (24-char random key)
-  platformSourcesEventStreamTopic: platform.sources.event-stream
-
-# -----------------------------------------------------------------------------
 # Ingress Service (Shared entry point for uploads and routing)
 # -----------------------------------------------------------------------------
 # Uses insights-ingress-go which requires INGRESS_* prefixed environment variables
@@ -786,7 +769,7 @@ ingress:
 # Shared Infrastructure - Database (Unified PostgreSQL for all services)
 # -----------------------------------------------------------------------------
 # Unified PostgreSQL server for all on-prem services
-# Single StatefulSet hosts separate databases: ros_db, kruize_db, koku, sources
+# Single StatefulSet hosts separate databases: ros_db, kruize_db, koku
 #
 # ⚠️  SECURITY: Credential Management
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -868,13 +851,6 @@ database:
     name: koku
     # user removed - stored in cost-onprem-db-credentials secret (key: koku-user)
     # password removed - stored in cost-onprem-db-credentials secret (key: koku-password)
-
-  # Sources Database Configuration
-  sources:
-    # Database name on the unified server (dedicated database for Sources API)
-    name: sources
-    # user removed - stored in cost-onprem-db-credentials secret (key: sources-user)
-    # password removed - stored in cost-onprem-db-credentials secret (key: sources-password)
 
 # -----------------------------------------------------------------------------
 # Shared Infrastructure - Kafka

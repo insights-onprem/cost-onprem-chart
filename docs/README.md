@@ -16,7 +16,7 @@ Welcome to the Resource Optimization Service (ROS) for OpenShift Container Platf
 | Document | Purpose | When to Use |
 |----------|---------|-------------|
 | **[Installation Guide](installation.md)** | Comprehensive installation instructions for Cost Management On-Premise | Production deployments requiring detailed configuration |
-| **[Sources API Production Flow](sources-api-production-flow.md)** | Provider creation flow using Sources API and Kafka | Understanding and setting up the production-like data ingestion pipeline |
+| **[Sources API Production Flow](sources-api-production-flow.md)** | Provider creation flow using Koku Sources API and Kafka | Understanding and setting up the production-like data ingestion pipeline with Koku as the source of truth |
 
 ### Authentication & Security
 
@@ -59,7 +59,7 @@ Welcome to the Resource Optimization Service (ROS) for OpenShift Container Platf
 2. Configure authentication using **[Keycloak JWT Authentication Setup](keycloak-jwt-authentication-setup.md)**
 3. Set up TLS using **[TLS Certificate Options](tls-certificate-options.md)**
 4. Review **[Configuration Reference](configuration.md)** for production settings
-5. Understand provider creation via **[Sources API Production Flow](sources-api-production-flow.md)**
+5. Understand provider creation via **[Sources API Production Flow](sources-api-production-flow.md)** (now integrated in Koku API)
 
 ### "I'm setting up authentication"
 1. Read **[Native JWT Authentication](native-jwt-authentication.md)** to understand the architecture
@@ -141,19 +141,21 @@ Welcome to the Resource Optimization Service (ROS) for OpenShift Container Platf
 ---
 
 #### [Sources API Production Flow](sources-api-production-flow.md)
-**Purpose:** Comprehensive guide explaining the production-like provider creation flow using Sources API, Kafka, and Koku sources listener.
+**Purpose:** Comprehensive guide explaining the production-like provider creation flow using Koku Sources API (integrated in Koku), Kafka, and Koku sources listener.
 
 **Use when:**
-- Understanding how providers are created via the Sources API
+- Understanding how providers are created via Koku Sources API
 - Setting up the data ingestion pipeline
 - Debugging source/provider creation issues
 - Learning the Kafka event-driven architecture
+- Understanding the simplified architecture without sources-api-go
 
 **Key topics:**
-- Architecture overview (Sources API → Kafka → Koku Listener)
+- Architecture overview (Koku Sources API → Kafka → Koku Listener)
 - Source and provider creation workflow
 - Kafka topic configuration
-- Authentication setup for Sources API
+- Authentication setup for Koku Sources API
+- CMMO configuration for Koku Sources API
 - Troubleshooting provider creation
 
 ---

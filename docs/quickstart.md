@@ -162,7 +162,7 @@ curl -k https://$INGRESS_ROUTE/api/ingress/v1/version
 ```
 
 The test will:
-- ✅ Create OCP provider via Sources API
+- ✅ Create OCP provider via Koku Sources API
 - ✅ Generate test data with NISE
 - ✅ Upload data to ODF S3 bucket
 - ✅ Publish Kafka event for processing

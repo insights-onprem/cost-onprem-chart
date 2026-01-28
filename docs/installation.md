@@ -88,15 +88,14 @@ The script deploys a unified chart containing all components:
 - Valkey (caching and Celery broker)
 
 **Applications:**
-- Koku API (reads, writes, masu, listener)
+- Koku API (reads, writes, masu, listener) - includes Sources API endpoints
 - Celery Workers (background processing)
 - ROS components (API, processor, housekeeper)
-- Sources API
 - UI and Ingress
 
 **Features:**
 - ✅ Two-phase deployment (infrastructure first, then application)
-- ✅ Automatic secret creation (Django, Sources, S3 credentials)
+- ✅ Automatic secret creation (Django, S3 credentials)
 - ✅ Auto-discovers ODF S3 credentials
 - ✅ OpenShift platform verification
 - ✅ Automatic upgrade detection

@@ -2,7 +2,7 @@
 
 This repository contains a Helm chart for deploying cost management solutions on-premise:
 
-**`cost-onprem/`** - Unified chart containing all components: ROS, Kruize, Sources API, Koku (Cost Management), PostgreSQL, and Valkey
+**`cost-onprem/`** - Unified chart containing all components: ROS, Kruize, Koku (Cost Management with Sources API), PostgreSQL, and Valkey
 
 ---
 
@@ -83,7 +83,7 @@ cost-onprem-chart/
 │   └── templates/             # Kubernetes resource templates (organized by service)
 │       ├── ros/               # Resource Optimization Service
 │       ├── kruize/            # Kruize optimization engine
-│       ├── sources-api/       # Source management
+│       ├── cost-management/   # Cost Management (includes Sources API)
 │       ├── ingress/           # API gateway
 │       ├── infrastructure/    # Database, Kafka, storage, cache
 │       ├── auth/              # Authentication (CA certificates)
@@ -113,13 +113,13 @@ cost-onprem-chart/
 - **ROS Recommendation Poller**: Kruize integration for recommendations
 - **ROS Housekeeper**: Maintenance tasks and data cleanup
 - **Kruize Autotune**: Optimization recommendation engine (direct authentication, protected by network policies)
-- **Sources API**: Source management and integration (middleware-based authentication for protected endpoints, unauthenticated metadata endpoints for internal use)
+- **Koku Sources API**: Source management integrated in Koku API (accessible via `/api/cost-management/v1/sources/`)
 - **Valkey**: Caching layer for performance
 
 **Security Architecture**:
 - **Ingress Authentication**: Envoy sidecar with JWT validation (Keycloak) for external uploads
 - **Backend Authentication**: Envoy sidecar with JWT validation (Keycloak) for API access
-- **Network Policies**: Restrict direct access to backend services (Kruize, Sources API) while allowing Prometheus metrics scraping
+- **Network Policies**: Restrict direct access to backend services (Kruize) while allowing Prometheus metrics scraping
 - **Multi-tenancy**: `org_id` and `account_number` from authentication enable data isolation across organizations and accounts
 
 **See [JWT Authentication Guide](docs/native-jwt-authentication.md) for detailed architecture**
@@ -161,7 +161,7 @@ Available endpoints:
 - Health Check: `/ready`
 - ROS API: `/api/ros/*`
 - Cost Management API: `/api/cost-management/*`
-- Sources API: `/api/sources/*`
+- Sources API: `/api/cost-management/v1/sources/` (via Koku API)
 - Upload API: `/api/ingress/*`
 
 **See [Platform Guide](docs/platform-guide.md) for detailed access information**

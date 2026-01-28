@@ -114,16 +114,10 @@ data:
                         retry_on: 5xx,reset,connect-failure,refused-stream
                         num_retries: 2
                         per_try_timeout: 30s
-                  # Sources API - routes to Sources API service
-                  - match:
-                      prefix: "/api/sources/"
-                    route:
-                      cluster: sources-api-backend
-                      timeout: 30s
-                      retry_policy:
-                        retry_on: 5xx,reset,connect-failure,refused-stream
-                        num_retries: 2
-                        per_try_timeout: 15s
+                    typed_per_filter_config:
+                        envoy.filters.http.compressor:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.compressor.v3.CompressorPerRoute
+                          disabled: true
                   # File upload ingress - routes to ingress backend
                   - match:
                       prefix: "/"
@@ -482,28 +476,6 @@ data:
             max_connections: 1024
             max_pending_requests: 1024
             max_requests: 1024
-            max_retries: 3
-
-      # Sources API backend for provider management
-      - name: sources-api-backend
-        connect_timeout: 5s
-        type: STRICT_DNS
-        dns_refresh_rate: 30s
-        load_assignment:
-          cluster_name: sources-api-backend
-          endpoints:
-          - lb_endpoints:
-            - endpoint:
-                address:
-                  socket_address:
-                    address: {{ include "cost-onprem.fullname" . }}-sources-api.{{ .Release.Namespace }}.svc.cluster.local
-                    port_value: 8000
-        circuit_breakers:
-          thresholds:
-          - priority: DEFAULT
-            max_connections: 512
-            max_pending_requests: 512
-            max_requests: 512
             max_retries: 3
 
       # Keycloak JWKS endpoint for JWT signature verification

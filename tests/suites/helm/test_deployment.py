@@ -87,12 +87,13 @@ class TestDeploymentHealth:
             "app.kubernetes.io/component=ros-processor"
         ), "ROS Processor pod is not ready"
 
-    def test_sources_api_pod_ready(self, cluster_config):
-        """Verify Sources API pod is ready."""
+    def test_koku_api_pod_ready(self, cluster_config):
+        """Verify Koku API pod is ready (provides cost management and sources endpoints)."""
+        # Check the writes pod since it handles source registration
         assert check_pod_ready(
             cluster_config.namespace,
-            "app.kubernetes.io/component=sources-api"
-        ), "Sources API pod is not ready"
+            "app.kubernetes.io/component=cost-management-api-writes"
+        ), "Koku API (writes) pod is not ready"
 
 
 @pytest.mark.helm

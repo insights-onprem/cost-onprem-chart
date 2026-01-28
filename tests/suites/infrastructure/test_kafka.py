@@ -109,7 +109,7 @@ class TestKafkaConsumerGroups:
         # Find a Kafka pod to run commands
         kafka_pod = get_pod_by_label(
             kafka_namespace,
-            f"strimzi.io/cluster={kafka_cluster_name},strimzi.io/kind=Kafka"
+            f"strimzi.io/cluster={kafka_cluster_name},strimzi.io/component-type=kafka"
         )
         
         if not kafka_pod:

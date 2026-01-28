@@ -28,7 +28,7 @@ spec:
         {{- include "cost-onprem.initContainer.waitForKafka" . | nindent 8 }}
         {{- end }}
         {{- include "cost-onprem.initContainer.waitForKruize" . | nindent 8 }}
-        {{- include "cost-onprem.initContainer.waitForSourcesApi" . | nindent 8 }}
+        {{- include "cost-onprem.initContainer.waitForKoku" . | nindent 8 }}
       containers:
         - name: ros-housekeeper
           image: "{{ .Values.ros.image.repository }}:{{ .Values.ros.image.tag }}"
@@ -45,6 +45,8 @@ spec:
           env:
             - name: CLOWDER_ENABLED
               value: "false"
+            - name: ONPREM
+              value: "True"
             - name: KRUIZE_HOST
               value: {{ include "cost-onprem.fullname" . }}-kruize
             - name: KRUIZE_PORT
@@ -75,7 +77,8 @@ spec:
               value: {{ include "cost-onprem.kafka.bootstrapServers" . | quote }}
             - name: KAFKA_SECURITY_PROTOCOL
               value: {{ include "cost-onprem.kafka.securityProtocol" . | quote }}
-            - name: SOURCES_API_BASE_URL
-              value: http://{{ include "cost-onprem.fullname" . }}-sources-api:{{ .Values.sourcesApi.port }}
+            # Topic for source deletion events from Koku (matches hardcoded topic in Koku)
+            - name: SOURCES_EVENT_TOPIC
+              value: "platform.sources.event-stream"
           resources:
             {{- toYaml .Values.resources.application | nindent 12 }}

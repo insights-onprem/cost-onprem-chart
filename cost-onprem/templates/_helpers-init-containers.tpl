@@ -7,7 +7,7 @@ Wait for Database init container - waits for unified database server
 Usage: {{ include "cost-onprem.initContainer.waitForDb" (list . "ros") | nindent 8 }}
 Parameters:
   - Root context (.)
-  - Database type ("ros", "kruize", "sources") - used for naming only
+  - Database type ("ros", "kruize", "koku") - used for naming only
 */}}
 {{- define "cost-onprem.initContainer.waitForDb" -}}
 {{- $root := index . 0 -}}
@@ -109,23 +109,34 @@ Usage: {{ include "cost-onprem.initContainer.waitForKruize" . | nindent 8 }}
 {{- end -}}
 
 {{/*
-Wait for Sources API init container
-Usage: {{ include "cost-onprem.initContainer.waitForSourcesApi" . | nindent 8 }}
+Wait for Koku API init container - waits for both reads and writes services
+Usage: {{ include "cost-onprem.initContainer.waitForKoku" . | nindent 8 }}
 */}}
-{{- define "cost-onprem.initContainer.waitForSourcesApi" -}}
-- name: wait-for-sources-api
+{{- define "cost-onprem.initContainer.waitForKoku" -}}
+- name: wait-for-koku
   image: "{{ .Values.global.initContainers.waitFor.repository }}:{{ .Values.global.initContainers.waitFor.tag }}"
   securityContext:
     {{- include "cost-onprem.securityContext.nonRoot" . | nindent 4 }}
   command: ['bash', '-c']
   args:
     - |
-      echo "Waiting for Sources API at {{ include "cost-onprem.fullname" . }}-sources-api:{{ .Values.sourcesApi.port }}..."
-      until timeout 3 bash -c "echo > /dev/tcp/{{ include "cost-onprem.fullname" . }}-sources-api/{{ .Values.sourcesApi.port }}" 2>/dev/null; do
-        echo "Sources API not ready yet, retrying in 5 seconds..."
+      KOKU_API_PORT="{{ .Values.costManagement.api.service.port }}"
+      
+      echo "Waiting for Koku API Reads at {{ include "cost-onprem.fullname" . }}-koku-api-reads:${KOKU_API_PORT}..."
+      until timeout 3 bash -c "echo > /dev/tcp/{{ include "cost-onprem.fullname" . }}-koku-api-reads/${KOKU_API_PORT}" 2>/dev/null; do
+        echo "Koku API Reads not ready yet, retrying in 5 seconds..."
         sleep 5
       done
-      echo "Sources API is ready"
+      echo "Koku API Reads is ready"
+      
+      echo "Waiting for Koku API Writes at {{ include "cost-onprem.fullname" . }}-koku-api-writes:${KOKU_API_PORT}..."
+      until timeout 3 bash -c "echo > /dev/tcp/{{ include "cost-onprem.fullname" . }}-koku-api-writes/${KOKU_API_PORT}" 2>/dev/null; do
+        echo "Koku API Writes not ready yet, retrying in 5 seconds..."
+        sleep 5
+      done
+      echo "Koku API Writes is ready"
+      
+      echo "Both Koku API services are ready"
 {{- end -}}
 
 {{/*

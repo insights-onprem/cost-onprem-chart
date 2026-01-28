@@ -18,6 +18,10 @@ import urllib3
 
 from utils import get_route_url, get_secret_value, run_oc_command
 
+# Import shared fixtures from cost_management suite
+# These fixtures are available to all test suites
+pytest_plugins = ["suites.cost_management.conftest"]
+
 # Disable SSL warnings for self-signed certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 

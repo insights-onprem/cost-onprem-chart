@@ -230,7 +230,7 @@ oc get networkpolicies -n cost-onprem
 # Describe specific policy
 oc describe networkpolicy kruize-allow-ingress -n cost-onprem
 oc describe networkpolicy ros-metrics-allow-ingress -n cost-onprem
-oc describe networkpolicy sources-api-allow-ingress -n cost-onprem
+oc describe networkpolicy koku-api-allow-ingress -n cost-onprem
 
 # Test connectivity from within namespace (should work)
 oc exec -n cost-onprem deployment/cost-onprem-ros-processor -- \

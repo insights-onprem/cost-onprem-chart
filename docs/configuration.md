@@ -44,7 +44,7 @@ Complete configuration reference for resource requirements, storage, and access 
 |-----------|------|-------------|-------|
 | PostgreSQL ROS | 10GB | RWO | Main database |
 | PostgreSQL Kruize | 10GB | RWO | Kruize database |
-| PostgreSQL Sources | 10GB | RWO | Sources database |
+| PostgreSQL Koku | 10GB | RWO | Koku database (includes sources data) |
 | Kafka | 10GB | RWO | Message storage |
 | Zookeeper | 5GB | RWO | Coordination data |
 | **Total** | **~45GB** | - | Production: 50GB+ |
@@ -230,8 +230,7 @@ oc get routes -n cost-onprem
 
 # Available routes:
 oc get route cost-onprem-main -n cost-onprem       # ROS API (/)
-oc get route cost-onprem-api -n cost-onprem        # Cost Management API (/api/cost-management)
-oc get route cost-onprem-sources -n cost-onprem    # Sources API (/api/sources)
+oc get route cost-onprem-api -n cost-onprem        # Cost Management API (/api/cost-management) - includes Sources API
 oc get route cost-onprem-ingress -n cost-onprem    # File upload API (/api/ingress)
 oc get route cost-onprem-ui -n cost-onprem         # UI (web interface)
 ```
@@ -241,12 +240,11 @@ oc get route cost-onprem-ui -n cost-onprem         # UI (web interface)
 | Route | Path | Backend | Purpose |
 |-------|------|---------|---------|
 | `cost-onprem-main` | `/` | ROS API | ROS status and recommendations |
-| `cost-onprem-api` | `/api/cost-management` | Envoy → Koku API | Cost Management reports (JWT validated) |
-| `cost-onprem-sources` | `/api/sources` | Envoy → Sources API | Provider management (JWT validated) |
+| `cost-onprem-api` | `/api/cost-management` | Envoy → Koku API | Cost Management reports and Sources API (JWT validated) |
 | `cost-onprem-ingress` | `/api/ingress` | Envoy → Ingress | File uploads (JWT validated) |
 | `cost-onprem-ui` | (default) | UI | Web interface (reencrypt TLS) |
 
-> **Note**: The `cost-onprem-api`, `cost-onprem-sources`, and `cost-onprem-ingress` routes all pass through the Envoy ingress proxy for JWT authentication.
+> **Note**: The `cost-onprem-api` and `cost-onprem-ingress` routes pass through the Envoy ingress proxy for JWT authentication. Sources API is accessible via `/api/cost-management/v1/sources/` through the `cost-onprem-api` route.
 
 **Access Pattern:**
 ```bash
@@ -376,9 +374,9 @@ database:
     storage:
       size: 10Gi
 
-  sources:
+  koku:
     host: internal
-    name: sources_api_development
+    name: koku
     storage:
       size: 10Gi
 ```
@@ -429,12 +427,9 @@ kruize:
     k8sType: openshift
     logAllHttpReqAndResponse: true
 
-# Sources API
-sourcesApi:
-  port: 8000
-  logLevel: DEBUG
-  bypassRbac: true
-  sourcesEnv: prod
+# Sources API is now integrated in Koku API
+# Access via: /api/cost-management/v1/sources/
+# Configuration is part of Koku API settings
 
 # Ingress service
 ingress:
@@ -545,7 +540,7 @@ Network policies are automatically deployed on OpenShift to secure service-to-se
 2. **Kruize Network Policy**: Allows internal service communication only (processor, poller, housekeeper) on port 8080
 3. **Cost Management On-Premise Metrics Policies**: Allow Prometheus metrics scraping on port 9000 for API, Processor, and Recommendation Poller
 4. **Cost Management On-Premise API Access Policy**: Allows external REST API access from `openshift-ingress` namespace to Envoy sidecar on port 9080
-5. **Sources API Policy**: Allows internal service communication only (housekeeper) on port 8000
+5. **Koku API Access Policy**: Allows external REST API access from `openshift-ingress` namespace to Envoy sidecar on port 9080 (includes Sources API endpoints)
 
 **OpenShift Configuration:**
 ```yaml

@@ -51,9 +51,7 @@
 | **MASU** | 1 | 300m | 600m | 500Mi | 1Gi |
 | **Celery Beat** | 1 | 100m | 200m | 256Mi | 512Mi |
 | **Celery Workers** | 17 | 100-500m | 200-1000m | 256Mi-1Gi | 512Mi-2Gi |
-| **Sources API** | 1 | 200m | 400m | 256Mi | 512Mi |
-| **Sources DB** | 1 | 250m | 500m | 512Mi | 1Gi |
-| **Subtotal** | **26** | **~6.5 cores** | **~13 cores** | **~12 GB** | **~24 GB** |
+| **Subtotal** | **24** | **~6.25 cores** | **~12.5 cores** | **~11.5 GB** | **~23 GB** |
 
 #### Total Deployment Resources
 
@@ -170,6 +168,7 @@ jq --version
                     │   PostgreSQL (Unified DB)    │
                     │  • Koku: Summary tables      │
                     │  • Sources: Provider data    │
+                    │    (integrated in Koku DB)   │
                     └──────────────────────────────┘
                                    │
                                    ▼
@@ -238,7 +237,7 @@ oc project $NAMESPACE
 
 ### Step 2: Deploy Cost Management Chart
 
-The unified `cost-onprem` chart deploys all components: PostgreSQL, Valkey, Koku API, MASU workers, Celery workers, Sources API, ROS, and Kruize.
+The unified `cost-onprem` chart deploys all components: PostgreSQL, Valkey, Koku API (with integrated Sources API), MASU workers, Celery workers, ROS, and Kruize.
 
 **Option A: Using Helm directly (manual control)**
 ```bash
@@ -276,7 +275,7 @@ cd /path/to/cost-onprem-chart/scripts
 6. ✅ Verifies all components are healthy
 
 **Features:**
-- 🔐 Automatic secret creation (Django, Sources API, S3)
+- 🔐 Automatic secret creation (Django, S3)
 - 🔍 Auto-discovers S3 credentials from ODF
 - ✅ Chart validation and linting before deployment
 - 🎯 Pod readiness checks and status reporting
@@ -310,7 +309,6 @@ USE_LOCAL_CHART=true ./install-helm-chart.sh
 - `cost-onprem-koku-masu-*` (Deployment)
 - `cost-onprem-celery-*` (Multiple Deployments)
 - `cost-onprem-ros-*` (Deployment)
-- `cost-onprem-sources-api-*` (Deployment)
 
 **Verify Deployment:**
 ```bash
@@ -344,7 +342,6 @@ cost-onprem-koku-api-writes-*                   1/1     Running   0          3m
 cost-onprem-koku-api-listener-*                 1/1     Running   0          3m
 cost-onprem-koku-api-masu-*                     1/1     Running   0          3m
 cost-onprem-celery-*                            1/1     Running   0          3m
-cost-onprem-sources-api-*                       1/1     Running   0          3m
 cost-onprem-ros-*                               1/1     Running   0          3m
 cost-onprem-kruize-*                            1/1     Running   0          3m
 ```

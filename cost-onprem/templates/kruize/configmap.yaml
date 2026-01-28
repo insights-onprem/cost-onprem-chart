@@ -39,10 +39,6 @@ data:
           {
             "name": "{{ .Values.ros.recommendationPoller.recommendationTopic }}",
             "requestedName": "{{ .Values.ros.recommendationPoller.recommendationTopic }}"
-          },
-          {
-            "name": "{{ .Values.sourcesApi.platformSourcesEventStreamTopic }}",
-            "requestedName": "{{ .Values.sourcesApi.platformSourcesEventStreamTopic }}"
           }
         ]
       },

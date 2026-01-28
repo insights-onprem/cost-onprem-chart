@@ -54,7 +54,7 @@ app.kubernetes.io/part-of: {{ include "cost-onprem.name" . }}
 
 {{/*
 Database host resolver - returns unified database service name if "internal", otherwise returns the configured host
-Since all databases (ros, kruize, sources) are on the same unified server, this returns a single common host.
+Since all databases (ros, kruize, koku) are on the same unified server, this returns a single common host.
 Usage: {{ include "cost-onprem.database.host" . }}
 */}}
 {{- define "cost-onprem.database.host" -}}
