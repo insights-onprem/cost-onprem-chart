@@ -4,10 +4,7 @@ metadata:
   name: {{ include "cost-onprem.koku.celery.worker.name" (dict "context" . "type" "priority-xl") }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "cost-onprem.koku.labels" . | nindent 4 }}
-    app.kubernetes.io/component: cost-worker
-    cost-onprem.io/celery-type: worker
-    cost-onprem.io/worker-queue: priority-xl
+    {{- include "cost-onprem.koku.celery.worker.labels" (dict "context" . "type" "priority-xl") | nindent 4 }}
 spec:
   replicas: {{ .Values.costManagement.celery.workers.priorityXl.replicas }}
   selector:
@@ -16,10 +13,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "cost-onprem.koku.labels" . | nindent 8 }}
-        app.kubernetes.io/component: cost-worker
-        cost-onprem.io/celery-type: worker
-        cost-onprem.io/worker-queue: priority-xl
+        {{- include "cost-onprem.koku.celery.worker.labels" (dict "context" . "type" "priority-xl") | nindent 8 }}
     spec:
       serviceAccountName: {{ include "cost-onprem.koku.serviceAccountName" . }}
       automountServiceAccountToken: false

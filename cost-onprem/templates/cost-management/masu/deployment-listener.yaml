@@ -107,8 +107,12 @@ spec:
         - -c
         - |
           cd $APP_HOME
+          {{- if .Values.global.debug }}
           echo "Starting Kafka listener..."
+          {{- end }}
+          {{- if .Values.global.debug }}
           echo "Kafka host: $INSIGHTS_KAFKA_HOST:$INSIGHTS_KAFKA_PORT"
+          {{- end }}
           exec python manage.py listener
 
       volumes:

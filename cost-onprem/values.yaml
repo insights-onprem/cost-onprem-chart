@@ -24,6 +24,10 @@ global:
   pullPolicy: IfNotPresent
   imagePullSecrets: []
 
+  # Debug mode - enables verbose logging and initialization output
+  # Set to true for troubleshooting, false for production deployments
+  debug: false
+
   # Storage class for persistent volumes (auto-detected if empty)
   storageClass: ""
 

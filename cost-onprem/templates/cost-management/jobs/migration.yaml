@@ -35,10 +35,12 @@ spec:
           - -c
           - |
             set -e
+            {{- if .Values.global.debug }}
             echo "=== Koku Django Migrations Job ==="
             echo "Timestamp: $(date)"
             echo "Release: {{ .Release.Name }}"
             echo "Namespace: {{ .Release.Namespace }}"
+            {{- end }}
 
             # Wait for database to be ready
             # Use hardcoded service name since environment variables may not be set yet during pre-install
@@ -47,17 +49,23 @@ spec:
             MAX_WAIT=600  # 10 minutes timeout
             ELAPSED=0
             
+            {{- if .Values.global.debug }}
             echo "Waiting for database at ${DB_HOST}:${DB_PORT}..."
+            {{- end }}
             while ! timeout 5 bash -c "cat < /dev/null > /dev/tcp/${DB_HOST}/${DB_PORT}" 2>/dev/null; do
               if [ $ELAPSED -ge $MAX_WAIT ]; then
-                echo "ERROR: Database not ready after ${MAX_WAIT} seconds"
+                echo "ERROR: Database not ready after ${MAX_WAIT} seconds" >&2
                 exit 1
               fi
+              {{- if .Values.global.debug }}
               echo "Database not ready (${ELAPSED}s elapsed), waiting..."
+              {{- end }}
               sleep 5
               ELAPSED=$((ELAPSED + 5))
             done
+            {{- if .Values.global.debug }}
             echo "✓ Database is ready (waited ${ELAPSED}s)"
+            {{- end }}
 
             # Set up environment
             mkdir -p /tmp/prometheus
@@ -65,7 +73,9 @@ spec:
 
             # Acquire migration lock using PostgreSQL advisory lock
             # This ensures only ONE pod can run migrations at a time
+            {{- if .Values.global.debug }}
             echo "Attempting to acquire migration lock..."
+            {{- end }}
             
             # Use psycopg2 to acquire a session-level advisory lock
             # Lock ID: 123456789 (arbitrary unique number for koku migrations)
@@ -105,8 +115,10 @@ spec:
                 # Django closes connection after migrations complete
                 print("✓ Migration lock will auto-release on connection close")
             PYTHON_EOF
+            {{- if .Values.global.debug }}
 
             echo "=== Migration job completed ==="
+            {{- end }}
 
         env:
         {{- include "cost-onprem.koku.commonEnv" . | nindent 8 }}

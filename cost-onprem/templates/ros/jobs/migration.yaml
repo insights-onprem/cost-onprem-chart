@@ -34,10 +34,12 @@ spec:
         args:
           - |
             set -e
+            {{- if .Values.global.debug }}
             echo "=== ROS Database Migrations Job ==="
             echo "Timestamp: $(date)"
             echo "Release: {{ .Release.Name }}"
             echo "Namespace: {{ .Release.Namespace }}"
+            {{- end }}
 
             # Wait for database to be ready
             DB_HOST="{{ include "cost-onprem.fullname" . }}-database.{{ .Release.Namespace }}.svc.cluster.local"
@@ -45,24 +47,30 @@ spec:
             MAX_WAIT=600  # 10 minutes timeout
             ELAPSED=0
             
+            {{- if .Values.global.debug }}
             echo "Waiting for database at ${DB_HOST}:${DB_PORT}..."
+            {{- end }}
             while ! timeout 5 bash -c "cat < /dev/null > /dev/tcp/${DB_HOST}/${DB_PORT}" 2>/dev/null; do
               if [ $ELAPSED -ge $MAX_WAIT ]; then
-                echo "ERROR: Database not ready after ${MAX_WAIT} seconds"
+                echo "ERROR: Database not ready after ${MAX_WAIT} seconds" >&2
                 exit 1
               fi
+              {{- if .Values.global.debug }}
               echo "Database not ready (${ELAPSED}s elapsed), waiting..."
+              {{- end }}
               sleep 5
               ELAPSED=$((ELAPSED + 5))
             done
+            {{- if .Values.global.debug }}
             echo "✓ Database is ready (waited ${ELAPSED}s)"
+            echo "✓ Running ROS migrations..."
+            {{- end }}
 
             # Run ROS migrations with advisory lock (different lock ID than Koku)
-            echo "✓ Acquired migration lock (ID: 987654321)"
             ./rosocp db migrate up
+            {{- if .Values.global.debug }}
             echo "✓ ROS migrations completed successfully"
-            echo "✓ Migration lock will auto-release on connection close"
-            echo "=== Migration job completed ==="
+            {{- end }}
 
         env:
           - name: CLOWDER_ENABLED

@@ -97,16 +97,32 @@ spec:
           set -e
           cd $APP_HOME
 
+          {{- if .Values.global.debug }}
           echo "=========================================="
+          {{- end }}
+          {{- if .Values.global.debug }}
           echo "Starting Sources Kafka Listener"
+          {{- end }}
+          {{- if .Values.global.debug }}
           echo "=========================================="
+          {{- end }}
+          {{- if .Values.global.debug }}
           echo "Timestamp: $(date)"
+          {{- end }}
+          {{- if .Values.global.debug }}
           echo "Kafka: $INSIGHTS_KAFKA_HOST:$INSIGHTS_KAFKA_PORT"
+          {{- end }}
+          {{- if .Values.global.debug }}
           echo "Database: $DATABASE_SERVICE_HOST:$DATABASE_SERVICE_PORT"
+          {{- end }}
+          {{- if .Values.global.debug }}
           echo ""
+          {{- end }}
 
           # Start sources listener
+          {{- if .Values.global.debug }}
           echo "Starting sources listener..."
+          {{- end }}
           exec python manage.py sources_listener
 
       volumes:

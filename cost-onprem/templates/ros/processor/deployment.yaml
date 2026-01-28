@@ -41,9 +41,13 @@ spec:
           command: ["sh", "-c"]
           args:
             - |
+              {{- if .Values.global.debug }}
               echo 'Waiting for dependencies (Kafka, Kruize) to be ready...'
+              {{- end }}
               sleep 60
+              {{- if .Values.global.debug }}
               echo 'Starting processor...'
+              {{- end }}
               # NOTE: Migrations are now handled by a pre-upgrade/pre-install Helm Job
               # See: templates/ros/jobs/migration.yaml
               ./rosocp start processor

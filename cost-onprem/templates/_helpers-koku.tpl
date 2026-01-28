@@ -211,6 +211,19 @@ cost-onprem.io/celery-type: beat
 {{- end -}}
 
 {{/*
+Full labels for Celery Worker (includes all koku labels + component labels)
+Usage: {{ include "cost-onprem.koku.celery.worker.labels" (dict "context" . "type" "default") }}
+*/}}
+{{- define "cost-onprem.koku.celery.worker.labels" -}}
+{{- $context := .context -}}
+{{- $type := .type -}}
+{{ include "cost-onprem.koku.labels" $context }}
+app.kubernetes.io/component: cost-worker
+cost-onprem.io/celery-type: worker
+cost-onprem.io/worker-queue: {{ $type }}
+{{- end -}}
+
+{{/*
 Selector labels for Celery Worker (takes worker type as argument)
 Usage: {{ include "cost-onprem.koku.celery.worker.selectorLabels" (dict "context" . "type" "default") }}
 */}}
@@ -449,26 +462,40 @@ to ensure migrations run before the application starts
     - -c
     - |
       set -e
+      {{- if .Values.global.debug }}
       echo "=== Koku Django Migrations Init Container ==="
+      {{- end }}
+      {{- if .Values.global.debug }}
       echo "Timestamp: $(date)"
+      {{- end }}
 
       # Wait for database to be ready
+      {{- if .Values.global.debug }}
       echo "Waiting for database..."
+      {{- end }}
       until timeout 5 bash -c "cat < /dev/null > /dev/tcp/${DATABASE_SERVICE_HOST}/${DATABASE_SERVICE_PORT}" 2>/dev/null; do
+        {{- if .Values.global.debug }}
         echo "Database not ready, waiting..."
+        {{- end }}
         sleep 2
       done
+      {{- if .Values.global.debug }}
       echo "Database is ready"
+      {{- end }}
 
       # Set up environment
       mkdir -p /tmp/prometheus
       cd /opt/koku/koku
 
       # Run migrations
+      {{- if .Values.global.debug }}
       echo "Running Django migrations..."
+      {{- end }}
       python manage.py migrate --noinput
 
+      {{- if .Values.global.debug }}
       echo "Migrations completed successfully"
+      {{- end }}
   env:
   {{- include "cost-onprem.koku.commonEnv" . | nindent 2 }}
   volumeMounts:

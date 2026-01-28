@@ -19,12 +19,18 @@ Parameters:
   command: ['bash', '-c']
   args:
     - |
+      {{- if $root.Values.global.debug }}
       echo "Waiting for unified database server at {{ include "cost-onprem.fullname" $root }}-database:{{ $root.Values.database.server.port }}..."
+      {{- end }}
       until timeout 3 bash -c "echo > /dev/tcp/{{ include "cost-onprem.fullname" $root }}-database/{{ $root.Values.database.server.port }}" 2>/dev/null; do
+        {{- if $root.Values.global.debug }}
         echo "Database server not ready yet, retrying in 5 seconds..."
+        {{- end }}
         sleep 5
       done
+      {{- if $root.Values.global.debug }}
       echo "Database server is ready"
+      {{- end }}
 {{- end -}}
 
 {{/*
@@ -39,12 +45,18 @@ Usage: {{ include "cost-onprem.initContainer.waitForKafka" . | nindent 8 }}
   command: ['bash', '-c']
   args:
     - |
+      {{- if .Values.global.debug }}
       echo "Waiting for Kafka at {{ include "cost-onprem.kafka.host" . }}:{{ include "cost-onprem.kafka.port" . }}..."
+      {{- end }}
       until timeout 3 bash -c "echo > /dev/tcp/{{ include "cost-onprem.kafka.host" . }}/{{ include "cost-onprem.kafka.port" . }}" 2>/dev/null; do
+        {{- if .Values.global.debug }}
         echo "Kafka not ready yet, retrying in 5 seconds..."
+        {{- end }}
         sleep 5
       done
+      {{- if .Values.global.debug }}
       echo "Kafka is ready"
+      {{- end }}
 {{- end -}}
 
 {{/*
@@ -59,12 +71,18 @@ Usage: {{ include "cost-onprem.initContainer.waitForStorage" . | nindent 8 }}
   command: ['bash', '-c']
   args:
     - |
+      {{- if .Values.global.debug }}
       echo "Waiting for ODF S3 endpoint at {{ include "cost-onprem.storage.endpoint" . }}:{{ include "cost-onprem.storage.port" . }}..."
+      {{- end }}
       until timeout 3 bash -c "echo > /dev/tcp/{{ include "cost-onprem.storage.endpoint" . }}/{{ include "cost-onprem.storage.port" . }}" 2>/dev/null; do
+        {{- if .Values.global.debug }}
         echo "ODF S3 endpoint not ready yet, retrying in 5 seconds..."
+        {{- end }}
         sleep 5
       done
+      {{- if .Values.global.debug }}
       echo "ODF S3 endpoint is ready"
+      {{- end }}
 {{- end -}}
 
 {{/*
@@ -100,12 +118,18 @@ Usage: {{ include "cost-onprem.initContainer.waitForKruize" . | nindent 8 }}
   command: ['bash', '-c']
   args:
     - |
+      {{- if .Values.global.debug }}
       echo "Waiting for Kruize at {{ include "cost-onprem.fullname" . }}-kruize:{{ .Values.kruize.port }}..."
+      {{- end }}
       until timeout 3 bash -c "echo > /dev/tcp/{{ include "cost-onprem.fullname" . }}-kruize/{{ .Values.kruize.port }}" 2>/dev/null; do
+        {{- if .Values.global.debug }}
         echo "Kruize not ready yet, retrying in 5 seconds..."
+        {{- end }}
         sleep 5
       done
+      {{- if .Values.global.debug }}
       echo "Kruize is ready"
+      {{- end }}
 {{- end -}}
 
 {{/*
@@ -120,12 +144,18 @@ Usage: {{ include "cost-onprem.initContainer.waitForSourcesApi" . | nindent 8 }}
   command: ['bash', '-c']
   args:
     - |
+      {{- if .Values.global.debug }}
       echo "Waiting for Sources API at {{ include "cost-onprem.fullname" . }}-sources-api:{{ .Values.sourcesApi.port }}..."
+      {{- end }}
       until timeout 3 bash -c "echo > /dev/tcp/{{ include "cost-onprem.fullname" . }}-sources-api/{{ .Values.sourcesApi.port }}" 2>/dev/null; do
+        {{- if .Values.global.debug }}
         echo "Sources API not ready yet, retrying in 5 seconds..."
+        {{- end }}
         sleep 5
       done
+      {{- if .Values.global.debug }}
       echo "Sources API is ready"
+      {{- end }}
 {{- end -}}
 
 {{/*
@@ -141,12 +171,18 @@ Usage: {{ include "cost-onprem.initContainer.waitForCache" . | nindent 8 }}
   command: ['bash', '-c']
   args:
     - |
+      {{- if .Values.global.debug }}
       echo "Waiting for {{ $cacheName | title }} at {{ include "cost-onprem.fullname" . }}-{{ $cacheName }}:6379..."
+      {{- end }}
       until timeout 3 bash -c "echo > /dev/tcp/{{ include "cost-onprem.fullname" . }}-{{ $cacheName }}/6379" 2>/dev/null; do
+        {{- if .Values.global.debug }}
         echo "{{ $cacheName | title }} not ready yet, retrying in 5 seconds..."
+        {{- end }}
         sleep 5
       done
+      {{- if .Values.global.debug }}
       echo "{{ $cacheName | title }} is ready"
+      {{- end }}
 {{- end -}}
 
 {{/*
@@ -164,10 +200,16 @@ Usage: {{ include "cost-onprem.initContainer.waitForInfraDb" . | nindent 8 }}
     - |
       DB_HOST="{{ include "cost-onprem.koku.database.host" . }}"
       DB_PORT="{{ include "cost-onprem.koku.database.port" . }}"
+      {{- if .Values.global.debug }}
       echo "Waiting for infrastructure PostgreSQL at ${DB_HOST}:${DB_PORT}..."
+      {{- end }}
       until timeout 3 bash -c "echo > /dev/tcp/${DB_HOST}/${DB_PORT}" 2>/dev/null; do
+        {{- if .Values.global.debug }}
         echo "Infrastructure PostgreSQL not ready yet, retrying in 5 seconds..."
+        {{- end }}
         sleep 5
       done
+      {{- if .Values.global.debug }}
       echo "Infrastructure PostgreSQL is ready"
+      {{- end }}
 {{- end -}}

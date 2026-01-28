@@ -7,6 +7,18 @@ Expand the name of the chart.
 {{- end }}
 
 {{/*
+Generate conditional debug command prefix
+Usage: {{ include "cost-onprem.debug.echo" (dict "msg" "Debug message" "root" $) }}
+*/}}
+{{- define "cost-onprem.debug.echo" -}}
+{{- if .root.Values.global.debug -}}
+echo {{ .msg | quote }}
+{{- else -}}
+: # noop
+{{- end -}}
+{{- end }}
+
+{{/*
 Create a default fully qualified app name.
 We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
 If release name contains chart name it will be used as a full name.

@@ -22,7 +22,9 @@ data:
     #!/bin/bash
     set -e
 
+    {{- if .Values.global.debug }}
     echo "Initializing databases with user-specific credentials..."
+    {{- end }}
 
     # Create users with passwords from environment variables
     # Using SQL with string interpolation (safe because we control the environment)
@@ -146,4 +148,6 @@ data:
     ALTER DATABASE {{ .Values.database.sources.name }} OWNER TO $SOURCES_USER;
     EOF
 
+    {{- if .Values.global.debug }}
     echo "✅ Database initialization complete"
+    {{- end }}
