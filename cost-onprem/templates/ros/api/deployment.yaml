@@ -86,8 +86,6 @@ spec:
               value: {{ include "cost-onprem.kafka.bootstrapServers" . | quote }}
             - name: KAFKA_SECURITY_PROTOCOL
               value: {{ include "cost-onprem.kafka.securityProtocol" . | quote }}
-            - name: ID_PROVIDER
-              value: {{ .Values.auth.provider | quote }}
           livenessProbe:
             httpGet:
               path: /status
