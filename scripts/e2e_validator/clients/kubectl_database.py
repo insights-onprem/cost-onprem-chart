@@ -16,7 +16,7 @@ class KubectlDatabaseClient:
     """PostgreSQL client via kubectl exec - no port-forward needed"""
 
     def __init__(self, k8s: KubernetesClient, pod_name: str = "postgres-0",
-                 database: str = "koku", user: str = "koku"):
+                 database: str = "costonprem_koku", user: str = "koku"):
         """Initialize kubectl database client
 
         Args:

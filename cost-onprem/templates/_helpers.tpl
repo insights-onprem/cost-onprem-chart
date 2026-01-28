@@ -70,7 +70,7 @@ Get the database URL - returns complete postgresql connection string
 Uses $(DB_USER) and $(DB_PASSWORD) environment variables for credentials
 */}}
 {{- define "cost-onprem.database.url" -}}
-{{- printf "postgresql://$(DB_USER):$(DB_PASSWORD)@%s:%s/%s?sslmode=%s" (include "cost-onprem.database.host" .) (.Values.database.server.port | toString) .Values.database.ros.name .Values.database.server.sslMode }}
+{{- printf "postgresql://$(DB_USER):$(DB_PASSWORD)@%s:%s/%s?sslmode=%s" (include "cost-onprem.database.host" .) (.Values.database.server.port | toString) (include "cost-onprem.database.ros.name" .) .Values.database.server.sslMode }}
 {{- end }}
 
 {{/*
@@ -99,6 +99,46 @@ Usage: {{ include "cost-onprem.database.secretName" . }}
 {{- include "cost-onprem.database.defaultSecretName" . -}}
 {{- end -}}
 {{- end }}
+
+{{/*
+=============================================================================
+Database Name Helpers
+=============================================================================
+Standardized database name accessors for all services.
+Naming convention: costonprem_<service> (underscores for PostgreSQL compatibility)
+*/}}
+
+{{/*
+ROS database name
+Usage: {{ include "cost-onprem.database.ros.name" . }}
+*/}}
+{{- define "cost-onprem.database.ros.name" -}}
+{{- .Values.database.ros.name | default "costonprem_ros" -}}
+{{- end -}}
+
+{{/*
+Kruize database name
+Usage: {{ include "cost-onprem.database.kruize.name" . }}
+*/}}
+{{- define "cost-onprem.database.kruize.name" -}}
+{{- .Values.database.kruize.name | default "costonprem_kruize" -}}
+{{- end -}}
+
+{{/*
+Koku database name
+Usage: {{ include "cost-onprem.database.koku.name" . }}
+*/}}
+{{- define "cost-onprem.database.koku.name" -}}
+{{- .Values.database.koku.name | default "costonprem_koku" -}}
+{{- end -}}
+
+{{/*
+Sources database name
+Usage: {{ include "cost-onprem.database.sources.name" . }}
+*/}}
+{{- define "cost-onprem.database.sources.name" -}}
+{{- .Values.database.sources.name | default "costonprem_sources" -}}
+{{- end -}}
 
 {{/*
 NOTE: Sources API now uses the infra chart's PostgreSQL (shares koku database)

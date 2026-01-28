@@ -16,7 +16,7 @@ data:
   # This script runs automatically on first database initialization
   # Uses PostgreSQL's /docker-entrypoint-initdb.d/ mechanism
   #
-  # Creates databases: ros_db, kruize_db, koku, sources
+  # Creates databases: costonprem_ros, costonprem_kruize, costonprem_koku, costonprem_sources
   # Shell script wrapper that passes password environment variables to SQL commands
   init-databases.sh: |
     #!/bin/bash

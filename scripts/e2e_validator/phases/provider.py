@@ -30,7 +30,7 @@ class ProviderPhase:
         self.k8s = k8s_client
         self.sources_api = sources_api_client
         self.postgres_pod = postgres_pod or (k8s_client.get_pod_by_component('database') if k8s_client else None)
-        self.database = 'koku'
+        self.database = 'costonprem_koku'
 
     def get_existing_provider(self, cluster_id: str = None, provider_type: str = None) -> Optional[Dict]:
         """Check for existing provider (using kubectl exec)
@@ -217,7 +217,7 @@ except Exception as e:
         """
 
         try:
-            result = self.k8s.postgres_exec(postgres_pod, 'koku', sync_sql)
+            result = self.k8s.postgres_exec(postgres_pod, 'costonprem_koku', sync_sql)
             print(f"  ✓ Provider {provider_uuid} synced to tenant schema {tenant_schema}")
         except Exception as e:
             print(f"  ⚠️  Failed to sync provider to tenant schema: {e}")

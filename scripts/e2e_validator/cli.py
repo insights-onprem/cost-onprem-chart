@@ -322,7 +322,7 @@ def main(ctx, namespace, org_id, keycloak_namespace, provider_type, skip_migrati
         db = KubectlDatabaseClient(
             k8s=k8s,
             pod_name=postgres_pod,
-            database='koku',
+            database='costonprem_koku',
             user=db_user
         )
         print("  ✓ Database client (kubectl exec - no port-forward needed)")

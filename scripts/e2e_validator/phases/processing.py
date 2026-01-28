@@ -36,7 +36,7 @@ class ProcessingPhase:
 
         # Get postgres pod for kubectl exec queries (no port-forward needed)
         self.postgres_pod = k8s_client.get_pod_by_component('database')
-        self.database = 'koku'
+        self.database = 'costonprem_koku'
 
     def trigger_processing(self) -> Dict:
         """Trigger MASU processing via Celery task

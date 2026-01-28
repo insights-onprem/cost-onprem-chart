@@ -851,28 +851,32 @@ database:
   # ROS Database Configuration
   ros:
     # Database name on the unified server
-    name: ros_db
+    # Standardized naming: costonprem_<service> (underscores for PostgreSQL compatibility)
+    name: costonprem_ros
     # user removed - stored in cost-onprem-db-credentials secret (key: ros-user)
     # password removed - stored in cost-onprem-db-credentials secret (key: ros-password)
 
   # Kruize Database Configuration
   kruize:
     # Database name on the unified server
-    name: kruize_db
+    # Standardized naming: costonprem_<service> (underscores for PostgreSQL compatibility)
+    name: costonprem_kruize
     # user removed - stored in cost-onprem-db-credentials secret (key: kruize-user)
     # password removed - stored in cost-onprem-db-credentials secret (key: kruize-password)
 
   # Koku Database Configuration
   koku:
     # Database name on the unified server
-    name: koku
+    # Standardized naming: costonprem_<service> (underscores for PostgreSQL compatibility)
+    name: costonprem_koku
     # user removed - stored in cost-onprem-db-credentials secret (key: koku-user)
     # password removed - stored in cost-onprem-db-credentials secret (key: koku-password)
 
   # Sources Database Configuration
   sources:
     # Database name on the unified server (dedicated database for Sources API)
-    name: sources
+    # Standardized naming: costonprem_<service> (underscores for PostgreSQL compatibility)
+    name: costonprem_sources
     # user removed - stored in cost-onprem-db-credentials secret (key: sources-user)
     # password removed - stored in cost-onprem-db-credentials secret (key: sources-password)
 

@@ -144,7 +144,7 @@ class KubernetesClient:
         """
         return self.exec_in_pod(pod_name, ['python3', '-c', python_code])
 
-    def postgres_exec(self, pod_name: str, database: str, sql: str, user: str = 'koku') -> str:
+    def postgres_exec(self, pod_name: str, database: str, sql: str, user: str = 'postgres') -> str:
         """Execute SQL in PostgreSQL pod using subprocess (more reliable than websocket)
 
         Args:
