@@ -14,12 +14,13 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    # Allow traffic from ingress (envoy), housekeeper and sources-listener to Sources API REST endpoints
+    # Allow traffic from centralized gateway (pre-authenticated external requests)
+    # and internal services (housekeeper, sources-listener)
     - from:
         - podSelector:
             matchLabels:
               app.kubernetes.io/instance: {{ .Release.Name }}
-              app.kubernetes.io/component: ingress
+              app.kubernetes.io/component: gateway
         - podSelector:
             matchLabels:
               app.kubernetes.io/instance: {{ .Release.Name }}

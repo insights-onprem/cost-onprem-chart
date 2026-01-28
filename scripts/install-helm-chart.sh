@@ -898,20 +898,27 @@ show_status() {
     kubectl get routes -n "$NAMESPACE" 2>/dev/null || echo "  No routes found"
     echo ""
 
-    # Get route hosts for access
-    local main_route=$(kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[?(@.spec.path=="/")].spec.host}' 2>/dev/null)
-    local ingress_route=$(kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[?(@.spec.path=="/api/ingress")].spec.host}' 2>/dev/null)
-    local kruize_route=$(kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[?(@.spec.path=="/api/kruize")].spec.host}' 2>/dev/null)
+    # Get route hosts for access (Centralized Gateway Architecture)
+    # API route (/api) points to the gateway, UI route (/) points to UI service
+    local api_route=$(kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[?(@.spec.path=="/api")].spec.host}' 2>/dev/null)
+    local ui_route=$(kubectl get route -n "$NAMESPACE" -l app.kubernetes.io/component=ui -o jsonpath='{.items[0].spec.host}' 2>/dev/null)
 
-    if [ -n "$main_route" ]; then
+    if [ -n "$api_route" ] || [ -n "$ui_route" ]; then
         echo_info "Access Points (via OpenShift Routes):"
-        echo_info "  - Main API: http://$main_route/status"
-        if [ -n "$ingress_route" ]; then
-            echo_info "  - Ingress API: http://$ingress_route/api/ingress/ready"
+        if [ -n "$api_route" ]; then
+            echo_info "  Gateway API Route: https://$api_route/api"
+            echo_info "    All API traffic goes through the centralized Envoy gateway (JWT auth required)"
+            echo_info "    - Cost Management API: https://$api_route/api/cost-management/v1/status"
+            echo_info "    - Ingress API:         https://$api_route/api/ingress/ready"
+            echo_info "    - Sources API:         https://$api_route/api/sources/v3.1/applications"
+            echo_info "    - ROS Recommendations: https://$api_route/api/cost-management/v1/recommendations/openshift"
         fi
-        if [ -n "$kruize_route" ]; then
-            echo_info "  - Kruize API: http://$kruize_route/api/kruize/listPerformanceProfiles"
+        if [ -n "$ui_route" ]; then
+            echo_info "  UI Route: https://$ui_route/"
         fi
+        echo_info ""
+        echo_info "  Note: Kruize is internal-only. Use port-forward if needed:"
+        echo_info "    kubectl port-forward -n $NAMESPACE svc/${HELM_RELEASE_NAME}-kruize 8085:8085"
     else
         echo_warning "Routes not found. Use port-forwarding or check route configuration."
     fi

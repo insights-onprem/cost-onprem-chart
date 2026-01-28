@@ -123,15 +123,15 @@ class TestServices:
 class TestRoutes:
     """Tests for OpenShift routes."""
 
-    def test_ingress_route_exists(self, cluster_config):
-        """Verify ingress route exists."""
+    def test_api_gateway_route_exists(self, cluster_config):
+        """Verify API gateway route exists."""
         result = run_oc_command([
             "get", "route",
-            f"{cluster_config.helm_release_name}-ingress",
+            f"{cluster_config.helm_release_name}-api",
             "-n", cluster_config.namespace,
         ], check=False)
-        
-        assert result.returncode == 0, "Ingress route not found"
+
+        assert result.returncode == 0, "API gateway route not found"
 
     def test_routes_have_hosts(self, cluster_config):
         """Verify routes have assigned hosts."""

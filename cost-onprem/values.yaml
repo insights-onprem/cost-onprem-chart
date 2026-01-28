@@ -41,12 +41,6 @@ global:
       tag: "RELEASE.2025-07-21T05-28-08Z"
 
 # -----------------------------------------------------------------------------
-# Authentication Provider Configuration
-# -----------------------------------------------------------------------------
-auth:
-  provider: "oauth2"
-
-# -----------------------------------------------------------------------------
 # ROS (Resource Optimization Service) - Top-level Service
 # -----------------------------------------------------------------------------
 ros:
@@ -769,8 +763,8 @@ ingress:
 
   # Authentication configuration
   # Note: Authentication is available with Keycloak (RHBK).
-  # When JWT is enabled via Envoy sidecar, INGRESS_AUTH is set to false
-  # because the backend trusts the X-Rh-Identity header injected by Envoy.
+  # When JWT is enabled via centralized gateway, INGRESS_AUTH is set to false
+  # because the backend trusts the X-Rh-Identity header injected by the gateway.
   auth:
     enabled: true
 
@@ -964,10 +958,11 @@ odf:
 # JWT authentication with RHBK using Envoy's native JWT filter
 # Requires RHBK (Red Hat Build of Keycloak) to be deployed
 #
-# Architecture: Envoy sidecar validates JWT tokens inline using native jwt_authn filter
-# with Lua scripting to extract claims into X-ROS headers for the backend service.
+# Architecture: Centralized Envoy gateway validates JWT tokens inline using
+# native jwt_authn filter with Lua scripting to extract claims and inject
+# X-Rh-Identity header for backend services.
 jwtAuth:
-  # Envoy proxy sidecar (for JWT validation)
+  # Envoy proxy configuration (used by centralized gateway)
   envoy:
     image:
       repository: registry.redhat.io/openshift-service-mesh/proxyv2-rhel9

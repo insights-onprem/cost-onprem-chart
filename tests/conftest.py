@@ -180,35 +180,41 @@ def jwt_token(keycloak_config: KeycloakConfig) -> JWTToken:
 
 
 @pytest.fixture(scope="session")
-def ingress_url(cluster_config: ClusterConfig) -> str:
-    """Get the ingress service URL including the route path."""
-    route_name = f"{cluster_config.helm_release_name}-ingress"
+def gateway_url(cluster_config: ClusterConfig) -> str:
+    """Get the API gateway URL.
+
+    The centralized Envoy gateway handles all API traffic with JWT authentication.
+    Routes: /api/* -> gateway -> backend services
+    """
+    route_name = f"{cluster_config.helm_release_name}-api"
     url = get_route_url(cluster_config.namespace, route_name)
     if not url:
-        pytest.skip(f"Ingress route '{route_name}' not found")
-    
-    # Get the route path (e.g., /api/ingress)
+        pytest.skip(f"Gateway route '{route_name}' not found")
+
+    # Get the route path (e.g., /api)
     result = run_oc_command([
         "get", "route", route_name, "-n", cluster_config.namespace,
         "-o", "jsonpath={.spec.path}"
     ], check=False)
     route_path = result.stdout.strip().rstrip("/")
-    
+
     # Return URL with path
     return f"{url}{route_path}" if route_path else url
 
 
 @pytest.fixture(scope="session")
-def backend_api_url(cluster_config: ClusterConfig) -> str:
-    """Get the backend API URL."""
-    # Try different route name patterns
-    for route_suffix in ["main", "ros-api"]:
-        route_name = f"{cluster_config.helm_release_name}-{route_suffix}"
-        url = get_route_url(cluster_config.namespace, route_name)
-        if url:
-            return url
+def ingress_url(gateway_url: str) -> str:
+    """Get the ingress upload URL via the gateway.
 
-    pytest.skip("Backend API route not found")
+    All API traffic now routes through the centralized gateway.
+    Ingress upload endpoint: /api/ingress/v1/upload
+    """
+    # The gateway route already includes /api prefix
+    # Ingress endpoint is at /api/ingress/*
+    base = gateway_url.rstrip("/")
+    if base.endswith("/api"):
+        return f"{base}/ingress"
+    return f"{base}/api/ingress"
 
 
 @pytest.fixture(scope="session")

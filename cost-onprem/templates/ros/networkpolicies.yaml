@@ -133,7 +133,7 @@ spec:
           port: 9000  # Metrics port
 
 ---
-# NetworkPolicy to allow REST API traffic to ROS API via Envoy sidecar (from ingress/router)
+# NetworkPolicy to allow REST API traffic to ROS API from centralized gateway
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -150,38 +150,18 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    # Allow traffic from OpenShift router/ingress to Envoy sidecar
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              network.openshift.io/policy-group: ingress
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: openshift-ingress
-      ports:
-        - protocol: TCP
-          port: 9080  # Envoy sidecar port (jwt_auth.envoy.port)
-    # Allow traffic from UI component in the same namespace
+    # Allow traffic from centralized gateway (pre-authenticated)
     - from:
         - podSelector:
             matchLabels:
               app.kubernetes.io/instance: {{ .Release.Name }}
-              app.kubernetes.io/component: ui
+              app.kubernetes.io/component: gateway
       ports:
         - protocol: TCP
-          port: 9080  # Envoy sidecar port (when JWT enabled, service routes to Envoy)
-          # Allow traffic from ingress (envoy proxy) to Koku API REST endpoints
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
-              app.kubernetes.io/component: ingress
-      ports:
-        - protocol: TCP
-          port: 8000  # Koku API port (used by ingress envoy)
+          port: 8000  # ROS API container port
 
 ---
-# NetworkPolicy to allow REST API traffic to Cost Management API via Envoy sidecar (from ingress/router)
+# NetworkPolicy to allow REST API traffic to Cost Management API from centralized gateway
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -198,32 +178,12 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    # Allow traffic from OpenShift router/ingress to Envoy sidecar
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              network.openshift.io/policy-group: ingress
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: openshift-ingress
-      ports:
-        - protocol: TCP
-          port: 9080  # Envoy sidecar port (jwt_auth.envoy.port)
-    # Allow traffic from UI component in the same namespace
+    # Allow traffic from centralized gateway (pre-authenticated)
     - from:
         - podSelector:
             matchLabels:
               app.kubernetes.io/instance: {{ .Release.Name }}
-              app.kubernetes.io/component: ui
+              app.kubernetes.io/component: gateway
       ports:
         - protocol: TCP
-          port: 9080  # Envoy sidecar port (when JWT enabled, service routes to Envoy)
-          # Allow traffic from ingress (envoy proxy) to Cost Management API REST endpoints
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
-              app.kubernetes.io/component: ingress
-      ports:
-        - protocol: TCP
-          port: 8000  # Cost Management API port (used by ingress envoy)
+          port: 8000  # Cost Management API container port

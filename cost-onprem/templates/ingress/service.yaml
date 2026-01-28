@@ -9,16 +9,12 @@ metadata:
 spec:
   type: {{ .Values.service.type }}
   ports:
-    # Expose Envoy proxy port for external traffic (JWT auth)
-    - port: {{ .Values.ingress.server.port }}
-      targetPort: http-proxy  # Route to Envoy sidecar
+    # Expose ingress container port directly
+    # Traffic is pre-authenticated by centralized gateway
+    - port: 8081
+      targetPort: http
       protocol: TCP
       name: http
-    # Also expose Envoy admin port for debugging (internal use)
-    - port: {{ .Values.jwtAuth.envoy.adminPort }}
-      targetPort: admin
-      protocol: TCP
-      name: envoy-admin
   selector:
     {{- include "cost-onprem.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: ingress

@@ -1232,14 +1232,14 @@ class TestCompleteDataFlow:
 
     def test_09_recommendations_accessible_via_api(
         self,
-        backend_api_url: str,
+        gateway_url: str,
         keycloak_config,
         http_session: requests.Session,
     ):
         """Step 9: Verify recommendations are accessible via JWT-authenticated API."""
         # Get a fresh JWT token (the session-scoped one may have expired)
         from datetime import datetime, timedelta, timezone
-        
+
         token_response = http_session.post(
             keycloak_config.token_url,
             data={
@@ -1250,14 +1250,14 @@ class TestCompleteDataFlow:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             timeout=30,
         )
-        
+
         if token_response.status_code != 200:
             pytest.skip(f"Could not refresh JWT token: {token_response.status_code}")
-        
+
         fresh_token = token_response.json().get("access_token")
-        
+
         response = http_session.get(
-            f"{backend_api_url}/api/cost-management/v1/recommendations/openshift",
+            f"{gateway_url}/cost-management/v1/recommendations/openshift",
             headers={"Authorization": f"Bearer {fresh_token}"},
             timeout=30,
         )

@@ -106,10 +106,10 @@ class TestKafkaConsumerGroups:
         self, cluster_config, kafka_namespace: str, kafka_cluster_name: str
     ):
         """Verify Koku listener consumer group exists."""
-        # Find a Kafka pod to run commands
+        # Find a Kafka broker pod to run commands (not entity-operator or zookeeper)
         kafka_pod = get_pod_by_label(
             kafka_namespace,
-            f"strimzi.io/cluster={kafka_cluster_name},strimzi.io/kind=Kafka"
+            f"strimzi.io/name={kafka_cluster_name}-kafka"
         )
         
         if not kafka_pod:

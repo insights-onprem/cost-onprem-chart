@@ -1626,12 +1626,12 @@ echo "  3. Check ingress logs: oc logs -n cost-onprem deployment/cost-onprem-ing
 3. ✅ Add `account_number` mapper to client (RECOMMENDED for account-level isolation)
 4. ✅ Verify JWT contains both `org_id` and `account_number` claims
 5. ✅ Configure operator with client credentials
-6. ✅ Verify end-to-end flow (operator → envoy → ingress → backend)
+6. ✅ Verify end-to-end flow (operator → gateway → backend)
 
 **Key Takeaway:** The `org_id` claim is **mandatory** for ROS backend compatibility. The `account_number` claim is **recommended** for proper multi-tenant account isolation. The basic Keycloak deployment does not include these claims by default, so they must be added as a post-deployment step.
 
 For questions or issues, refer to:
 - `scripts/deploy-rhbk.sh` - Automated deployment
-- `scripts/test-ocp-dataflow-jwt.sh` - JWT testing
+- `scripts/run-pytest.sh --auth` - JWT authentication testing
 - `docs/troubleshooting.md` - Common issues
 

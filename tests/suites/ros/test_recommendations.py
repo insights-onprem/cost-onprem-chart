@@ -51,13 +51,16 @@ class TestRecommendationsAPI:
         auth_header = get_fresh_token(keycloak_config, http_session)
         if not auth_header:
             pytest.skip("Could not obtain fresh JWT token")
-        
-        response = http_session.get(
-            f"{ros_api_url}/api/cost-management/v1/recommendations/openshift",
-            headers=auth_header,
-            timeout=30,
-        )
-        
+
+        # Gateway route already includes /api prefix
+        base = ros_api_url.rstrip("/")
+        if base.endswith("/api"):
+            endpoint = f"{base}/cost-management/v1/recommendations/openshift"
+        else:
+            endpoint = f"{base}/api/cost-management/v1/recommendations/openshift"
+
+        response = http_session.get(endpoint, headers=auth_header, timeout=30)
+
         # Should not get auth errors
         assert response.status_code not in [401, 403], (
             f"Authentication failed: {response.status_code}"

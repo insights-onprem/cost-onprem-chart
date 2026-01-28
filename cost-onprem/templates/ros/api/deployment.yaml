@@ -28,52 +28,9 @@ spec:
         {{- if .Values.kafka.bootstrapServers }}
         {{- include "cost-onprem.initContainer.waitForKafka" . | nindent 8 }}
         {{- end }}
-        {{- include "cost-onprem.initContainer.prepareCABundle" . | nindent 8 }}
       containers:
-        # Envoy sidecar for OAuth2 TokenReview authentication
-        - name: envoy-proxy
-          image: "{{ .Values.jwtAuth.envoy.image.repository }}:{{ .Values.jwtAuth.envoy.image.tag }}"
-          imagePullPolicy: {{ .Values.global.pullPolicy }}
-          securityContext:
-            readOnlyRootFilesystem: true
-            {{- include "cost-onprem.securityContext.nonRoot" . | nindent 12 }}
-          ports:
-            - name: http-proxy
-              containerPort: {{ .Values.jwtAuth.envoy.port }}
-              protocol: TCP
-            - name: admin
-              containerPort: {{ .Values.jwtAuth.envoy.adminPort }}
-              protocol: TCP
-          command:
-            - /usr/local/bin/envoy
-          args:
-            - -c
-            - /etc/envoy/envoy.yaml
-            - --log-level
-            - {{ .Values.jwtAuth.envoy.logLevel | default "info" }}
-          volumeMounts:
-            - name: envoy-config
-              mountPath: /etc/envoy
-              readOnly: true
-            - name: ca-bundle
-              mountPath: /etc/ca-certificates
-              readOnly: true
-            - name: tmp
-              mountPath: /tmp
-          livenessProbe:
-            tcpSocket:
-              port: {{ .Values.jwtAuth.envoy.port }}
-            initialDelaySeconds: 15
-            periodSeconds: 20
-            timeoutSeconds: 3
-          readinessProbe:
-            tcpSocket:
-              port: {{ .Values.jwtAuth.envoy.port }}
-            initialDelaySeconds: 10
-            periodSeconds: 10
-            timeoutSeconds: 3
-          resources:
-            {{- toYaml .Values.jwtAuth.envoy.resources | nindent 12 }}
+        # ROS API - receives pre-authenticated traffic from centralized gateway
+        # Gateway validates JWT and injects X-Rh-Identity header
         - name: ros-api
           image: "{{ .Values.ros.image.repository }}:{{ .Values.ros.image.tag }}"
           imagePullPolicy: {{ .Values.ros.image.pullPolicy | default .Values.global.pullPolicy }}
@@ -129,8 +86,6 @@ spec:
               value: {{ include "cost-onprem.kafka.bootstrapServers" . | quote }}
             - name: KAFKA_SECURITY_PROTOCOL
               value: {{ include "cost-onprem.kafka.securityProtocol" . | quote }}
-            - name: ID_PROVIDER
-              value: {{ .Values.auth.provider | quote }}
           livenessProbe:
             httpGet:
               path: /status
@@ -149,27 +104,3 @@ spec:
             failureThreshold: {{ .Values.probes.failureThreshold }}
           resources:
             {{- toYaml .Values.resources.application | nindent 12 }}
-      volumes:
-        # Envoy configuration volume
-        - name: envoy-config
-          configMap:
-            name: {{ include "cost-onprem.fullname" . }}-envoy-config-ros-api
-            items:
-              - key: envoy.yaml
-                path: envoy.yaml
-        # CA bundle preparation volumes
-        - name: ca-scripts
-          configMap:
-            name: {{ include "cost-onprem.fullname" . }}-ca-scripts
-            items:
-              - key: combine-ca.sh
-                path: combine-ca.sh
-                mode: 0755
-        - name: ca-source
-          configMap:
-            name: {{ include "cost-onprem.fullname" . }}-ca-scripts
-        - name: ca-bundle
-          emptyDir: {}
-        # Temporary directory for Envoy (required with read-only root filesystem)
-        - name: tmp
-          emptyDir: {}

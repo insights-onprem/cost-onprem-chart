@@ -612,23 +612,28 @@ brew install python3
 ### Running the Tests
 
 ```bash
+# Option 1: Run pytest test suite (~3 minutes)
+NAMESPACE=cost-onprem ./scripts/run-pytest.sh
+
+# Option 2: Run specific test suites
+./scripts/run-pytest.sh --e2e        # E2E tests only
+./scripts/run-pytest.sh --auth       # Authentication tests
+./scripts/run-pytest.sh --ros        # ROS-specific tests
+
+# Option 3: Full Cost Management E2E test (~3 minutes)
 cd scripts
-
-# Option 1: ROS-only E2E test with NISE-generated data (~5 minutes)
-./test-ocp-dataflow-jwt.sh
-
-# Option 2: Full Cost Management E2E test (~3 minutes)
 ./cost-mgmt-ocp-dataflow.sh --namespace cost-onprem --force
 ```
 
-### What the ROS E2E Test Validates
+### What the Pytest Suite Validates
 
-1. ✅ **NISE Integration** - Automatic installation and production-like data generation (73 lines)
-2. ✅ **Data Upload** - Generates realistic test data and uploads via JWT auth
-3. ✅ **Ingress Processing** - CSV file uploaded to S3
-4. ✅ **ROS Processing** - CSV downloaded from S3, parsed successfully (CRLF conversion)
+1. ✅ **Gateway Authentication** - JWT validation through centralized gateway
+2. ✅ **Data Upload** - Generates test data and uploads via gateway with JWT auth
+3. ✅ **Ingress Processing** - File uploaded to S3
+4. ✅ **ROS Processing** - CSV downloaded from S3, parsed successfully
 5. ✅ **Kruize Integration** - Recommendations generated with actual CPU/memory values
-6. ✅ **ROS-Only Mode** - Skips Koku processing for faster validation
+6. ✅ **Koku Processing** - Cost data processing and summary generation
+7. ✅ **Database Validation** - Verifies data in PostgreSQL tables
 
 ### What the Cost Management Test Validates
 
@@ -641,26 +646,18 @@ cd scripts
 7. ✅ **Aggregation** - Summary table generation
 8. ✅ **Validation** - Verifies cost calculations
 
-### Expected Output (ROS E2E Test)
+### Expected Output (Pytest Suite)
 
 ```
-[SUCCESS] ===== ROS E2E Test Summary =====
+========================= test session starts ==========================
+collected 88 items
 
-Upload Status: ✅ HTTP 202 Accepted
-Koku Processing: ⏭️  Skipped (ROS-only test)
-ROS Processing: ✅ CSV downloaded and parsed successfully
-Kruize Status: ✅ Recommendations generated
+tests/suites/auth/test_gateway_auth.py::TestGatewayJWTAuthentication::test_gateway_reachable PASSED
+tests/suites/auth/test_gateway_auth.py::TestGatewayJWTAuthentication::test_valid_token_accepted PASSED
+tests/suites/e2e/test_complete_flow.py::TestCompleteFlow::test_upload_accepted PASSED
+...
 
-Recommendation details (short_term cost optimization):
- experiment_name                    | interval_end_time | cpu_request | cpu_limit | memory_request | memory_limit
-------------------------------------+-------------------+-------------+-----------+----------------+--------------
- org1234567;test-cluster-1769027891 | 2026-01-21 20:00  | 1.78 cores  | 1.78 cores| 3.64 GB        | 3.64 GB
-
-[SUCCESS] ✅ ROS-ONLY TEST PASSED!
-[SUCCESS] Found 1 recommendation(s) for cluster test-cluster-1769027891
-
-Test Duration: ~5 minutes
-Pipeline Validated: Ingress → ROS → Kruize → Recommendations
+========================= 88 passed in 180.25s =========================
 ```
 
 ### Expected Output (Cost Management Test)

@@ -27,50 +27,10 @@ spec:
         {{- if .Values.kafka.bootstrapServers }}
         {{- include "cost-onprem.initContainer.waitForKafka" . | nindent 8 }}
         {{- end }}
-        {{- include "cost-onprem.initContainer.prepareCABundle" . | nindent 8 }}
       serviceAccountName: {{ .Values.ingress.serviceAccount.name }}
       containers:
-        # Envoy sidecar for native JWT authentication
-        - name: envoy-proxy
-          image: "{{ .Values.jwtAuth.envoy.image.repository }}:{{ .Values.jwtAuth.envoy.image.tag }}"
-          imagePullPolicy: {{ .Values.global.pullPolicy }}
-          ports:
-            - name: http-proxy
-              containerPort: {{ .Values.jwtAuth.envoy.port }}
-              protocol: TCP
-            - name: admin
-              containerPort: {{ .Values.jwtAuth.envoy.adminPort }}
-              protocol: TCP
-          command:
-            - /usr/local/bin/envoy
-          args:
-            - -c
-            - /etc/envoy/envoy.yaml
-            - --log-level
-            - {{ .Values.jwtAuth.envoy.logLevel | default "info" }}
-          volumeMounts:
-            - name: envoy-config
-              mountPath: /etc/envoy
-              readOnly: true
-            - name: ca-bundle
-              mountPath: /etc/ca-certificates
-              readOnly: true
-          livenessProbe:
-            httpGet:
-              path: /ready
-              port: {{ .Values.jwtAuth.envoy.adminPort }}
-            initialDelaySeconds: 15
-            periodSeconds: 20
-            timeoutSeconds: 3
-          readinessProbe:
-            httpGet:
-              path: /ready
-              port: {{ .Values.jwtAuth.envoy.adminPort }}
-            initialDelaySeconds: 5
-            periodSeconds: 10
-            timeoutSeconds: 3
-          resources:
-            {{- toYaml .Values.jwtAuth.envoy.resources | nindent 12 }}
+        # Ingress service - receives pre-authenticated traffic from centralized gateway
+        # Gateway validates JWT and injects X-Rh-Identity header
         - name: ingress
           image: "{{ .Values.ingress.image.repository }}:{{ .Values.ingress.image.tag }}"
           imagePullPolicy: {{ .Values.ingress.image.pullPolicy | default .Values.global.pullPolicy }}
@@ -127,9 +87,9 @@ spec:
               value: {{ .Values.ingress.kafka.groupId | default "ingress" | quote }}
 
             # Authentication configuration
-            # JWT is handled by Envoy sidecar, the backend trusts X-Rh-Identity header
+            # JWT is handled by centralized gateway, backend trusts X-Rh-Identity header
             - name: INGRESS_AUTH
-              value: "false"  # Auth is handled by Envoy sidecar, backend trusts X-Rh-Identity
+              value: "false"  # Auth is handled by gateway, backend trusts X-Rh-Identity
 
             # Logging configuration
             - name: INGRESS_LOGLEVEL
@@ -162,26 +122,6 @@ spec:
               subPath: service-ca.crt
               readOnly: true
       volumes:
-        # Envoy configuration volume
-        - name: envoy-config
-          configMap:
-            name: {{ include "cost-onprem.fullname" . }}-envoy-config-ingress
-            items:
-              - key: envoy.yaml
-                path: envoy.yaml
-        # CA bundle preparation volumes
-        - name: ca-scripts
-          configMap:
-            name: {{ include "cost-onprem.fullname" . }}-ca-scripts
-            items:
-              - key: combine-ca.sh
-                path: combine-ca.sh
-                mode: 0755
-        - name: ca-source
-          configMap:
-            name: {{ include "cost-onprem.fullname" . }}-ca-scripts
-        - name: ca-bundle
-          emptyDir: {}
         - name: aws-config
           configMap:
             name: {{ include "cost-onprem.fullname" . }}-aws-config

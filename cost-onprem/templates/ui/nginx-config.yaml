@@ -9,27 +9,22 @@ metadata:
     app.kubernetes.io/component: ui
 data:
   nginx.conf: |
-    # ROS API - recommendations endpoint (more specific path, matched first)
-    location /api/cost-management/v1/recommendations/openshift {
-      proxy_pass http://{{ include "cost-onprem.fullname" . }}-ros-api:{{ .Values.ros.api.port }};
+    # All API calls go through the centralized gateway for JWT validation and routing
+    # The gateway handles:
+    # - JWT authentication via Keycloak
+    # - X-Rh-Identity header injection
+    # - Path-based routing to backend services (koku, ros, sources, ingress)
+    # - Method-based routing for Koku read/write split
+    location /api/ {
+      proxy_pass http://{{ include "cost-onprem.fullname" . }}-gateway:80;
       proxy_set_header Host $host;
       proxy_set_header X-Real-IP $remote_addr;
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
       proxy_http_version 1.1;
       proxy_set_header Connection "";
-    }
-
-    # Koku API - all other cost-management endpoints
-    # Route through Ingress Envoy for JWT validation and X-Rh-Identity injection
-    # The oauth-proxy passes Authorization header, Envoy validates JWT and creates X-Rh-Identity
-    # Uses ingress.server.port (8080) which maps to Envoy's http-proxy port (9080)
-    location /api/cost-management/v1 {
-      proxy_pass http://{{ include "cost-onprem.fullname" . }}-ingress:{{ .Values.ingress.server.port }};
-      proxy_set_header Host $host;
-      proxy_set_header X-Real-IP $remote_addr;
-      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-      proxy_http_version 1.1;
-      proxy_set_header Connection "";
+      # Extended timeout for large API responses
+      proxy_read_timeout 60s;
+      proxy_send_timeout 60s;
     }
 
     location / {

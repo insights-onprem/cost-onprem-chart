@@ -243,13 +243,13 @@ oc exec -n openshift-monitoring prometheus-k8s-0 -- \
 
 **Common Causes and Fixes**:
 
-1. **External traffic not using Envoy sidecar (port 8080)**
-   - **Symptom**: Direct access to backend ports (8000, 8001, 8081) fails
-   - **Fix**: Ensure routes and ingresses point to port 8080, not backend ports
+1. **External traffic not routing through centralized gateway (port 9080)**
+   - **Symptom**: Direct access to backend ports (8000, 8001, 8081) fails or bypasses JWT authentication
+   - **Fix**: Ensure API routes point to the centralized gateway, not backend services directly
    ```bash
-   # Check route configuration
-   oc get route cost-onprem-main -n cost-onprem -o yaml | grep targetPort
-   # Should show: targetPort: 8080
+   # Check API route configuration
+   oc get route cost-onprem-api -n cost-onprem -o yaml | grep targetPort
+   # Should show: targetPort: 9080 (gateway)
    ```
 
 2. **Prometheus can't scrape metrics**
@@ -278,36 +278,34 @@ oc exec -n openshift-monitoring prometheus-k8s-0 -- \
 **Symptoms**:
 - 401 Unauthorized errors
 - Logs show "Invalid or missing identity"
-- Envoy sidecar not injecting headers
+- Gateway not injecting headers
 
 **Diagnosis**:
 ```bash
-# Check if Envoy sidecars are running
-oc get pods -n cost-onprem -o json | \
-  jq -r '.items[] | select(.spec.containers | length > 1) | .metadata.name'
-# Should show pods with multiple containers (app + envoy-proxy)
+# Check if gateway is running
+oc get pods -n cost-onprem -l app.kubernetes.io/component=gateway
 
-# Check Envoy logs
-oc logs -n cost-onprem deployment/cost-onprem-ingress -c envoy-proxy --tail=50
+# Check gateway logs
+oc logs -n cost-onprem -l app.kubernetes.io/component=gateway --tail=50
 
-# Check Envoy configuration
-oc get configmap cost-onprem-envoy-config-ingress -n cost-onprem -o yaml
+# Check gateway Envoy configuration
+oc get configmap cost-onprem-gateway-envoy-config -n cost-onprem -o yaml
 
-# Verify Keycloak connectivity
-oc exec -n cost-onprem deployment/cost-onprem-ingress -c envoy-proxy -- \
+# Verify Keycloak connectivity from gateway
+oc exec -n cost-onprem deployment/cost-onprem-gateway -- \
   curl -k -I https://keycloak-keycloak.apps.example.com
 ```
 
 **Common Causes and Fixes**:
 
-1. **Envoy sidecar not deployed**
+1. **Gateway not deployed**
    - **Cause**: Platform not detected as OpenShift or JWT disabled
    - **Fix**: Verify OpenShift API groups are available
    ```bash
    kubectl api-resources | grep route.openshift.io
    ```
 
-2. **Keycloak URL not reachable from Envoy**
+2. **Keycloak URL not reachable from gateway**
    - **Cause**: Network connectivity or DNS issues
    - **Fix**: Check Keycloak route and connectivity
    ```bash
@@ -389,6 +387,9 @@ kubectl cluster-info
 # Check network policies (OpenShift)
 oc get networkpolicies -n cost-onprem
 
-# Check Envoy sidecars (OpenShift)
-oc get pods -n cost-onprem -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.name}{" "}{end}{"\n"}{end}'
+# Check centralized gateway pod (OpenShift)
+oc get pods -n cost-onprem -l app.kubernetes.io/component=gateway
+
+# Check gateway logs for JWT validation
+oc logs -n cost-onprem -l app.kubernetes.io/component=gateway --tail=50
 ```

@@ -4,11 +4,11 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "cost-onprem.fullname" . }}-envoy-config-ros-api
+  name: {{ include "cost-onprem.fullname" . }}-gateway-envoy-config
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "cost-onprem.labels" . | nindent 4 }}
-    app.kubernetes.io/component: api
+    app.kubernetes.io/component: gateway
 data:
   envoy.yaml: |
     static_resources:
@@ -30,7 +30,7 @@ data:
           - name: envoy.filters.network.http_connection_manager
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
-              stat_prefix: ros_api_http
+              stat_prefix: gateway_http
               codec_type: AUTO
               request_timeout: 60s
               stream_idle_timeout: 300s
@@ -71,21 +71,91 @@ data:
                 name: local_route
                 virtual_hosts:
                 - name: backend
-                  # Wildcard domain appropriate for sidecar pattern:
-                  # - External host validation occurs at OpenShift Route level
-                  # - Envoy receives internal pod traffic (localhost/service names)
-                  # - No host header injection risk in this architecture
                   domains: ["*"]
                   routes:
+                  # =========================================================================
+                  # ROUTING PRIORITY ORDER (Envoy uses first-match)
+                  # =========================================================================
+                  # 1. ROS recommendations (most specific path, must match before /api/cost-management/)
+                  # 2. Cost Management API - Read operations (GET, HEAD)
+                  # 3. Cost Management API - Write operations (POST, PUT, DELETE, PATCH)
+                  # 4. Sources API
+                  # 5. Ingress (file upload)
+                  # =========================================================================
+
+                  # 1. ROS Recommendations - Route to ROS API service
+                  # Must be before general /api/cost-management/ routes
                   - match:
-                      prefix: "/"
+                      prefix: "/api/cost-management/v1/recommendations/openshift"
                     route:
-                      cluster: rosocp-api-backend
+                      cluster: ros-api-backend
+                      timeout: 30s
+                      retry_policy:
+                        retry_on: 5xx,reset,connect-failure,refused-stream
+                        num_retries: 2
+                        per_try_timeout: 15s
+
+                  # 2. Cost Management API - Read operations (GET, HEAD) route to reads service
+                  - match:
+                      prefix: "/api/cost-management/"
+                      headers:
+                      - name: ":method"
+                        string_match:
+                          exact: "GET"
+                    route:
+                      cluster: koku-api-reads-backend
+                      timeout: 60s
+                      retry_policy:
+                        retry_on: 5xx,reset,connect-failure,refused-stream
+                        num_retries: 2
+                        per_try_timeout: 30s
+                  - match:
+                      prefix: "/api/cost-management/"
+                      headers:
+                      - name: ":method"
+                        string_match:
+                          exact: "HEAD"
+                    route:
+                      cluster: koku-api-reads-backend
+                      timeout: 60s
+                      retry_policy:
+                        retry_on: 5xx,reset,connect-failure,refused-stream
+                        num_retries: 2
+                        per_try_timeout: 30s
+
+                  # 3. Cost Management API - Write operations (POST, PUT, DELETE, PATCH) route to writes service
+                  - match:
+                      prefix: "/api/cost-management/"
+                    route:
+                      cluster: koku-api-writes-backend
+                      timeout: 60s
+                      retry_policy:
+                        retry_on: 5xx,reset,connect-failure,refused-stream
+                        num_retries: 2
+                        per_try_timeout: 30s
+
+                  # 4. Sources API - routes to Sources API service
+                  - match:
+                      prefix: "/api/sources/"
+                    route:
+                      cluster: sources-api-backend
+                      timeout: 30s
+                      retry_policy:
+                        retry_on: 5xx,reset,connect-failure,refused-stream
+                        num_retries: 2
+                        per_try_timeout: 15s
+
+                  # 5. File upload ingress - routes to ingress backend
+                  - match:
+                      prefix: "/api/ingress/"
+                    route:
+                      cluster: ingress-backend
                       timeout: 30s
                       retry_policy:
                         retry_on: 5xx,reset,connect-failure,refused-stream
                         num_retries: 2
                         per_try_timeout: 10s
+
               http_filters:
               # JWT authentication filter
               - name: envoy.filters.http.jwt_authn
@@ -106,9 +176,6 @@ data:
                         cache_duration:
                           seconds: 300
                       forward: true
-                      # TODO: Review if forward_payload_header is needed for compatibility.
-                      # Forwarding full JWT payload in headers poses information disclosure risk
-                      # if backend services log headers. Consider removing in future if not required.
                       forward_payload_header: jwt-payload
                       payload_in_metadata: keycloak
                   rules:
@@ -361,18 +428,19 @@ data:
                   "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
 
       clusters:
-      # ROS OCP API backend (port 8000)
-      - name: rosocp-api-backend
+      # ROS API backend for recommendations
+      - name: ros-api-backend
         connect_timeout: 5s
-        type: STATIC
+        type: STRICT_DNS
+        dns_refresh_rate: 30s
         load_assignment:
-          cluster_name: rosocp-api-backend
+          cluster_name: ros-api-backend
           endpoints:
           - lb_endpoints:
             - endpoint:
                 address:
                   socket_address:
-                    address: 127.0.0.1
+                    address: {{ include "cost-onprem.fullname" . }}-ros-api.{{ .Release.Namespace }}.svc.cluster.local
                     port_value: 8000
         circuit_breakers:
           thresholds:
@@ -381,16 +449,94 @@ data:
             max_pending_requests: 1024
             max_requests: 1024
             max_retries: 3
-        health_checks:
-        - timeout: 5s
-          interval: 10s
-          unhealthy_threshold: 3
-          healthy_threshold: 2
-          http_health_check:
-            path: "/status"
-            expected_statuses:
-            - start: 200
-              end: 299
+
+      # Koku API Reads backend for Cost Management read operations (GET, HEAD)
+      - name: koku-api-reads-backend
+        connect_timeout: 5s
+        type: STRICT_DNS
+        dns_refresh_rate: 30s
+        load_assignment:
+          cluster_name: koku-api-reads-backend
+          endpoints:
+          - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: {{ include "cost-onprem.koku.api.reads.name" . }}.{{ .Release.Namespace }}.svc.cluster.local
+                    port_value: 8000
+        circuit_breakers:
+          thresholds:
+          - priority: DEFAULT
+            max_connections: 1024
+            max_pending_requests: 1024
+            max_requests: 1024
+            max_retries: 3
+
+      # Koku API Writes backend for Cost Management write operations (POST, PUT, DELETE, PATCH)
+      - name: koku-api-writes-backend
+        connect_timeout: 5s
+        type: STRICT_DNS
+        dns_refresh_rate: 30s
+        load_assignment:
+          cluster_name: koku-api-writes-backend
+          endpoints:
+          - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: {{ include "cost-onprem.koku.api.writes.name" . }}.{{ .Release.Namespace }}.svc.cluster.local
+                    port_value: 8000
+        circuit_breakers:
+          thresholds:
+          - priority: DEFAULT
+            max_connections: 1024
+            max_pending_requests: 1024
+            max_requests: 1024
+            max_retries: 3
+
+      # Sources API backend for provider management
+      - name: sources-api-backend
+        connect_timeout: 5s
+        type: STRICT_DNS
+        dns_refresh_rate: 30s
+        load_assignment:
+          cluster_name: sources-api-backend
+          endpoints:
+          - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: {{ include "cost-onprem.fullname" . }}-sources-api.{{ .Release.Namespace }}.svc.cluster.local
+                    port_value: 8000
+        circuit_breakers:
+          thresholds:
+          - priority: DEFAULT
+            max_connections: 512
+            max_pending_requests: 512
+            max_requests: 512
+            max_retries: 3
+
+      # Ingress backend for file upload
+      - name: ingress-backend
+        connect_timeout: 5s
+        type: STRICT_DNS
+        dns_refresh_rate: 30s
+        load_assignment:
+          cluster_name: ingress-backend
+          endpoints:
+          - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: {{ include "cost-onprem.fullname" . }}-ingress.{{ .Release.Namespace }}.svc.cluster.local
+                    port_value: 8081
+        circuit_breakers:
+          thresholds:
+          - priority: DEFAULT
+            max_connections: 1024
+            max_pending_requests: 1024
+            max_requests: 1024
+            max_retries: 3
 
       # Keycloak JWKS endpoint for JWT signature verification
       - name: keycloak_jwks
@@ -441,4 +587,3 @@ data:
         socket_address:
           address: 0.0.0.0
           port_value: {{ .Values.jwtAuth.envoy.adminPort }}
-

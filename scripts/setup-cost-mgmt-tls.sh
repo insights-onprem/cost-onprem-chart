@@ -390,7 +390,7 @@ OPTIONS:
     -n, --namespace NAMESPACE           Cost Management operator namespace (default: $DEFAULT_NAMESPACE)
     -k, --keycloak-namespace NAMESPACE  Keycloak namespace (default: $DEFAULT_KEYCLOAK_NAMESPACE)
     -c, --client-id CLIENT_ID           Keycloak client ID (default: $DEFAULT_CLIENT_ID)
-    -i, --ingress-url URL               Ingress URL (auto-detected if not provided)
+    -i, --ingress-url URL               Gateway API URL (auto-detected from gateway route if not provided)
     -s, --keycloak-url URL              Keycloak URL (auto-detected if not provided)
     -v, --verbose                       Enable verbose output
     -d, --dry-run                       Show what would be done without executing
@@ -465,51 +465,53 @@ check_prerequisites() {
         print_success "Keycloak appears to be running"
     fi
 
-    # Auto-detect ingress URL if not provided
+    # Auto-detect API gateway URL if not provided
+    # With centralized gateway architecture, all API traffic (including ingress uploads)
+    # goes through the gateway route with path /api
     if [[ -z "$DEFAULT_INGRESS_URL" ]]; then
-        # First try: Search in the target namespace (most reliable, no cluster-wide permissions needed)
-        local ingress_name=$(oc get route -n "$NAMESPACE" --no-headers -l 'app.kubernetes.io/component=ingress' -o custom-columns=NAME:.metadata.name 2>/dev/null | head -n1)
+        # First try: Search for gateway route in the target namespace (most reliable, no cluster-wide permissions needed)
+        local gateway_name=$(oc get route -n "$NAMESPACE" --no-headers -l 'app.kubernetes.io/component=gateway' -o custom-columns=NAME:.metadata.name 2>/dev/null | head -n1)
 
-        if [[ -n "$ingress_name" ]]; then
-            local ingress_host=$(oc get route "$ingress_name" -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null)
-            local tls_termination=$(oc get route "$ingress_name" -n "$NAMESPACE" -o jsonpath='{.spec.tls.termination}' 2>/dev/null)
+        if [[ -n "$gateway_name" ]]; then
+            local gateway_host=$(oc get route "$gateway_name" -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null)
+            local tls_termination=$(oc get route "$gateway_name" -n "$NAMESPACE" -o jsonpath='{.spec.tls.termination}' 2>/dev/null)
 
-            if [[ -n "$ingress_host" ]]; then
+            if [[ -n "$gateway_host" ]]; then
                 if [[ -n "$tls_termination" ]]; then
-                    DEFAULT_INGRESS_URL="https://$ingress_host"
+                    DEFAULT_INGRESS_URL="https://$gateway_host"
                 else
-                    DEFAULT_INGRESS_URL="http://$ingress_host"
+                    DEFAULT_INGRESS_URL="http://$gateway_host"
                 fi
-                print_success "Auto-detected ingress URL from namespace $NAMESPACE: $DEFAULT_INGRESS_URL (TLS: ${tls_termination:-none})"
+                print_success "Auto-detected gateway URL from namespace $NAMESPACE: $DEFAULT_INGRESS_URL (TLS: ${tls_termination:-none})"
             fi
         fi
 
         # Second try: Fall back to cluster-wide search (requires cluster-wide permissions)
         if [[ -z "$DEFAULT_INGRESS_URL" ]]; then
-            local ingress_ns
-            ingress_ns=$(oc get route -A --no-headers -l 'app.kubernetes.io/component=ingress' 2>/dev/null | head -n1 | awk '{print $1}')
-            ingress_name=$(oc get route -A --no-headers -l 'app.kubernetes.io/component=ingress' 2>/dev/null | head -n1 | awk '{print $2}')
+            local gateway_ns
+            gateway_ns=$(oc get route -A --no-headers -l 'app.kubernetes.io/component=gateway' 2>/dev/null | head -n1 | awk '{print $1}')
+            gateway_name=$(oc get route -A --no-headers -l 'app.kubernetes.io/component=gateway' 2>/dev/null | head -n1 | awk '{print $2}')
 
-            if [[ -n "$ingress_ns" ]] && [[ -n "$ingress_name" ]]; then
-                local ingress_host
-                ingress_host=$(oc get route "$ingress_name" -n "$ingress_ns" -o jsonpath='{.spec.host}' 2>/dev/null)
+            if [[ -n "$gateway_ns" ]] && [[ -n "$gateway_name" ]]; then
+                local gateway_host
+                gateway_host=$(oc get route "$gateway_name" -n "$gateway_ns" -o jsonpath='{.spec.host}' 2>/dev/null)
                 local tls_termination
-                tls_termination=$(oc get route "$ingress_name" -n "$ingress_ns" -o jsonpath='{.spec.tls.termination}' 2>/dev/null)
+                tls_termination=$(oc get route "$gateway_name" -n "$gateway_ns" -o jsonpath='{.spec.tls.termination}' 2>/dev/null)
 
-                if [[ -n "$ingress_host" ]]; then
+                if [[ -n "$gateway_host" ]]; then
                     if [[ -n "$tls_termination" ]]; then
-                        DEFAULT_INGRESS_URL="https://$ingress_host"
+                        DEFAULT_INGRESS_URL="https://$gateway_host"
                     else
-                        DEFAULT_INGRESS_URL="http://$ingress_host"
+                        DEFAULT_INGRESS_URL="http://$gateway_host"
                     fi
-                    print_success "Auto-detected ingress URL from namespace $ingress_ns: $DEFAULT_INGRESS_URL (TLS: ${tls_termination:-none})"
+                    print_success "Auto-detected gateway URL from namespace $gateway_ns: $DEFAULT_INGRESS_URL (TLS: ${tls_termination:-none})"
                 fi
             fi
         fi
 
         if [[ -z "$DEFAULT_INGRESS_URL" ]]; then
-            print_warning "Could not auto-detect ingress URL"
-            print_warning "Searched in namespace '$NAMESPACE' and cluster-wide for routes with label 'app.kubernetes.io/component=ingress'"
+            print_warning "Could not auto-detect gateway URL"
+            print_warning "Searched in namespace '$NAMESPACE' and cluster-wide for routes with label 'app.kubernetes.io/component=gateway'"
         fi
     fi
 
@@ -766,7 +768,8 @@ create_metrics_config() {
 
     # Validate that URLs were detected
     if [[ -z "$INGRESS_URL" ]]; then
-        print_error "Ingress URL was not detected"
+        print_error "Gateway URL was not detected"
+        print_error "The centralized API gateway route (app.kubernetes.io/component=gateway) was not found"
         print_error "Please provide it manually: $0 --ingress-url <url>"
         exit 1
     fi
@@ -777,7 +780,7 @@ create_metrics_config() {
         exit 1
     fi
 
-    print_status "Using ingress URL: $INGRESS_URL"
+    print_status "Using gateway URL: $INGRESS_URL"
     print_status "Using Keycloak URL: $KEYCLOAK_URL"
 
     if [[ "$DRY_RUN" != "true" ]]; then
@@ -789,7 +792,8 @@ metadata:
   namespace: $NAMESPACE
 spec:
   # API URL - Base URL for uploads (defaults to console.redhat.com if not set)
-  # IMPORTANT: Set to local ingress to avoid uploading to Red Hat's hosted service
+  # IMPORTANT: Set to local gateway URL to avoid uploading to Red Hat's hosted service
+  # All API traffic goes through the centralized Envoy gateway for JWT authentication
   api_url: "$INGRESS_URL"
 
   # Authentication configuration for Keycloak with JWT
@@ -889,8 +893,8 @@ show_completion_summary() {
     echo -e "• ✅ CA certificates extracted and configured for self-signed cert support"
     echo -e "• ✅ Keycloak JWT authentication configured (service-account type)"
     echo -e "• ✅ Client credentials: $CLIENT_ID (stored in cost-management-auth-secret)"
-    echo -e "• ✅ CostManagementMetricsConfig created with local ingress URL"
-    echo -e "• ✅ API URL set to ${INGRESS_URL:-local ingress} (NOT console.redhat.com)"
+    echo -e "• ✅ CostManagementMetricsConfig created with local gateway URL"
+    echo -e "• ✅ API URL set to ${INGRESS_URL:-local gateway} (NOT console.redhat.com)"
     echo -e "• ✅ TLS certificate validation disabled for self-signed Keycloak certificates"
     echo -e "• ✅ Operator will acquire JWT tokens via client_credentials flow"
     echo -e "• ✅ All components validated and ready for use"
