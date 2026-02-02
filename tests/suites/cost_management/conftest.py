@@ -9,6 +9,7 @@ Includes the cost_validation_data fixture that runs the full E2E flow for cost v
 This makes cost_validation tests SELF-CONTAINED - they don't depend on other test modules.
 """
 
+import json
 import os
 import shutil
 import tempfile
@@ -28,12 +29,14 @@ from e2e_helpers import (
     generate_nise_data,
     get_koku_api_reads_url,
     get_koku_api_writes_url,
+    get_source_type_id,
     register_source,
     upload_with_retry,
     wait_for_provider,
     wait_for_summary_tables,
 )
 from utils import (
+    create_identity_header_custom,
     create_rh_identity_header,
     create_upload_package_from_files,
     execute_db_query,
@@ -436,5 +439,174 @@ def cost_validation_data(cluster_config, s3_config, keycloak_config, ingress_url
         if temp_dir and os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
             print("  Cleaned up temp directory")
-        
+
         print(f"{'='*60}\n")
+
+
+# =============================================================================
+# Sources API Test Fixtures
+# =============================================================================
+
+
+@pytest.fixture(scope="module")
+def invalid_identity_headers(org_id):
+    """Dict of invalid headers for authentication error testing.
+
+    Returns a dictionary with various invalid header configurations:
+    - malformed_base64: Invalid base64 string
+    - invalid_json: Valid base64 but invalid JSON content
+    - no_entitlements: Missing cost_management entitlement
+    - not_entitled: cost_management is_entitled=False
+    - non_admin: is_org_admin=False
+    - no_email: Missing email field
+    """
+    import base64
+
+    return {
+        "malformed_base64": "not-valid-base64!!!",
+        "invalid_json": base64.b64encode(b"not valid json").decode(),
+        "no_entitlements": create_identity_header_custom(
+            org_id=org_id,
+            entitlements={},  # Empty entitlements
+        ),
+        "not_entitled": create_identity_header_custom(
+            org_id=org_id,
+            entitlements={
+                "cost_management": {
+                    "is_entitled": False,
+                },
+            },
+        ),
+        "non_admin": create_identity_header_custom(
+            org_id=org_id,
+            is_org_admin=False,
+        ),
+        "no_email": create_identity_header_custom(
+            org_id=org_id,
+            email=None,  # Omit email field
+        ),
+    }
+
+
+@pytest.fixture(scope="function")
+def test_source(
+    cluster_config,
+    ingress_pod,
+    koku_api_reads_url,
+    koku_api_writes_url,
+    rh_identity_header,
+    org_id,
+):
+    """Create a test source with automatic cleanup.
+
+    This fixture creates a source for tests that need an existing source,
+    and automatically deletes it after the test completes.
+
+    Yields:
+        dict with keys: source_id, source_name, cluster_id, source_type_id
+    """
+    import time
+    import uuid
+
+    # Get source type ID with retry
+    source_type_id = None
+    for attempt in range(3):
+        source_type_id = get_source_type_id(
+            cluster_config.namespace,
+            ingress_pod,
+            koku_api_reads_url,
+            rh_identity_header,
+            container="ingress",
+        )
+        if source_type_id:
+            break
+        time.sleep(2)
+
+    if not source_type_id:
+        pytest.skip("Could not get OpenShift source type ID")
+
+    # Create source with retry logic for transient CI failures
+    # Generate unique IDs inside loop to avoid duplicate errors on retry
+    result = None
+    last_error = None
+    max_attempts = 5
+    test_cluster_id = None
+    source_name = None
+    status_code = None
+
+    for attempt in range(max_attempts):
+        # Generate new unique identifiers for each attempt to avoid duplicates
+        test_cluster_id = f"test-source-{uuid.uuid4().hex[:8]}"
+        source_name = f"test-source-{uuid.uuid4().hex[:8]}"
+
+        source_payload = json.dumps({
+            "name": source_name,
+            "source_type_id": source_type_id,
+            "source_ref": test_cluster_id,
+        })
+
+        raw_result = exec_in_pod(
+            cluster_config.namespace,
+            ingress_pod,
+            [
+                "curl", "-s", "-w", "\n%{http_code}", "-X", "POST",
+                f"{koku_api_writes_url}/sources",
+                "-H", "Content-Type: application/json",
+                "-H", f"X-Rh-Identity: {rh_identity_header}",
+                "-d", source_payload,
+            ],
+            container="ingress",
+        )
+
+        if not raw_result:
+            last_error = f"Attempt {attempt + 1}: No response from source creation"
+            time.sleep(3)
+            continue
+
+        # Parse response and status code
+        lines = raw_result.strip().split('\n')
+        status_code = lines[-1] if lines else ""
+        body = '\n'.join(lines[:-1]) if len(lines) > 1 else ""
+
+        # Retry on 5xx server errors only
+        if status_code.startswith('5'):
+            last_error = f"Attempt {attempt + 1}: Server error {status_code}"
+            time.sleep(3)
+            continue
+
+        # Success or client error - exit loop
+        result = body
+        break
+
+    if not result:
+        pytest.fail(f"Source creation failed after {max_attempts} attempts. Last error: {last_error}")
+
+    try:
+        source_data = json.loads(result)
+    except json.JSONDecodeError:
+        pytest.fail(f"Source creation returned invalid JSON (status {status_code}): {result}")
+
+    source_id = source_data.get("id")
+    if not source_id:
+        pytest.fail(f"Source creation failed (status {status_code}): {result}")
+
+    yield {
+        "source_id": source_id,
+        "source_name": source_name,
+        "cluster_id": test_cluster_id,
+        "source_type_id": source_type_id,
+    }
+
+    # Cleanup: Delete the source
+    exec_in_pod(
+        cluster_config.namespace,
+        ingress_pod,
+        [
+            "curl", "-s", "-X", "DELETE",
+            f"{koku_api_writes_url}/sources/{source_id}",
+            "-H", f"X-Rh-Identity: {rh_identity_header}",
+        ],
+        container="ingress",
+    )
+
+
