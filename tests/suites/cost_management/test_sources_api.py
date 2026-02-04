@@ -87,15 +87,18 @@ class TestSourceTypes:
             cluster_config.namespace,
             ingress_pod,
             [
-                "curl", "-s", f"{koku_api_reads_url}/source_types",
+                "curl", "-s", "-w", "\n%{http_code}",
+                f"{koku_api_reads_url}/source_types",
                 "-H", "Content-Type: application/json",
                 "-H", f"X-Rh-Identity: {rh_identity_header}",
             ],
             container="ingress",
         )
 
-        assert result is not None, "Could not get source types from Koku"
-        data = json.loads(result)
+        body, status = parse_curl_response(result)
+        assert status == "200", f"Expected 200, got {status}: {body}"
+        assert body is not None, "Could not get source types from Koku"
+        data = json.loads(body)
         source_types = [st.get("name") for st in data.get("data", [])]
 
         assert "openshift" in source_types, f"OpenShift source type not found in {source_types}"
@@ -108,14 +111,17 @@ class TestSourceTypes:
             cluster_config.namespace,
             ingress_pod,
             [
-                "curl", "-s", f"{koku_api_reads_url}/source_types",
+                "curl", "-s", "-w", "\n%{http_code}",
+                f"{koku_api_reads_url}/source_types",
                 "-H", f"X-Rh-Identity: {rh_identity_header}",
             ],
             container="ingress",
         )
 
-        assert result is not None
-        data = json.loads(result)
+        body, status = parse_curl_response(result)
+        assert status == "200", f"Expected 200, got {status}: {body}"
+        assert body is not None
+        data = json.loads(body)
         source_types = [st.get("name") for st in data.get("data", [])]
 
         expected_types = ["openshift", "amazon", "azure", "google"]
@@ -136,14 +142,17 @@ class TestApplicationTypes:
             cluster_config.namespace,
             ingress_pod,
             [
-                "curl", "-s", f"{koku_api_reads_url}/application_types",
+                "curl", "-s", "-w", "\n%{http_code}",
+                f"{koku_api_reads_url}/application_types",
                 "-H", f"X-Rh-Identity: {rh_identity_header}",
             ],
             container="ingress",
         )
 
-        assert result is not None, "Could not get application types from Koku"
-        data = json.loads(result)
+        body, status = parse_curl_response(result)
+        assert status == "200", f"Expected 200, got {status}: {body}"
+        assert body is not None, "Could not get application types from Koku"
+        data = json.loads(body)
 
         assert "data" in data, f"Missing data field: {data}"
         assert len(data["data"]) > 0, "No application types returned"
@@ -166,14 +175,17 @@ class TestApplicationsEndpoint:
             cluster_config.namespace,
             ingress_pod,
             [
-                "curl", "-s", f"{koku_api_reads_url}/applications",
+                "curl", "-s", "-w", "\n%{http_code}",
+                f"{koku_api_reads_url}/applications",
                 "-H", f"X-Rh-Identity: {rh_identity_header}",
             ],
             container="ingress",
         )
 
-        assert result is not None, "Could not get applications from Koku"
-        data = json.loads(result)
+        body, status = parse_curl_response(result)
+        assert status == "200", f"Expected 200, got {status}: {body}"
+        assert body is not None, "Could not get applications from Koku"
+        data = json.loads(body)
 
         assert "meta" in data, f"Missing meta field: {data}"
         assert "data" in data, f"Missing data field: {data}"
@@ -518,15 +530,17 @@ class TestSourcesPagination:
             cluster_config.namespace,
             ingress_pod,
             [
-                "curl", "-s",
+                "curl", "-s", "-w", "\n%{http_code}",
                 f"{koku_api_reads_url}/sources/?limit=5&offset=0",
                 "-H", f"X-Rh-Identity: {rh_identity_header}",
             ],
             container="ingress",
         )
 
-        assert result is not None, "No response from sources endpoint"
-        data = json.loads(result)
+        body, status = parse_curl_response(result)
+        assert status == "200", f"Expected 200, got {status}: {body}"
+        assert body is not None, "No response from sources endpoint"
+        data = json.loads(body)
 
         # Should have pagination metadata
         assert "meta" in data or "data" in data, f"Missing pagination structure: {data}"
@@ -543,15 +557,17 @@ class TestSourcesPagination:
             cluster_config.namespace,
             ingress_pod,
             [
-                "curl", "-s",
+                "curl", "-s", "-w", "\n%{http_code}",
                 f"{koku_api_reads_url}/sources/?limit=10",
                 "-H", f"X-Rh-Identity: {rh_identity_header}",
             ],
             container="ingress",
         )
 
-        assert result is not None
-        data = json.loads(result)
+        body, status = parse_curl_response(result)
+        assert status == "200", f"Expected 200, got {status}: {body}"
+        assert body is not None
+        data = json.loads(body)
 
         # Check for count in meta
         if "meta" in data:
@@ -587,15 +603,17 @@ class TestSourcesPagination:
             cluster_config.namespace,
             ingress_pod,
             [
-                "curl", "-s",
+                "curl", "-s", "-w", "\n%{http_code}",
                 f"{koku_api_reads_url}/source_types?limit=5",
                 "-H", f"X-Rh-Identity: {rh_identity_header}",
             ],
             container="ingress",
         )
 
-        assert result is not None
-        data = json.loads(result)
+        body, status = parse_curl_response(result)
+        assert status == "200", f"Expected 200, got {status}: {body}"
+        assert body is not None
+        data = json.loads(body)
         assert "data" in data, f"Missing data field: {data}"
         assert "meta" in data, f"Missing meta field: {data}"
 
@@ -619,15 +637,17 @@ class TestSourcesFiltering:
             cluster_config.namespace,
             ingress_pod,
             [
-                "curl", "-s",
+                "curl", "-s", "-w", "\n%{http_code}",
                 f"{koku_api_reads_url}/sources/?name={test_source['source_name']}",
                 "-H", f"X-Rh-Identity: {rh_identity_header}",
             ],
             container="ingress",
         )
 
-        assert result is not None
-        data = json.loads(result)
+        body, status = parse_curl_response(result)
+        assert status == "200", f"Expected 200, got {status}: {body}"
+        assert body is not None
+        data = json.loads(body)
 
         # If name filter is supported, should return matching source
         if "data" in data and len(data["data"]) > 0:
@@ -643,15 +663,17 @@ class TestSourcesFiltering:
             cluster_config.namespace,
             ingress_pod,
             [
-                "curl", "-s",
+                "curl", "-s", "-w", "\n%{http_code}",
                 f"{koku_api_reads_url}/sources/?source_type_id={test_source['source_type_id']}",
                 "-H", f"X-Rh-Identity: {rh_identity_header}",
             ],
             container="ingress",
         )
 
-        assert result is not None
-        data = json.loads(result)
+        body, status = parse_curl_response(result)
+        assert status == "200", f"Expected 200, got {status}: {body}"
+        assert body is not None
+        data = json.loads(body)
 
         # All returned sources should have matching source_type_id
         if "data" in data:
@@ -667,15 +689,17 @@ class TestSourcesFiltering:
             cluster_config.namespace,
             ingress_pod,
             [
-                "curl", "-s",
+                "curl", "-s", "-w", "\n%{http_code}",
                 f"{koku_api_reads_url}/source_types?name=openshift",
                 "-H", f"X-Rh-Identity: {rh_identity_header}",
             ],
             container="ingress",
         )
 
-        assert result is not None
-        data = json.loads(result)
+        body, status = parse_curl_response(result)
+        assert status == "200", f"Expected 200, got {status}: {body}"
+        assert body is not None
+        data = json.loads(body)
 
         # Should return openshift type
         assert "data" in data, f"Missing data field: {data}"
