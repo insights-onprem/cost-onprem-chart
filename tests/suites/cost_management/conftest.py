@@ -522,22 +522,18 @@ def test_source(
         time.sleep(2)
 
     if not source_type_id:
-        pytest.skip("Could not get OpenShift source type ID")
+        pytest.fail("Could not get OpenShift source type ID - this indicates a deployment issue")
 
     # Create source with retry logic for transient CI failures
-    # Generate unique IDs inside loop to avoid duplicate errors on retry
     result: Optional[str] = None
     last_error: Optional[str] = None
     max_attempts: int = 5
-    test_cluster_id: Optional[str] = None
-    source_name: Optional[str] = None
     status_code: Optional[str] = None
 
-    for attempt in range(max_attempts):
-        # Generate new unique identifiers for each attempt to avoid duplicates
-        test_cluster_id = f"test-source-{uuid.uuid4().hex[:8]}"
-        source_name = f"test-source-{uuid.uuid4().hex[:8]}"
+    test_cluster_id = f"test-source-{uuid.uuid4().hex[:8]}"
+    source_name = f"test-source-{uuid.uuid4().hex[:8]}"
 
+    for attempt in range(max_attempts):
         source_payload = json.dumps({
             "name": source_name,
             "source_type_id": source_type_id,
@@ -597,15 +593,22 @@ def test_source(
     }
 
     # Cleanup: Delete the source
-    exec_in_pod(
+    delete_result = exec_in_pod(
         cluster_config.namespace,
         ingress_pod,
         [
-            "curl", "-s", "-X", "DELETE",
+            "curl", "-s", "-w", "\n%{http_code}", "-X", "DELETE",
             f"{koku_api_writes_url}/sources/{source_id}",
             "-H", f"X-Rh-Identity: {rh_identity_header}",
         ],
         container="ingress",
     )
+
+    # Verify deletion succeeded
+    if delete_result:
+        lines = delete_result.strip().split('\n')
+        status = lines[-1] if lines else ""
+        if status not in ["204", "404"]:
+            print(f"Warning: Failed to delete test source {source_id}, status: {status}")
 
 

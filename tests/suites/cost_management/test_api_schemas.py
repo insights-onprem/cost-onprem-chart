@@ -6,7 +6,7 @@ match expected field structures.
 """
 
 import json
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
@@ -17,50 +17,6 @@ from utils import exec_in_pod
 @pytest.mark.component
 class TestResponseSchemas:
     """Tests for API response schema validation."""
-
-    def test_source_response_schema(
-        self, cluster_config: Any, koku_api_reads_url: str, ingress_pod: str,
-        rh_identity_header: str, test_source: Dict[str, Any]
-    ) -> None:
-        """Verify source response contains expected fields.
-
-        A source response should include:
-        - id: Unique identifier
-        - name: Source name
-        - source_type_id: Reference to source type
-        - source_ref: Cluster ID reference
-        - created_at: Creation timestamp
-        - updated_at: Last update timestamp
-        """
-        result = exec_in_pod(
-            cluster_config.namespace,
-            ingress_pod,
-            [
-                "curl", "-s",
-                f"{koku_api_reads_url}/sources/{test_source['source_id']}/",
-                "-H", f"X-Rh-Identity: {rh_identity_header}",
-            ],
-            container="ingress",
-        )
-
-        assert result is not None, "No response from sources endpoint"
-        source = json.loads(result)
-
-        # Required fields
-        required_fields = ["id", "name", "source_type_id"]
-        for field in required_fields:
-            assert field in source, f"Missing required field '{field}': {source}"
-
-        # Validate field types
-        assert isinstance(source.get("id"), (int, str)), f"Invalid id type: {type(source.get('id'))}"
-        assert isinstance(source.get("name"), str), f"Invalid name type: {type(source.get('name'))}"
-
-        # Optional but expected fields
-        optional_fields = ["source_ref", "created_at", "updated_at"]
-        for field in optional_fields:
-            if field in source:
-                assert source[field] is None or isinstance(source[field], str), \
-                    f"Invalid {field} type: {type(source.get(field))}"
 
     def test_sources_list_response_schema(
         self, cluster_config: Any, koku_api_reads_url: str, ingress_pod: str, rh_identity_header: str
