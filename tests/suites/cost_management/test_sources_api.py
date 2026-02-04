@@ -10,17 +10,21 @@ Source registration flow is tested in suites/e2e/ as part of the complete pipeli
 
 import json
 import uuid
+from typing import Any, Dict, Optional, Tuple
 
 import pytest
 
 from utils import exec_in_pod, check_pod_ready
 
 
-def parse_curl_response(result: str):
+def parse_curl_response(result: str) -> Tuple[Optional[str], Optional[str]]:
     """Parse curl response with HTTP status code.
 
     When curl is called with -w "\\n%{http_code}", the response body
     and status code are separated by a newline.
+
+    Returns:
+        Tuple of (body, status_code). Body is None if empty.
     """
     if not result:
         return None, None
@@ -29,10 +33,11 @@ def parse_curl_response(result: str):
     lines = result.rsplit("\n", 1)
     if len(lines) == 2:
         body, status_code = lines
-        return body.strip(), status_code.strip()
+        body = body.strip()
+        return body if body else None, status_code.strip()
     # If only one line, check if it looks like just a status code
     if result.isdigit() and len(result) == 3:
-        return "", result
+        return None, result
     return result, None
 
 

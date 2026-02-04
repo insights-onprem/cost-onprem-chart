@@ -6,6 +6,7 @@ match expected field structures.
 """
 
 import json
+from typing import Any, Dict
 
 import pytest
 
@@ -18,9 +19,9 @@ class TestResponseSchemas:
     """Tests for API response schema validation."""
 
     def test_source_response_schema(
-        self, cluster_config, koku_api_reads_url: str, ingress_pod: str,
-        rh_identity_header: str, test_source
-    ):
+        self, cluster_config: Any, koku_api_reads_url: str, ingress_pod: str,
+        rh_identity_header: str, test_source: Dict[str, Any]
+    ) -> None:
         """Verify source response contains expected fields.
 
         A source response should include:
@@ -62,8 +63,8 @@ class TestResponseSchemas:
                     f"Invalid {field} type: {type(source.get(field))}"
 
     def test_sources_list_response_schema(
-        self, cluster_config, koku_api_reads_url: str, ingress_pod: str, rh_identity_header: str
-    ):
+        self, cluster_config: Any, koku_api_reads_url: str, ingress_pod: str, rh_identity_header: str
+    ) -> None:
         """Verify sources list response has proper pagination structure.
 
         List response should include:
@@ -96,8 +97,8 @@ class TestResponseSchemas:
                 f"'count' should be int: {type(data['meta']['count'])}"
 
     def test_source_types_response_schema(
-        self, cluster_config, koku_api_reads_url: str, ingress_pod: str, rh_identity_header: str
-    ):
+        self, cluster_config: Any, koku_api_reads_url: str, ingress_pod: str, rh_identity_header: str
+    ) -> None:
         """Verify source_types response contains expected fields.
 
         A source type should include:
@@ -133,8 +134,8 @@ class TestResponseSchemas:
         assert openshift_types[0].get("id") is not None, "OpenShift source type missing id"
 
     def test_application_types_response_schema(
-        self, cluster_config, koku_api_reads_url: str, ingress_pod: str, rh_identity_header: str
-    ):
+        self, cluster_config: Any, koku_api_reads_url: str, ingress_pod: str, rh_identity_header: str
+    ) -> None:
         """Verify application_types response contains expected fields.
 
         An application type should include:
@@ -166,8 +167,8 @@ class TestResponseSchemas:
             assert field in app_type, f"Missing required field '{field}': {app_type}"
 
     def test_applications_response_schema(
-        self, cluster_config, koku_api_reads_url: str, ingress_pod: str, rh_identity_header: str
-    ):
+        self, cluster_config: Any, koku_api_reads_url: str, ingress_pod: str, rh_identity_header: str
+    ) -> None:
         """Verify applications list response has proper structure.
 
         Applications response should include:

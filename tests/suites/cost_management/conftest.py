@@ -9,11 +9,15 @@ Includes the cost_validation_data fixture that runs the full E2E flow for cost v
 This makes cost_validation tests SELF-CONTAINED - they don't depend on other test modules.
 """
 
+import base64
 import json
 import os
 import shutil
 import tempfile
+import time
+import uuid
 from datetime import datetime, timedelta
+from typing import Any, Dict, Generator, Optional
 
 import pytest
 import requests
@@ -449,7 +453,7 @@ def cost_validation_data(cluster_config, s3_config, keycloak_config, ingress_url
 
 
 @pytest.fixture(scope="module")
-def invalid_identity_headers(org_id):
+def invalid_identity_headers(org_id: str) -> Dict[str, str]:
     """Dict of invalid headers for authentication error testing.
 
     Returns a dictionary with various invalid header configurations:
@@ -460,8 +464,6 @@ def invalid_identity_headers(org_id):
     - non_admin: is_org_admin=False
     - no_email: Missing email field
     """
-    import base64
-
     return {
         "malformed_base64": "not-valid-base64!!!",
         "invalid_json": base64.b64encode(b"not valid json").decode(),
@@ -490,13 +492,13 @@ def invalid_identity_headers(org_id):
 
 @pytest.fixture(scope="function")
 def test_source(
-    cluster_config,
-    ingress_pod,
-    koku_api_reads_url,
-    koku_api_writes_url,
-    rh_identity_header,
-    org_id,
-):
+    cluster_config: Any,
+    ingress_pod: str,
+    koku_api_reads_url: str,
+    koku_api_writes_url: str,
+    rh_identity_header: str,
+    org_id: str,
+) -> Generator[Dict[str, Any], None, None]:
     """Create a test source with automatic cleanup.
 
     This fixture creates a source for tests that need an existing source,
@@ -505,9 +507,6 @@ def test_source(
     Yields:
         dict with keys: source_id, source_name, cluster_id, source_type_id
     """
-    import time
-    import uuid
-
     # Get source type ID with retry
     source_type_id = None
     for attempt in range(3):
@@ -527,12 +526,12 @@ def test_source(
 
     # Create source with retry logic for transient CI failures
     # Generate unique IDs inside loop to avoid duplicate errors on retry
-    result = None
-    last_error = None
-    max_attempts = 5
-    test_cluster_id = None
-    source_name = None
-    status_code = None
+    result: Optional[str] = None
+    last_error: Optional[str] = None
+    max_attempts: int = 5
+    test_cluster_id: Optional[str] = None
+    source_name: Optional[str] = None
+    status_code: Optional[str] = None
 
     for attempt in range(max_attempts):
         # Generate new unique identifiers for each attempt to avoid duplicates
