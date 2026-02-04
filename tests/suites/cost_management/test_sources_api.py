@@ -190,10 +190,10 @@ class TestApplicationsEndpoint:
 class TestAuthenticationErrors:
     """Tests for authentication error handling in Sources API."""
 
-    def test_malformed_base64_header_returns_error(
+    def test_malformed_base64_header_returns_401(
         self, cluster_config, koku_api_reads_url: str, ingress_pod: str, invalid_identity_headers
     ):
-        """Verify malformed base64 in X-Rh-Identity returns an error (400/401/403)."""
+        """Verify malformed base64 in X-Rh-Identity returns 401 Unauthorized."""
         result = exec_in_pod(
             cluster_config.namespace,
             ingress_pod,
@@ -206,8 +206,7 @@ class TestAuthenticationErrors:
         )
 
         body, status = parse_curl_response(result)
-        # Koku returns 403 for invalid identity, but 400/401 are also acceptable
-        assert status in ["400", "401", "403"], f"Expected 400/401/403, got {status}: {body}"
+        assert status == "401", f"Expected 401, got {status}: {body}"
 
     def test_invalid_json_in_header_returns_401(
         self, cluster_config, koku_api_reads_url: str, ingress_pod: str, invalid_identity_headers
@@ -227,10 +226,10 @@ class TestAuthenticationErrors:
         body, status = parse_curl_response(result)
         assert status in ["400", "401", "403"], f"Expected 400/401/403, got {status}: {body}"
 
-    def test_missing_identity_header_returns_error(
+    def test_missing_identity_header_returns_401(
         self, cluster_config, koku_api_reads_url: str, ingress_pod: str
     ):
-        """Verify missing X-Rh-Identity header returns an error (401/403)."""
+        """Verify missing X-Rh-Identity header returns 401 Unauthorized."""
         result = exec_in_pod(
             cluster_config.namespace,
             ingress_pod,
@@ -242,12 +241,12 @@ class TestAuthenticationErrors:
         )
 
         body, status = parse_curl_response(result)
-        assert status in ["401", "403"], f"Expected 401/403, got {status}: {body}"
+        assert status == "401", f"Expected 401, got {status}: {body}"
 
-    def test_missing_entitlements_handled(
+    def test_missing_entitlements_returns_403(
         self, cluster_config, koku_api_reads_url: str, ingress_pod: str, invalid_identity_headers
     ):
-        """Verify request with missing cost_management entitlement is handled (200 or 403)."""
+        """Verify request with missing cost_management entitlement returns 403 Forbidden."""
         result = exec_in_pod(
             cluster_config.namespace,
             ingress_pod,
@@ -260,8 +259,7 @@ class TestAuthenticationErrors:
         )
 
         body, status = parse_curl_response(result)
-        # Koku may return 403 or allow access depending on configuration
-        assert status in ["200", "403"], f"Expected 200 or 403, got {status}: {body}"
+        assert status == "403", f"Expected 403, got {status}: {body}"
 
     def test_non_admin_source_creation(
         self, cluster_config, koku_api_writes_url: str, ingress_pod: str, invalid_identity_headers
