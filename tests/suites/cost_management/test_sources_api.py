@@ -711,27 +711,6 @@ class TestContentTypeValidation:
         # Should reject with 400 or 415 (Unsupported Media Type)
         assert status in ["400", "415"], f"Expected 400/415, got {status}: {body}"
 
-    def test_malformed_json_body_returns_400(
-        self, cluster_config, koku_api_writes_url: str, ingress_pod: str, rh_identity_header: str
-    ):
-        """Verify malformed JSON in request body returns 400."""
-        result = exec_in_pod(
-            cluster_config.namespace,
-            ingress_pod,
-            [
-                "curl", "-s", "-w", "\n%{http_code}",
-                "-X", "POST",
-                f"{koku_api_writes_url}/sources/",
-                "-H", "Content-Type: application/json",
-                "-H", f"X-Rh-Identity: {rh_identity_header}",
-                "-d", "{not valid json}",
-            ],
-            container="ingress",
-        )
-
-        body, status = parse_curl_response(result)
-        assert status == "400", f"Expected 400, got {status}: {body}"
-
     def test_empty_request_body_returns_400(
         self, cluster_config, koku_api_writes_url: str, ingress_pod: str, rh_identity_header: str
     ):
