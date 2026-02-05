@@ -202,10 +202,10 @@ class TestApplicationsEndpoint:
 class TestAuthenticationErrors:
     """Tests for authentication error handling in Sources API."""
 
-    def test_malformed_base64_header_returns_401(
+    def test_malformed_base64_header_returns_403(
         self, cluster_config, koku_api_reads_url: str, ingress_pod: str, invalid_identity_headers
     ):
-        """Verify malformed base64 in X-Rh-Identity returns 401 Unauthorized."""
+        """Verify malformed base64 in X-Rh-Identity returns 403 Forbidden."""
         result = exec_in_pod(
             cluster_config.namespace,
             ingress_pod,
@@ -218,7 +218,7 @@ class TestAuthenticationErrors:
         )
 
         body, status = parse_curl_response(result)
-        assert status == "401", f"Expected 401, got {status}: {body}"
+        assert status == "403", f"Expected 403, got {status}: {body}"
 
     def test_invalid_json_in_header_returns_401(
         self, cluster_config, koku_api_reads_url: str, ingress_pod: str, invalid_identity_headers
