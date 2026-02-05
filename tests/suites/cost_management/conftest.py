@@ -9,17 +9,18 @@ Includes the cost_validation_data fixture that runs the full E2E flow for cost v
 This makes cost_validation tests SELF-CONTAINED - they don't depend on other test modules.
 """
 
+import json
 import os
 import shutil
 import tempfile
 from datetime import datetime, timedelta
+from typing import Optional
 
 import pytest
 import requests
 
 from conftest import obtain_jwt_token
 from e2e_helpers import (
-    DEFAULT_S3_BUCKET,
     NISEConfig,
     cleanup_database_records,
     delete_source,
@@ -166,52 +167,6 @@ def koku_api_reads_url_cost_mgmt(cluster_config) -> str:
 def koku_api_writes_url_cost_mgmt(cluster_config) -> str:
     """Get Koku API writes URL for cost management tests."""
     return get_koku_api_writes_url(cluster_config.helm_release_name, cluster_config.namespace)
-
-
-@pytest.fixture(scope="module")
-def koku_api_writes_url(cluster_config) -> str:
-    """Get Koku API writes URL for operations that modify state (POST, PUT, DELETE).
-    
-    The Koku deployment separates reads/writes for scalability.
-    """
-    return (
-        f"http://{cluster_config.helm_release_name}-koku-api-writes."
-        f"{cluster_config.namespace}.svc.cluster.local:8000/api/cost-management/v1"
-    )
-
-
-@pytest.fixture(scope="module")
-def koku_api_reads_url(cluster_config) -> str:
-    """Get Koku API reads URL for read-only operations (GET).
-    
-    The Koku deployment separates reads/writes for scalability.
-    """
-    return (
-        f"http://{cluster_config.helm_release_name}-koku-api-reads."
-        f"{cluster_config.namespace}.svc.cluster.local:8000/api/cost-management/v1"
-    )
-
-
-@pytest.fixture(scope="module")
-def ingress_pod(cluster_config) -> str:
-    """Get ingress pod name for executing API calls.
-    
-    The ingress pod has NetworkPolicy access to koku-api, so we use it
-    to make internal API calls.
-    """
-    pod = get_pod_by_label(
-        cluster_config.namespace,
-        "app.kubernetes.io/component=ingress"
-    )
-    if not pod:
-        pytest.skip("Ingress pod not found for API calls")
-    return pod
-
-
-@pytest.fixture(scope="module")
-def rh_identity_header(org_id) -> str:
-    """Get X-Rh-Identity header value for the test org."""
-    return create_rh_identity_header(org_id)
 
 
 # =============================================================================
@@ -436,5 +391,7 @@ def cost_validation_data(cluster_config, s3_config, keycloak_config, ingress_url
         if temp_dir and os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
             print("  Cleaned up temp directory")
-        
+
         print(f"{'='*60}\n")
+
+

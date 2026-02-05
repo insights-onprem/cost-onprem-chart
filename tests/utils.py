@@ -195,20 +195,20 @@ def execute_db_query(
 
 def create_rh_identity_header(org_id: str, account_number: str = None) -> str:
     """Create X-Rh-Identity header value for Koku authentication.
-    
+
     The X-Rh-Identity header is a base64-encoded JSON structure required by
     Koku middleware for tenant identification and authorization.
-    
+
     Args:
         org_id: Organization ID for the tenant
         account_number: Account number (defaults to org_id if not provided)
-    
+
     Returns:
         Base64-encoded identity JSON string
     """
     if account_number is None:
         account_number = org_id
-    
+
     identity_json = {
         "org_id": org_id,
         "identity": {
@@ -227,8 +227,101 @@ def create_rh_identity_header(org_id: str, account_number: str = None) -> str:
             },
         },
     }
-    
+
     return base64.b64encode(json.dumps(identity_json).encode()).decode()
+
+
+def create_identity_header_custom(
+    org_id: str,
+    is_org_admin: bool = True,
+    email: Optional[str] = "test@example.com",
+    entitlements: Optional[dict] = None,
+    account_number: Optional[str] = None,
+) -> str:
+    """Create X-Rh-Identity header with customizable fields for error testing.
+
+    This function allows creating identity headers with various configurations
+    to test authentication error scenarios.
+
+    Args:
+        org_id: Organization ID for the tenant
+        is_org_admin: Whether the user is an org admin (default: True)
+        email: User email address (set to None to omit the field)
+        entitlements: Custom entitlements dict (default: cost_management is_entitled=True)
+        account_number: Account number (defaults to org_id if not provided)
+
+    Returns:
+        Base64-encoded identity JSON string
+    """
+    if account_number is None:
+        account_number = org_id
+
+    if entitlements is None:
+        entitlements = {
+            "cost_management": {
+                "is_entitled": True,
+            },
+        }
+
+    user_dict: dict[str, Any] = {
+        "username": "test",
+        "is_org_admin": is_org_admin,
+    }
+    if email is not None:
+        user_dict["email"] = email
+
+    identity_json = {
+        "org_id": org_id,
+        "identity": {
+            "org_id": org_id,
+            "account_number": account_number,
+            "type": "User",
+            "user": user_dict,
+        },
+        "entitlements": entitlements,
+    }
+
+    return base64.b64encode(json.dumps(identity_json).encode()).decode()
+
+
+def check_service_exists(namespace: str, service_name: str) -> bool:
+    """Check if Kubernetes service exists using oc get.
+
+    Args:
+        namespace: Kubernetes namespace
+        service_name: Name of the service
+
+    Returns:
+        True if service exists, False otherwise
+    """
+    try:
+        result = run_oc_command([
+            "get", "service", service_name, "-n", namespace,
+            "-o", "jsonpath={.metadata.name}"
+        ], check=False)
+        return result.returncode == 0 and result.stdout.strip() == service_name
+    except subprocess.CalledProcessError:
+        return False
+
+
+def check_deployment_exists(namespace: str, deployment_name: str) -> bool:
+    """Check if Kubernetes deployment exists using oc get.
+
+    Args:
+        namespace: Kubernetes namespace
+        deployment_name: Name of the deployment
+
+    Returns:
+        True if deployment exists, False otherwise
+    """
+    try:
+        result = run_oc_command([
+            "get", "deployment", deployment_name, "-n", namespace,
+            "-o", "jsonpath={.metadata.name}"
+        ], check=False)
+        return result.returncode == 0 and result.stdout.strip() == deployment_name
+    except subprocess.CalledProcessError:
+        return False
 
 
 # =============================================================================

@@ -16,6 +16,7 @@
 #   --auth              Run JWT authentication tests
 #   --infrastructure    Run infrastructure health tests (DB, S3, Kafka)
 #   --cost-management   Run Cost Management (Koku) pipeline tests
+#   --sources           Run Sources API tests (CRUD, auth, schemas)
 #   --ros               Run ROS/Kruize recommendation tests
 #   --e2e               Run end-to-end tests
 #
@@ -93,7 +94,8 @@ show_help() {
     echo "  helm              Helm chart lint, template, deployment health"
     echo "  auth              Keycloak, JWT ingress/backend authentication"
     echo "  infrastructure    Database, S3, Kafka health checks"
-    echo "  cost-management   Sources API, upload, Koku processing"
+    echo "  cost-management   Upload, Koku processing pipeline"
+    echo "  sources           Sources API CRUD, authentication, schemas"
     echo "  ros               Kruize, recommendations API"
     echo "  e2e               Complete end-to-end data flow"
     echo ""
@@ -226,6 +228,10 @@ main() {
                 ;;
             --cost-management)
                 pytest_markers+=("cost_management")
+                shift
+                ;;
+            --sources)
+                pytest_markers+=("sources")
                 shift
                 ;;
             --ros)
