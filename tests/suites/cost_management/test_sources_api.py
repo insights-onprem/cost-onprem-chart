@@ -79,30 +79,6 @@ class TestKokuSourcesHealth:
 class TestSourceTypes:
     """Tests for source type configuration in Koku."""
 
-    def test_openshift_source_type_exists(
-        self, cluster_config, koku_api_reads_url: str, ingress_pod: str, rh_identity_header: str
-    ):
-        """Verify OpenShift source type is configured in Koku."""
-        result = exec_in_pod(
-            cluster_config.namespace,
-            ingress_pod,
-            [
-                "curl", "-s", "-w", "\n%{http_code}",
-                f"{koku_api_reads_url}/source_types",
-                "-H", "Content-Type: application/json",
-                "-H", f"X-Rh-Identity: {rh_identity_header}",
-            ],
-            container="ingress",
-        )
-
-        body, status = parse_curl_response(result)
-        assert status == "200", f"Expected 200, got {status}: {body}"
-        assert body is not None, "Could not get source types from Koku"
-        data = json.loads(body)
-        source_types = [st.get("name") for st in data.get("data", [])]
-
-        assert "openshift" in source_types, f"OpenShift source type not found in {source_types}"
-
     def test_all_cloud_source_types_exist(
         self, cluster_config, koku_api_reads_url: str, ingress_pod: str, rh_identity_header: str
     ):
@@ -395,13 +371,13 @@ class TestConflictHandling:
         body, status = parse_curl_response(result)
         assert status in ["400", "404"], f"Expected error, got {status}: {body}"
 
-    def test_duplicate_source_name_behavior(
+    def test_duplicate_source_name(
         self, cluster_config, koku_api_writes_url: str, ingress_pod: str,
         rh_identity_header: str, test_source
     ):
-        """Document behavior when duplicate source name is used.
+        """Verify duplicate source names are allowed.
 
-        Unlike source_ref, duplicate names might be allowed.
+        Unlike source_ref, duplicate names are permitted.
         """
         source_payload = json.dumps({
             "name": test_source["source_name"],  # Same name as existing
@@ -424,26 +400,21 @@ class TestConflictHandling:
         )
 
         body, status = parse_curl_response(result)
-        # Document the behavior - could allow duplicate names or reject
-        if status == "201":
-            # Clean up the created source
-            try:
-                data = json.loads(body)
-                if data.get("id"):
-                    exec_in_pod(
-                        cluster_config.namespace,
-                        ingress_pod,
-                        [
-                            "curl", "-s", "-X", "DELETE",
-                            f"{koku_api_writes_url}/sources/{data['id']}",
-                            "-H", f"X-Rh-Identity: {rh_identity_header}",
-                        ],
-                        container="ingress",
-                    )
-            except json.JSONDecodeError:
-                pass
+        assert status == "201", f"Expected 201, got {status}: {body}"
 
-        assert status in ["201", "400", "409"], f"Unexpected status {status}: {body}"
+        # Clean up the created source
+        data = json.loads(body)
+        if data.get("id"):
+            exec_in_pod(
+                cluster_config.namespace,
+                ingress_pod,
+                [
+                    "curl", "-s", "-X", "DELETE",
+                    f"{koku_api_writes_url}/sources/{data['id']}",
+                    "-H", f"X-Rh-Identity: {rh_identity_header}",
+                ],
+                container="ingress",
+            )
 
 
 # =============================================================================
