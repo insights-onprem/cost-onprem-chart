@@ -10,7 +10,7 @@ Source registration flow is tested in suites/e2e/ as part of the complete pipeli
 
 import json
 import uuid
-from typing import Any, Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 import pytest
 
@@ -497,10 +497,10 @@ class TestSourcesFiltering:
         assert body is not None
         data = json.loads(body)
 
-        # If name filter is supported, should return matching source
-        if "data" in data and len(data["data"]) > 0:
-            names = [s.get("name") for s in data["data"]]
-            assert test_source["source_name"] in names, f"Source not found in filtered results: {names}"
+        assert "data" in data, f"Missing data field: {data}"
+        assert len(data["data"]) > 0, f"Expected filtered results, got empty list"
+        names = [s.get("name") for s in data["data"]]
+        assert test_source["source_name"] in names, f"Source not found in filtered results: {names}"
 
     def test_filter_sources_by_source_type_id(
         self, cluster_config, koku_api_reads_url: str, ingress_pod: str,
@@ -523,11 +523,11 @@ class TestSourcesFiltering:
         assert body is not None
         data = json.loads(body)
 
-        # All returned sources should have matching source_type_id
-        if "data" in data:
-            for source in data["data"]:
-                assert str(source.get("source_type_id")) == str(test_source["source_type_id"]), \
-                    f"Source type mismatch: {source}"
+        assert "data" in data, f"Missing data field: {data}"
+        assert len(data["data"]) > 0, f"Expected filtered results, got empty list"
+        for source in data["data"]:
+            assert str(source.get("source_type_id")) == str(test_source["source_type_id"]), \
+                f"Source type mismatch: {source}"
 
     def test_filter_source_types_by_name(
         self, cluster_config, koku_api_reads_url: str, ingress_pod: str, rh_identity_header: str
@@ -549,10 +549,9 @@ class TestSourcesFiltering:
         assert body is not None
         data = json.loads(body)
 
-        # Should return openshift type
         assert "data" in data, f"Missing data field: {data}"
-        if len(data["data"]) > 0:
-            names = [st.get("name") for st in data["data"]]
-            assert "openshift" in names, f"OpenShift not in filtered results: {names}"
+        assert len(data["data"]) > 0, f"Expected openshift in results, got empty list"
+        names = [st.get("name") for st in data["data"]]
+        assert "openshift" in names, f"OpenShift not in filtered results: {names}"
 
 
