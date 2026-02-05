@@ -26,6 +26,7 @@ set -euo pipefail
 #   --verbose                 Enable verbose output
 #   --dry-run                 Show what would be executed without running
 #   --tests-only              Run only JWT authentication tests (skip all deployments)
+#   --include-ui              Include UI tests (requires Playwright system dependencies)
 #   --save-versions [FILE]    Save deployment version info to JSON file (default: version_info.json)
 #   --help                    Display this help message
 #
@@ -71,6 +72,7 @@ USE_LOCAL_CHART="${USE_LOCAL_CHART:-false}"
 VERBOSE="${VERBOSE:-false}"
 DRY_RUN="${DRY_RUN:-false}"
 TESTS_ONLY="${TESTS_ONLY:-false}"
+INCLUDE_UI="${INCLUDE_UI:-false}"
 SAVE_VERSIONS="${SAVE_VERSIONS:-false}"
 VERSION_INFO_FILE="${VERSION_INFO_FILE:-version_info.json}"
 
@@ -511,25 +513,28 @@ run_tests() {
     
     log_info "Running pytest test suite..."
     
+    # Build pytest arguments
+    local pytest_args=()
+    if [[ "${VERBOSE}" == "true" ]]; then
+        pytest_args+=("-v")
+    fi
+    if [[ "${INCLUDE_UI}" == "true" ]]; then
+        # Override default "not ui" marker to include UI tests
+        pytest_args+=("-m" "")
+        log_info "Including UI tests (Playwright)"
+    fi
+    
     if [[ "${DRY_RUN}" == "true" ]]; then
-        log_info "DRY RUN: Would execute: ${pytest_script}"
+        log_info "DRY RUN: Would execute: ${pytest_script} ${pytest_args[*]}"
         return 0
     fi
     
-    # Run all tests including extended and cost_validation
+    # Run tests
     # Note: cost_validation tests have their own E2E setup with 300s provider timeout
-    if [[ "${VERBOSE}" == "true" ]]; then
-        if ! "${pytest_script}" --all -v; then
-            log_error "Pytest test suite failed"
-            log_info "JUnit report available at: tests/reports/junit.xml"
-            exit 1
-        fi
-    else
-        if ! "${pytest_script}" --all; then
-            log_error "Pytest test suite failed"
-            log_info "JUnit report available at: tests/reports/junit.xml"
-            exit 1
-        fi
+    if ! "${pytest_script}" "${pytest_args[@]}"; then
+        log_error "Pytest test suite failed"
+        log_info "JUnit report available at: tests/reports/junit.xml"
+        exit 1
     fi
     
     log_success "Pytest test suite completed"
@@ -657,6 +662,10 @@ main() {
                 ;;
             --tests-only)
                 TESTS_ONLY=true
+                shift
+                ;;
+            --include-ui)
+                INCLUDE_UI=true
                 shift
                 ;;
             --save-versions)

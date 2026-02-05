@@ -50,7 +50,7 @@ generators:
                   mem_request_gig: 1
 ```
 
-**Markers**: `@pytest.mark.e2e`, `@pytest.mark.extended`, `@pytest.mark.scenario`
+**Markers**: `@pytest.mark.e2e`, `@pytest.mark.scenario`
 
 ---
 
@@ -81,7 +81,7 @@ expected = get_scenario_expected_values("multi_pod_namespace", hours=24)
 
 Or via environment variable:
 ```bash
-E2E_NISE_STATIC_REPORT=/path/to/scenario.yml ./scripts/run-pytest.sh --extended
+E2E_NISE_STATIC_REPORT=/path/to/scenario.yml ./scripts/run-pytest.sh --e2e
 ```
 
 ---
@@ -93,7 +93,7 @@ E2E_NISE_STATIC_REPORT=/path/to/scenario.yml ./scripts/run-pytest.sh --extended
 pytest tests/suites/e2e/test_scenarios.py -v -m scenario
 
 # Run full E2E data flow tests
-./scripts/run-pytest.sh --extended
+./scripts/run-pytest.sh --e2e
 
 # Run E2E smoke tests only
 ./scripts/run-pytest.sh -- -m "e2e and smoke"

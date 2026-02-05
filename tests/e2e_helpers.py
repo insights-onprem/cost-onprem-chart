@@ -439,7 +439,7 @@ def register_source(
         rh_identity_header: Base64-encoded X-Rh-Identity header value
         cluster_id: Cluster ID for the source
         org_id: Organization ID
-        source_name: Optional custom source name (defaults to e2e-source-{cluster_id[:8]})
+        source_name: Optional custom source name (defaults to e2e-source-{cluster_id[-8:]})
         bucket: S3 bucket name
         container: Container name in the pod (default: "ingress")
         max_retries: Maximum number of retry attempts (default: 5)
@@ -459,9 +459,9 @@ def register_source(
         namespace, pod, api_reads_url, rh_identity_header, container=container
     )
     
-    # Generate source name
+    # Generate source name using the unique suffix of cluster_id
     if not source_name:
-        source_name = f"e2e-source-{cluster_id[:8]}"
+        source_name = f"e2e-source-{cluster_id[-8:]}"
     
     # Create source with source_ref (critical for matching incoming data)
     source_payload = json.dumps({

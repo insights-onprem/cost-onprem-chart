@@ -286,7 +286,7 @@ def create_upload_package(
     manifest = {
         "uuid": str(uuid.uuid4()),
         "cluster_id": cluster_id,
-        "cluster_alias": f"e2e-source-{cluster_id[:12]}",
+        "cluster_alias": f"e2e-source-{cluster_id[-8:]}",
         "date": now.isoformat(),
         "files": ["openshift_usage_report.csv"],
         "resource_optimization_files": ["openshift_usage_report.csv"],
@@ -367,7 +367,7 @@ def create_upload_package_from_files(
     manifest = {
         "uuid": str(uuid.uuid4()),
         "cluster_id": cluster_id,
-        "cluster_alias": f"e2e-source-{cluster_id[:12]}",
+        "cluster_alias": f"e2e-source-{cluster_id[-8:]}",
         "date": now.isoformat(),
         "files": all_data_files,  # All data files for Koku cost management (pod, node labels, namespace labels)
         "resource_optimization_files": ros_filenames,  # Container-level data for ROS

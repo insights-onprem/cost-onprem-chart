@@ -22,8 +22,7 @@
 # Filter Options:
 #   --smoke             Run only smoke tests (quick validation)
 #   --slow              Include slow tests (processing, recommendations)
-#   --extended          Run E2E tests INCLUDING extended (summary tables, Kruize)
-#   --all               Run all tests including extended (overrides default exclusions)
+#   --ui                Run UI tests (Playwright browser automation)
 #
 # Setup Options:
 #   --setup-only        Only setup the environment, don't run tests
@@ -37,17 +36,19 @@
 #   PYTHON                 Python interpreter (default: python3)
 #
 # Examples:
-#   ./run-pytest.sh                         # Run all tests
+#   ./run-pytest.sh                         # Run all tests (excludes UI by default)
 #   ./run-pytest.sh --smoke                 # Run smoke tests only
 #   ./run-pytest.sh --helm                  # Run Helm suite only
 #   ./run-pytest.sh --auth --ros            # Run auth and ROS suites
 #   ./run-pytest.sh --e2e --smoke           # Run E2E smoke tests
 #   ./run-pytest.sh --e2e                   # Run full E2E flow
-#   ./run-pytest.sh --extended              # Run full E2E flow INCLUDING extended tests
-#   ./run-pytest.sh --all                   # Run ALL tests including extended
+#   ./run-pytest.sh --ui                    # Run UI tests (requires Playwright deps)
 #   ./run-pytest.sh -k "test_jwt"           # Run tests matching pattern
 #   ./run-pytest.sh suites/helm/            # Run specific suite directory
 #   ./run-pytest.sh -m "smoke and auth"     # Custom marker expression
+#
+# Note: UI tests are excluded by default because they require Playwright system
+# dependencies. Use --ui to run them explicitly. This wil change in the future.
 
 set -e
 
@@ -96,6 +97,7 @@ show_help() {
     echo "  cost-management   Sources API, upload, Koku processing"
     echo "  ros               Kruize, recommendations API"
     echo "  e2e               Complete end-to-end data flow"
+    echo "  ui                Browser-based UI tests (Playwright)"
     echo ""
     echo "Markers:"
     echo "  smoke             Quick validation tests (~1 min)"
@@ -158,6 +160,29 @@ setup_venv() {
     log_success "Virtual environment ready"
 }
 
+install_playwright_browsers() {
+    # Install Playwright browsers (required for UI tests)
+    # Note: Playwright requires system libraries (libnspr4, libnss3, etc.)
+    # In CI, these must be installed by the CI step before running tests.
+    # See: https://playwright.dev/python/docs/browsers#install-system-dependencies
+    if ! command -v playwright &> /dev/null; then
+        log_error "Playwright not found in PATH"
+        return 1
+    fi
+    
+    log_info "Installing Playwright browsers for UI tests..."
+    # Try with system deps first (requires root), fall back to browser-only install
+    if playwright install chromium --with-deps 2>/dev/null; then
+        log_success "Playwright browsers installed with system dependencies"
+    elif playwright install chromium 2>/dev/null; then
+        log_warning "Playwright browsers installed WITHOUT system deps - may fail at runtime"
+        log_warning "Linux requires: dnf install -y nspr nss nss-util atk cups-libs libdrm libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib"
+    else
+        log_error "Failed to install Playwright browsers"
+        return 1
+    fi
+}
+
 setup_reports_dir() {
     log_info "Setting up reports directory..."
     mkdir -p "$REPORTS_DIR"
@@ -205,8 +230,7 @@ run_pytest() {
 main() {
     local pytest_markers=()
     local pytest_extra_args=()
-    local run_all=false
-    local include_extended=false
+    local include_ui=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -236,6 +260,11 @@ main() {
                 pytest_markers+=("e2e")
                 shift
                 ;;
+            --ui)
+                pytest_markers+=("ui")
+                include_ui=true
+                shift
+                ;;
             # Filter options
             --smoke)
                 pytest_markers+=("smoke")
@@ -243,14 +272,6 @@ main() {
                 ;;
             --slow)
                 pytest_markers+=("slow")
-                shift
-                ;;
-            --extended)
-                include_extended=true
-                shift
-                ;;
-            --all)
-                run_all=true
                 shift
                 ;;
             # Setup options
@@ -264,6 +285,14 @@ main() {
                 ;;
             --help|-h)
                 show_help
+                ;;
+            -m)
+                # Check if marker expression includes UI or is empty (all tests)
+                if [[ -z "$2" ]] || [[ "$2" == *"ui"* ]]; then
+                    include_ui=true
+                fi
+                pytest_extra_args+=("$1" "$2")
+                shift 2
                 ;;
             *)
                 # Pass through to pytest
@@ -284,6 +313,11 @@ main() {
     # Setup virtual environment
     setup_venv
 
+    # Install Playwright browsers only if UI tests are requested
+    if [[ "$include_ui" == "true" ]]; then
+        install_playwright_browsers
+    fi
+
     # Setup reports directory
     setup_reports_dir
 
@@ -296,15 +330,7 @@ main() {
     local pytest_args=()
 
     # Handle marker filtering
-    if [[ "$run_all" == "true" ]]; then
-        # Run all tests, override the default -m "not extended" from pytest.ini
-        pytest_args+=("-m" "")
-    elif [[ "$include_extended" == "true" ]]; then
-        # Run full E2E flow including extended tests
-        # This runs the entire TestCompleteDataFlow class to ensure proper fixture setup
-        # Override the default -m "not extended" from pytest.ini
-        pytest_args+=("-m" "" "suites/e2e/test_complete_flow.py::TestCompleteDataFlow")
-    elif [[ ${#pytest_markers[@]} -gt 0 ]]; then
+    if [[ ${#pytest_markers[@]} -gt 0 ]]; then
         local marker_expr
         marker_expr=$(IFS=" or "; echo "${pytest_markers[*]}")
         pytest_args+=("-m" "$marker_expr")

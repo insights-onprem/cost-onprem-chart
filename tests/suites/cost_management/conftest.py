@@ -313,7 +313,7 @@ def cost_validation_data(cluster_config, s3_config, keycloak_config, ingress_url
             rh_identity_header=rh_identity,
             cluster_id=cluster_id,
             org_id=org_id,
-            source_name=f"cost-validation-{cluster_id[:16]}",
+            source_name=f"cost-validation-{cluster_id[-8:]}",
             container="ingress",
         )
         print(f"       Source ID: {source_registration.source_id}")

@@ -32,7 +32,7 @@ Validates that cost calculations in Koku match expected values from NISE-generat
 
 **Tolerance**: 5% (matches IQE validation pattern)
 
-**Markers**: `@pytest.mark.cost_management`, `@pytest.mark.cost_validation`, `@pytest.mark.extended`
+**Markers**: `@pytest.mark.cost_management`, `@pytest.mark.cost_validation`
 
 **Self-Contained Setup**: These tests are fully self-contained via the `cost_validation_data` fixture. Each test run:
 1. Generates NISE data with known expected values (from `e2e_helpers.NISEConfig`)
@@ -68,18 +68,14 @@ This ensures processing state is validated as part of the E2E flow with the actu
 ## Running Cost Management Tests
 
 ```bash
-# Run component tests (no extended)
-./scripts/run-pytest.sh -- -m cost_management
-
-# Run all cost management tests including extended
-pytest tests/suites/cost_management/ -v -m ""
+# Run all cost management tests
+./scripts/run-pytest.sh --cost-management
 
 # Run only cost validation tests
-pytest tests/suites/cost_management/test_cost_validation.py -v -m extended
+pytest tests/suites/cost_management/test_cost_validation.py -v
 
 # Run cost validation with custom tolerance (10%)
 E2E_COST_TOLERANCE=0.10 pytest -m cost_validation -v
-
 ```
 
 ## Related Files

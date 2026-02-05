@@ -43,7 +43,6 @@ def get_cost_tolerance() -> float:
 
 @pytest.mark.cost_management
 @pytest.mark.cost_validation
-@pytest.mark.extended
 @pytest.mark.timeout(900)  # 15 minutes for E2E setup + tests
 class TestSummaryTableData:
     """Tests for summary table data validation."""
@@ -95,7 +94,6 @@ class TestSummaryTableData:
 
 @pytest.mark.cost_management
 @pytest.mark.cost_validation
-@pytest.mark.extended
 class TestMetricValidation:
     """Tests for CPU and memory metric validation against expected values."""
     
@@ -181,7 +179,6 @@ class TestMetricValidation:
 
 @pytest.mark.cost_management
 @pytest.mark.cost_validation
-@pytest.mark.extended
 class TestResourceCounts:
     """Tests for resource count validation."""
     
@@ -226,7 +223,6 @@ class TestResourceCounts:
 
 @pytest.mark.cost_management
 @pytest.mark.cost_validation
-@pytest.mark.extended
 class TestResourceNames:
     """Tests for resource name validation."""
     
@@ -271,7 +267,6 @@ class TestResourceNames:
 
 @pytest.mark.cost_management
 @pytest.mark.cost_validation
-@pytest.mark.extended
 class TestInfrastructureCost:
     """Tests for infrastructure cost calculation."""
     

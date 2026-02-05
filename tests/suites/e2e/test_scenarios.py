@@ -284,7 +284,6 @@ def get_scenario_expected_values(scenario_name: str, hours: int = 24) -> Dict:
 # =============================================================================
 
 @pytest.mark.e2e
-@pytest.mark.extended
 @pytest.mark.scenario
 class TestScenarioDefinitions:
     """Tests for scenario YAML generation and validation."""
@@ -339,7 +338,6 @@ class TestScenarioDefinitions:
 
 
 @pytest.mark.e2e
-@pytest.mark.extended
 @pytest.mark.scenario
 class TestScenarioExpectedValues:
     """Tests for scenario expected value calculations."""
@@ -398,7 +396,6 @@ class TestScenarioExpectedValues:
 
 
 @pytest.mark.e2e
-@pytest.mark.extended
 @pytest.mark.scenario
 class TestScenarioYAMLStructure:
     """Tests for NISE YAML structure validation."""
