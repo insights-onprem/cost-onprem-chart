@@ -55,6 +55,7 @@ class TestKokuSourcesHealth:
             "app.kubernetes.io/component=cost-management-api-writes"
         ), "Koku API (writes) pod is not ready"
 
+    @pytest.mark.smoke
     def test_koku_sources_endpoint_responds(
         self, cluster_config, koku_api_reads_url: str, ingress_pod: str, rh_identity_header: str
     ):
@@ -174,6 +175,7 @@ class TestApplicationsEndpoint:
 
 
 @pytest.mark.sources
+@pytest.mark.auth
 @pytest.mark.component
 class TestAuthenticationErrors:
     """Tests for authentication error handling in Sources API."""
