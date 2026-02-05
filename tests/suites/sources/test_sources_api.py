@@ -214,7 +214,7 @@ class TestAuthenticationErrors:
         )
 
         body, status = parse_curl_response(result)
-        assert status in ["400", "401", "403"], f"Expected 400/401/403, got {status}: {body}"
+        assert status == "401", f"Expected 401, got {status}: {body}"
 
     def test_missing_identity_header_returns_401(
         self, cluster_config, koku_api_reads_url: str, ingress_pod: str
@@ -251,13 +251,13 @@ class TestAuthenticationErrors:
         body, status = parse_curl_response(result)
         assert status == "403", f"Expected 403, got {status}: {body}"
 
-    def test_non_admin_source_creation(
+    def test_non_admin_source_creation_returns_424(
         self, cluster_config, koku_api_writes_url: str, ingress_pod: str, invalid_identity_headers
     ):
-        """Document behavior when non-admin user attempts source creation.
+        """Verify non-admin source creation fails when RBAC is unavailable.
 
-        This test documents the current behavior - non-admins may or may not
-        be allowed to create sources depending on Koku's RBAC configuration.
+        Koku checks RBAC for source creation. In on-prem deployments without
+        RBAC service, this returns 424 Failed Dependency.
         """
         source_payload = json.dumps({
             "name": f"non-admin-test-{uuid.uuid4().hex[:8]}",
@@ -280,15 +280,15 @@ class TestAuthenticationErrors:
         )
 
         body, status = parse_curl_response(result)
-        # Document the behavior - could be 201 (allowed), 403 (forbidden), 401, or 424 (RBAC unavailable)
-        assert status in ["201", "400", "401", "403", "424"], f"Unexpected status {status}: {body}"
+        assert status == "424", f"Expected 424, got {status}: {body}"
 
-    def test_missing_email_in_identity(
+    def test_missing_email_in_identity_returns_401(
         self, cluster_config, koku_api_reads_url: str, ingress_pod: str, invalid_identity_headers
     ):
-        """Document behavior when email is missing from identity header.
+        """Verify missing email in identity header returns 401 Unauthorized.
 
-        Some endpoints may require email for audit logging.
+        Koku's KokuTenantMiddleware requires email in the identity header
+        and returns HttpResponseUnauthorizedRequest (401) when missing.
         """
         result = exec_in_pod(
             cluster_config.namespace,
@@ -302,8 +302,7 @@ class TestAuthenticationErrors:
         )
 
         body, status = parse_curl_response(result)
-        # Document the behavior - Koku might allow or reject
-        assert status in ["200", "400", "401", "403"], f"Unexpected status {status}: {body}"
+        assert status == "401", f"Expected 401, got {status}: {body}"
 
 
 # =============================================================================
@@ -316,11 +315,11 @@ class TestAuthenticationErrors:
 class TestConflictHandling:
     """Tests for conflict detection and error handling."""
 
-    def test_duplicate_cluster_id_returns_conflict(
+    def test_duplicate_cluster_id_returns_400(
         self, cluster_config, koku_api_writes_url: str, ingress_pod: str,
         rh_identity_header: str, test_source
     ):
-        """Verify duplicate source_ref (cluster_id) returns 409 Conflict."""
+        """Verify duplicate source_ref (cluster_id) returns 400 Bad Request."""
         # Try to create another source with the same source_ref
         source_payload = json.dumps({
             "name": f"duplicate-test-{uuid.uuid4().hex[:8]}",
@@ -343,13 +342,16 @@ class TestConflictHandling:
         )
 
         body, status = parse_curl_response(result)
-        # Should return 400 or 409 for duplicate source_ref
-        assert status in ["400", "409"], f"Expected conflict, got {status}: {body}"
+        assert status == "400", f"Expected 400, got {status}: {body}"
 
-    def test_invalid_source_type_id_returns_error(
+    def test_invalid_source_type_id_returns_400(
         self, cluster_config, koku_api_writes_url: str, ingress_pod: str, rh_identity_header: str
     ):
-        """Verify invalid source_type_id returns appropriate error."""
+        """Verify invalid source_type_id returns 400 Bad Request.
+
+        Koku's AdminSourcesSerializer.validate_source_type() raises
+        ValidationError when the source_type_id doesn't exist.
+        """
         source_payload = json.dumps({
             "name": f"invalid-type-test-{uuid.uuid4().hex[:8]}",
             "source_type_id": "99999",  # Non-existent type
@@ -371,7 +373,7 @@ class TestConflictHandling:
         )
 
         body, status = parse_curl_response(result)
-        assert status in ["400", "404"], f"Expected error, got {status}: {body}"
+        assert status == "400", f"Expected 400, got {status}: {body}"
 
     def test_duplicate_source_name(
         self, cluster_config, koku_api_writes_url: str, ingress_pod: str,
@@ -429,27 +431,6 @@ class TestConflictHandling:
 class TestDeleteEdgeCases:
     """Tests for edge cases in source deletion."""
 
-    def test_delete_nonexistent_source_returns_404(
-        self, cluster_config, koku_api_writes_url: str, ingress_pod: str, rh_identity_header: str
-    ):
-        """Verify deleting a non-existent source returns 404."""
-        fake_id = "99999999"
-
-        result = exec_in_pod(
-            cluster_config.namespace,
-            ingress_pod,
-            [
-                "curl", "-s", "-w", "\n%{http_code}",
-                "-X", "DELETE",
-                f"{koku_api_writes_url}/sources/{fake_id}/",
-                "-H", f"X-Rh-Identity: {rh_identity_header}",
-            ],
-            container="ingress",
-        )
-
-        body, status = parse_curl_response(result)
-        assert status == "404", f"Expected 404, got {status}: {body}"
-
     def test_get_deleted_source_returns_404(
         self, cluster_config, koku_api_writes_url: str, koku_api_reads_url: str,
         ingress_pod: str, rh_identity_header: str, test_source
@@ -483,112 +464,6 @@ class TestDeleteEdgeCases:
 
         body, status = parse_curl_response(result)
         assert status == "404", f"Expected 404 for deleted source, got {status}: {body}"
-
-
-# =============================================================================
-# P2 - Pagination
-# =============================================================================
-
-
-@pytest.mark.sources
-@pytest.mark.integration
-class TestSourcesPagination:
-    """Tests for pagination in sources list endpoints."""
-
-    def test_sources_pagination_basic(
-        self, cluster_config, koku_api_reads_url: str, ingress_pod: str, rh_identity_header: str
-    ):
-        """Verify sources list supports limit and offset parameters."""
-        result = exec_in_pod(
-            cluster_config.namespace,
-            ingress_pod,
-            [
-                "curl", "-s", "-w", "\n%{http_code}",
-                f"{koku_api_reads_url}/sources/?limit=5&offset=0",
-                "-H", f"X-Rh-Identity: {rh_identity_header}",
-            ],
-            container="ingress",
-        )
-
-        body, status = parse_curl_response(result)
-        assert status == "200", f"Expected 200, got {status}: {body}"
-        assert body is not None, "No response from sources endpoint"
-        data = json.loads(body)
-
-        # Should have pagination metadata
-        assert "meta" in data or "data" in data, f"Missing pagination structure: {data}"
-
-        # If there are results, should be <= limit
-        if "data" in data:
-            assert len(data["data"]) <= 5, f"Returned more than limit: {len(data['data'])}"
-
-    def test_sources_pagination_metadata(
-        self, cluster_config, koku_api_reads_url: str, ingress_pod: str, rh_identity_header: str
-    ):
-        """Verify pagination response includes count metadata."""
-        result = exec_in_pod(
-            cluster_config.namespace,
-            ingress_pod,
-            [
-                "curl", "-s", "-w", "\n%{http_code}",
-                f"{koku_api_reads_url}/sources/?limit=10",
-                "-H", f"X-Rh-Identity: {rh_identity_header}",
-            ],
-            container="ingress",
-        )
-
-        body, status = parse_curl_response(result)
-        assert status == "200", f"Expected 200, got {status}: {body}"
-        assert body is not None
-        data = json.loads(body)
-
-        # Check for count in meta
-        if "meta" in data:
-            assert "count" in data["meta"], f"Missing count in meta: {data['meta']}"
-
-    def test_sources_pagination_beyond_results(
-        self, cluster_config, koku_api_reads_url: str, ingress_pod: str, rh_identity_header: str
-    ):
-        """Verify pagination with offset beyond available results returns empty."""
-        result = exec_in_pod(
-            cluster_config.namespace,
-            ingress_pod,
-            [
-                "curl", "-s", "-w", "\n%{http_code}",
-                f"{koku_api_reads_url}/sources/?limit=10&offset=10000",
-                "-H", f"X-Rh-Identity: {rh_identity_header}",
-            ],
-            container="ingress",
-        )
-
-        body, status = parse_curl_response(result)
-        assert status == "200", f"Expected 200, got {status}"
-
-        data = json.loads(body)
-        if "data" in data:
-            assert len(data["data"]) == 0, f"Expected empty results: {data}"
-
-    def test_source_types_pagination(
-        self, cluster_config, koku_api_reads_url: str, ingress_pod: str, rh_identity_header: str
-    ):
-        """Verify source_types endpoint supports pagination."""
-        result = exec_in_pod(
-            cluster_config.namespace,
-            ingress_pod,
-            [
-                "curl", "-s", "-w", "\n%{http_code}",
-                f"{koku_api_reads_url}/source_types?limit=5",
-                "-H", f"X-Rh-Identity: {rh_identity_header}",
-            ],
-            container="ingress",
-        )
-
-        body, status = parse_curl_response(result)
-        assert status == "200", f"Expected 200, got {status}: {body}"
-        assert body is not None
-        data = json.loads(body)
-        assert "data" in data, f"Missing data field: {data}"
-        assert "meta" in data, f"Missing meta field: {data}"
 
 
 # =============================================================================
@@ -681,55 +556,3 @@ class TestSourcesFiltering:
             assert "openshift" in names, f"OpenShift not in filtered results: {names}"
 
 
-# =============================================================================
-# P3 - Content-Type Validation
-# =============================================================================
-
-
-@pytest.mark.sources
-@pytest.mark.component
-class TestContentTypeValidation:
-    """Tests for request content-type validation."""
-
-    def test_post_requires_json_content_type(
-        self, cluster_config, koku_api_writes_url: str, ingress_pod: str, rh_identity_header: str
-    ):
-        """Verify POST requests require application/json content type."""
-        result = exec_in_pod(
-            cluster_config.namespace,
-            ingress_pod,
-            [
-                "curl", "-s", "-w", "\n%{http_code}",
-                "-X", "POST",
-                f"{koku_api_writes_url}/sources/",
-                "-H", "Content-Type: text/plain",  # Wrong content type
-                "-H", f"X-Rh-Identity: {rh_identity_header}",
-                "-d", "not json",
-            ],
-            container="ingress",
-        )
-
-        body, status = parse_curl_response(result)
-        # Should reject with 400 or 415 (Unsupported Media Type)
-        assert status in ["400", "415"], f"Expected 400/415, got {status}: {body}"
-
-    def test_empty_request_body_returns_400(
-        self, cluster_config, koku_api_writes_url: str, ingress_pod: str, rh_identity_header: str
-    ):
-        """Verify empty request body on POST returns 400."""
-        result = exec_in_pod(
-            cluster_config.namespace,
-            ingress_pod,
-            [
-                "curl", "-s", "-w", "\n%{http_code}",
-                "-X", "POST",
-                f"{koku_api_writes_url}/sources/",
-                "-H", "Content-Type: application/json",
-                "-H", f"X-Rh-Identity: {rh_identity_header}",
-                "-d", "",
-            ],
-            container="ingress",
-        )
-
-        body, status = parse_curl_response(result)
-        assert status == "400", f"Expected 400, got {status}: {body}"

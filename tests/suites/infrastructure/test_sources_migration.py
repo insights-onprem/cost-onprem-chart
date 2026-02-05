@@ -1,10 +1,8 @@
 """
-Sources API removal validation tests.
+Sources-to-Koku migration infrastructure tests.
 
-Tests to verify that the standalone sources-api service has been removed
-and its functionality is now provided by Koku.
-
-These tests validate the infrastructure state after the sources-api removal.
+Validates that the standalone sources-api service has been removed
+and Koku now provides sources functionality.
 """
 
 import pytest
@@ -12,7 +10,7 @@ import pytest
 from utils import check_service_exists, check_deployment_exists, run_oc_command
 
 
-@pytest.mark.sources
+@pytest.mark.infrastructure
 @pytest.mark.component
 class TestSourcesApiRemoved:
     """Tests to verify sources-api infrastructure has been removed.
@@ -88,7 +86,7 @@ class TestSourcesApiRemoved:
             )
 
 
-@pytest.mark.sources
+@pytest.mark.infrastructure
 @pytest.mark.component
 class TestKokuSourcesIntegration:
     """Tests to verify Koku provides sources functionality."""
