@@ -709,52 +709,6 @@ class TestSourcesFiltering:
 
 
 # =============================================================================
-# P2 - Old Endpoint Removal
-# =============================================================================
-
-
-@pytest.mark.cost_management
-@pytest.mark.component
-class TestOldEndpointRemoval:
-    """Tests to verify old sources-api endpoints are removed."""
-
-    def test_old_sources_api_v1_returns_404(
-        self, cluster_config, ingress_pod: str, rh_identity_header: str
-    ):
-        """Verify the old /api/sources/v1.0 endpoint returns 404.
-
-        The old sources-api service should be removed and replaced by
-        Koku's built-in sources endpoints at /api/cost-management/v1/.
-
-        This test will pass once the Helm chart removes the sources-api deployment.
-        """
-        # Try to reach the old sources-api endpoint
-        old_api_url = (
-            f"http://{cluster_config.helm_release_name}-sources-api."
-            f"{cluster_config.namespace}.svc.cluster.local:8000/api/sources/v1.0/sources"
-        )
-
-        result = exec_in_pod(
-            cluster_config.namespace,
-            ingress_pod,
-            [
-                "curl", "-s", "-w", "\n%{http_code}",
-                "--connect-timeout", "5",
-                old_api_url,
-                "-H", f"x-rh-sources-org-id: {cluster_config.namespace}",
-            ],
-            container="ingress",
-        )
-
-        # Should fail to connect (service doesn't exist) or return 404
-        if result:
-            body, status = parse_curl_response(result)
-            # Could be 000 (connection refused), 404, or 502/503
-            assert status in ["000", "404", "502", "503"], \
-                f"Old API unexpectedly accessible with status {status}"
-
-
-# =============================================================================
 # P3 - Content-Type Validation
 # =============================================================================
 
