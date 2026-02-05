@@ -13,7 +13,7 @@ import pytest
 from utils import exec_in_pod
 
 
-@pytest.mark.cost_management
+@pytest.mark.sources
 @pytest.mark.component
 class TestResponseSchemas:
     """Tests for API response schema validation."""

@@ -12,7 +12,7 @@ import pytest
 from utils import check_service_exists, check_deployment_exists, run_oc_command
 
 
-@pytest.mark.infrastructure
+@pytest.mark.sources
 @pytest.mark.component
 class TestSourcesApiRemoved:
     """Tests to verify sources-api infrastructure has been removed.
@@ -88,7 +88,7 @@ class TestSourcesApiRemoved:
             )
 
 
-@pytest.mark.infrastructure
+@pytest.mark.sources
 @pytest.mark.component
 class TestKokuSourcesIntegration:
     """Tests to verify Koku provides sources functionality."""

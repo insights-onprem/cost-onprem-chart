@@ -41,7 +41,7 @@ def parse_curl_response(result: str) -> Tuple[Optional[str], Optional[str]]:
     return result, None
 
 
-@pytest.mark.cost_management
+@pytest.mark.sources
 @pytest.mark.component
 class TestKokuSourcesHealth:
     """Tests for Koku API health and sources endpoint availability."""
@@ -74,7 +74,7 @@ class TestKokuSourcesHealth:
         assert result.strip() == "200", f"Koku sources endpoint returned {result}"
 
 
-@pytest.mark.cost_management
+@pytest.mark.sources
 @pytest.mark.integration
 class TestSourceTypes:
     """Tests for source type configuration in Koku."""
@@ -105,7 +105,7 @@ class TestSourceTypes:
             assert expected in source_types, f"{expected} source type not found in {source_types}"
 
 
-@pytest.mark.cost_management
+@pytest.mark.sources
 @pytest.mark.integration
 class TestApplicationTypes:
     """Tests for application type configuration in Koku."""
@@ -138,7 +138,7 @@ class TestApplicationTypes:
             f"cost-management application type not found in {app_names}"
 
 
-@pytest.mark.cost_management
+@pytest.mark.sources
 @pytest.mark.integration
 class TestApplicationsEndpoint:
     """Tests for the applications endpoint."""
@@ -173,7 +173,7 @@ class TestApplicationsEndpoint:
 # =============================================================================
 
 
-@pytest.mark.cost_management
+@pytest.mark.sources
 @pytest.mark.component
 class TestAuthenticationErrors:
     """Tests for authentication error handling in Sources API."""
@@ -309,7 +309,7 @@ class TestAuthenticationErrors:
 # =============================================================================
 
 
-@pytest.mark.cost_management
+@pytest.mark.sources
 @pytest.mark.component
 class TestConflictHandling:
     """Tests for conflict detection and error handling."""
@@ -422,7 +422,7 @@ class TestConflictHandling:
 # =============================================================================
 
 
-@pytest.mark.cost_management
+@pytest.mark.sources
 @pytest.mark.component
 class TestDeleteEdgeCases:
     """Tests for edge cases in source deletion."""
@@ -488,7 +488,7 @@ class TestDeleteEdgeCases:
 # =============================================================================
 
 
-@pytest.mark.cost_management
+@pytest.mark.sources
 @pytest.mark.integration
 class TestSourcesPagination:
     """Tests for pagination in sources list endpoints."""
@@ -594,7 +594,7 @@ class TestSourcesPagination:
 # =============================================================================
 
 
-@pytest.mark.cost_management
+@pytest.mark.sources
 @pytest.mark.integration
 class TestSourcesFiltering:
     """Tests for filtering capabilities in sources list endpoints."""
@@ -684,7 +684,7 @@ class TestSourcesFiltering:
 # =============================================================================
 
 
-@pytest.mark.cost_management
+@pytest.mark.sources
 @pytest.mark.component
 class TestContentTypeValidation:
     """Tests for request content-type validation."""
