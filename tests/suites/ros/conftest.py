@@ -26,7 +26,7 @@ def kruize_credentials(cluster_config) -> dict:
     if not user or not password:
         pytest.skip("Kruize database credentials not found")
     
-    return {"user": user, "password": password, "database": "costonprem_kruize"}
+    return {"user": user, "password": password, "database": "kruize_db"}
 
 
 @pytest.fixture(scope="module")

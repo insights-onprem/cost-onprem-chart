@@ -114,6 +114,8 @@ def cleanup_database_records(
     db_pod: str,
     org_id: str,
     cluster_id: Optional[str] = None,
+    database: str = "koku",
+    db_user: str = "koku",
 ) -> dict:
     """Clean up database processing records from previous test runs.
     
@@ -125,6 +127,8 @@ def cleanup_database_records(
         db_pod: Database pod name
         org_id: Organization ID to clean up
         cluster_id: Optional cluster ID to limit cleanup scope
+        database: Database name (detected from deployment, defaults to 'koku')
+        db_user: Database user (detected from deployment, defaults to 'koku')
         
     Returns:
         Dict with cleanup statistics
@@ -169,7 +173,7 @@ def cleanup_database_records(
             result = subprocess.run(
                 [
                     "oc", "exec", "-n", namespace, db_pod, "--",
-                    "psql", "-U", "koku_user", "-d", "costonprem_koku", "-t", "-c", query
+                    "psql", "-U", db_user, "-d", database, "-t", "-c", query
                 ],
                 capture_output=True,
                 text=True,
@@ -326,6 +330,8 @@ def full_cleanup(
     cluster_id: Optional[str] = None,
     restart_services: bool = False,
     verbose: bool = True,
+    database: str = "koku",
+    db_user: str = "koku",
 ) -> dict:
     """Perform full cleanup of test artifacts.
     
@@ -337,6 +343,8 @@ def full_cleanup(
         cluster_id: Optional cluster ID to limit cleanup scope
         restart_services: Whether to restart Valkey and listener (slower but more thorough)
         verbose: Whether to print progress
+        database: Database name (detected from deployment, defaults to 'koku')
+        db_user: Database user (detected from deployment, defaults to 'koku')
         
     Returns:
         Dict with cleanup statistics
@@ -374,6 +382,8 @@ def full_cleanup(
         db_pod=db_pod,
         org_id=org_id,
         cluster_id=cluster_id,
+        database=database,
+        db_user=db_user,
     )
     results["database"] = db_result
     if verbose:

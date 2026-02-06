@@ -24,13 +24,13 @@ class NavPage(NamedTuple):
 NAVIGATION_PAGES = [
     NavPage("Overview", "/openshift/cost-management", "Overview"),
     NavPage("OpenShift", "/openshift/cost-management/ocp", "OpenShift"),
+    NavPage("Optimizations", "/openshift/cost-management/optimizations", "Optimizations"),
     NavPage("Cost Explorer", "/openshift/cost-management/explorer", "Cost Explorer"),
     NavPage("Settings", "/openshift/cost-management/settings", "Settings"),
 ]
 
 # Pages that exist but may not have data or are cloud-provider specific
 OPTIONAL_PAGES = [
-    NavPage("Optimizations", "/openshift/cost-management/optimizations", "Optimizations"),
     NavPage("AWS", "/openshift/cost-management/aws", "Amazon Web Services"),
     NavPage("GCP", "/openshift/cost-management/gcp", "Google Cloud"),
     NavPage("Azure", "/openshift/cost-management/azure", "Microsoft Azure"),

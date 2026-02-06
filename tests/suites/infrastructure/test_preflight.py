@@ -73,10 +73,12 @@ class TestDatabaseConnectivity:
         assert "accepting connections" in result.lower(), f"Unexpected response: {result}"
 
     def test_koku_database_exists(self, cluster_config, database_config):
-        """Verify costonprem_koku database exists."""
+        """Verify Koku database exists."""
+        # Use the database name from the fixture (auto-detected from deployment)
+        db_name = database_config.database
         cmd = [
             "psql", "-U", database_config.user, "-d", "postgres",
-            "-t", "-c", "SELECT 1 FROM pg_database WHERE datname='costonprem_koku'"
+            "-t", "-c", f"SELECT 1 FROM pg_database WHERE datname='{db_name}'"
         ]
         
         if database_config.password:
@@ -84,13 +86,14 @@ class TestDatabaseConnectivity:
         
         result = exec_in_pod(cluster_config.namespace, database_config.pod_name, cmd)
         
-        assert result is not None and "1" in result, "costonprem_koku database not found"
+        assert result is not None and "1" in result, f"{db_name} database not found"
 
     def test_kruize_database_exists(self, cluster_config, database_config):
-        """Verify costonprem_kruize database exists."""
+        """Verify Kruize database exists."""
+        # Kruize uses 'kruize_db' database name
         cmd = [
             "psql", "-U", database_config.user, "-d", "postgres",
-            "-t", "-c", "SELECT 1 FROM pg_database WHERE datname='costonprem_kruize'"
+            "-t", "-c", "SELECT 1 FROM pg_database WHERE datname='kruize_db'"
         ]
         
         if database_config.password:
@@ -98,7 +101,7 @@ class TestDatabaseConnectivity:
         
         result = exec_in_pod(cluster_config.namespace, database_config.pod_name, cmd)
         
-        assert result is not None and "1" in result, "costonprem_kruize database not found"
+        assert result is not None and "1" in result, "kruize_db database not found"
 
 
 @pytest.mark.infrastructure

@@ -189,6 +189,37 @@ def ensure_nise_available() -> bool:
     return install_nise()
 
 
+def generate_dynamic_static_report(
+    start_date: datetime,
+    end_date: datetime,
+    output_dir: str,
+    config: Optional[NISEConfig] = None,
+) -> str:
+    """Generate a dynamic NISE static report YAML with current dates.
+    
+    This ensures the dates in the nise-generated data match the current billing period,
+    which is required for Koku to process and summarize the data correctly.
+    
+    Args:
+        start_date: Start date for data generation
+        end_date: End date for data generation
+        output_dir: Directory to write the YAML file
+        config: NISE configuration (uses defaults if not provided)
+        
+    Returns:
+        Path to the generated YAML file
+    """
+    if config is None:
+        config = NISEConfig()
+    
+    yaml_content = config.to_yaml("placeholder", start_date, end_date)
+    yaml_path = os.path.join(output_dir, "dynamic_ocp_static_report.yml")
+    with open(yaml_path, "w") as f:
+        f.write(yaml_content)
+    
+    return yaml_path
+
+
 def generate_nise_data(
     cluster_id: str,
     start_date: datetime,
@@ -312,17 +343,17 @@ def get_source_type_id(
     api_url: str,
     rh_identity_header: str,
     source_type_name: str = "openshift",
-    container: str = "ingress",
+    container: str = "runner",
 ) -> Optional[str]:
     """Get the source type ID for a given source type name.
     
     Args:
         namespace: Kubernetes namespace
-        pod: Pod name for executing curl commands (typically ingress pod)
+        pod: Pod name for executing curl commands (test-runner pod)
         api_url: Koku API URL (reads or writes)
         rh_identity_header: Base64-encoded X-Rh-Identity header value
         source_type_name: Name of the source type (default: "openshift")
-        container: Container name in the pod (default: "ingress")
+        container: Container name in the pod (default: "runner")
     
     Returns:
         Source type ID as string, or None if not found
@@ -359,17 +390,17 @@ def get_application_type_id(
     api_url: str,
     rh_identity_header: str,
     app_type_name: str = "/insights/platform/cost-management",
-    container: str = "ingress",
+    container: str = "runner",
 ) -> Optional[str]:
     """Get the application type ID for cost management.
     
     Args:
         namespace: Kubernetes namespace
-        pod: Pod name for executing curl commands (typically ingress pod)
+        pod: Pod name for executing curl commands (test-runner pod)
         api_url: Koku API URL (reads or writes)
         rh_identity_header: Base64-encoded X-Rh-Identity header value
         app_type_name: Name of the application type
-        container: Container name in the pod (default: "ingress")
+        container: Container name in the pod (default: "runner")
     
     Returns:
         Application type ID as string, or None if not found
@@ -409,7 +440,7 @@ def register_source(
     org_id: str,
     source_name: Optional[str] = None,
     bucket: str = DEFAULT_S3_BUCKET,
-    container: str = "ingress",
+    container: str = "runner",
     max_retries: int = 5,
     initial_retry_delay: int = 5,
 ) -> SourceRegistration:
@@ -424,14 +455,14 @@ def register_source(
     
     Args:
         namespace: Kubernetes namespace
-        pod: Pod name for executing curl commands (typically ingress pod)
+        pod: Pod name for executing curl commands (test-runner pod)
         api_url: Koku API URL (unified deployment)
         rh_identity_header: Base64-encoded X-Rh-Identity header value
         cluster_id: Cluster ID for the source
         org_id: Organization ID
         source_name: Optional custom source name (defaults to e2e-source-{cluster_id[-8:]})
         bucket: S3 bucket name
-        container: Container name in the pod (default: "ingress")
+        container: Container name in the pod (default: "runner")
         max_retries: Maximum number of retry attempts (default: 5)
         initial_retry_delay: Initial delay between retries in seconds (default: 5)
     
@@ -555,17 +586,17 @@ def delete_source(
     api_url: str,
     rh_identity_header: str,
     source_id: str,
-    container: str = "ingress",
+    container: str = "runner",
 ) -> bool:
     """Delete a source from Koku Sources API.
     
     Args:
         namespace: Kubernetes namespace
-        pod: Pod name for executing curl commands (typically ingress pod)
+        pod: Pod name for executing curl commands (test-runner pod)
         api_url: Koku API URL (unified deployment)
         rh_identity_header: Base64-encoded X-Rh-Identity header value
         source_id: ID of the source to delete
-        container: Container name in the pod (default: "ingress")
+        container: Container name in the pod (default: "runner")
     
     Returns:
         True if successful, False otherwise
@@ -657,6 +688,7 @@ def wait_for_provider(
     cluster_id: str,
     timeout: int = 300,
     interval: int = 10,
+    database: str = "koku",
 ) -> bool:
     """Wait for provider to be created in Koku database.
     
@@ -667,7 +699,7 @@ def wait_for_provider(
     """
     def check_provider():
         result = execute_db_query(
-            namespace, db_pod, "costonprem_koku", "koku_user",
+            namespace, db_pod, database, "koku",
             f"""
             SELECT p.uuid FROM api_provider p
             JOIN api_providerauthentication pa ON p.authentication_id = pa.id
@@ -686,6 +718,7 @@ def wait_for_summary_tables(
     cluster_id: str,
     timeout: int = 600,
     interval: int = 30,
+    database: str = "koku",
 ) -> Optional[str]:
     """Wait for summary tables to be populated and return schema name.
     
@@ -695,7 +728,7 @@ def wait_for_summary_tables(
     
     def check_summary():
         result = execute_db_query(
-            namespace, db_pod, "costonprem_koku", "koku_user",
+            namespace, db_pod, database, "koku",
             f"""
             SELECT c.schema_name FROM reporting_common_costusagereportmanifest m
             JOIN api_provider p ON m.provider_id = p.uuid
@@ -708,7 +741,7 @@ def wait_for_summary_tables(
         
         schema = result[0][0].strip()
         result = execute_db_query(
-            namespace, db_pod, "costonprem_koku", "koku_user",
+            namespace, db_pod, database, "koku",
             f"SELECT COUNT(*) FROM {schema}.reporting_ocpusagelineitem_daily_summary WHERE cluster_id = '{cluster_id}'"
         )
         
@@ -730,12 +763,13 @@ def cleanup_database_records(
     namespace: str,
     db_pod: str,
     cluster_id: str,
+    database: str = "koku",
 ) -> bool:
     """Clean up database records for a cluster."""
     try:
         # Delete file statuses first (foreign key constraint)
         execute_db_query(
-            namespace, db_pod, "costonprem_koku", "koku_user",
+            namespace, db_pod, database, "koku",
             f"""
             DELETE FROM reporting_common_costusagereportstatus
             WHERE manifest_id IN (
@@ -747,7 +781,7 @@ def cleanup_database_records(
         
         # Delete manifests
         execute_db_query(
-            namespace, db_pod, "costonprem_koku", "koku_user",
+            namespace, db_pod, database, "koku",
             f"DELETE FROM reporting_common_costusagereportmanifest WHERE cluster_id = '{cluster_id}'"
         )
         

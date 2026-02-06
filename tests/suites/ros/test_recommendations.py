@@ -57,13 +57,16 @@ class TestRecommendationsAPI:
 
         response = http_session.get(endpoint, headers=auth_header, timeout=30)
 
-        # Should not get auth errors
-        assert response.status_code not in [401, 403], (
-            f"Authentication failed: {response.status_code}"
+        # ROS API returns 200 with empty data array when no recommendations exist,
+        # not 404. The endpoint should always be accessible with valid auth.
+        assert response.status_code == 200, (
+            f"Expected 200, got {response.status_code}: {response.text[:200]}"
         )
-        # Accept 200 (has data) or 404 (no data yet)
-        assert response.status_code in [200, 404], (
-            f"Unexpected status: {response.status_code}"
+        
+        # Verify response structure
+        data = response.json()
+        assert "recommendations" in data or "data" in data, (
+            f"Response missing expected fields: {list(data.keys())}"
         )
 
 

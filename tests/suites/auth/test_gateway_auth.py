@@ -92,8 +92,10 @@ class TestGatewayJWTAuthentication:
         if response.status_code == 503:
             pytest.skip("Gateway service returning 503 - pods may not be ready yet")
 
-        assert response.status_code in [200, 401, 403], (
-            f"Gateway not reachable: {response.status_code}"
+        # Gateway should respond - 200 if ready, 401 if auth required
+        # Any response means gateway is reachable
+        assert response.status_code in [200, 401], (
+            f"Gateway not reachable or unexpected error: {response.status_code}"
         )
 
     def test_request_without_token_rejected(
@@ -143,8 +145,9 @@ class TestGatewayJWTAuthentication:
             timeout=10,
         )
 
-        assert response.status_code in [401, 403], (
-            f"Expected 401/403 for fake signature, got {response.status_code}. "
+        # Envoy JWT filter returns 401 for invalid signatures
+        assert response.status_code == 401, (
+            f"Expected 401 for fake signature, got {response.status_code}. "
             "CRITICAL: JWT with fake signature may have been accepted!"
         )
 
@@ -152,14 +155,15 @@ class TestGatewayJWTAuthentication:
         self, gateway_url: str, jwt_token, http_session: requests.Session
     ):
         """Verify requests with valid JWT token are accepted (auth passes)."""
+        # Use cost-management status endpoint - always returns 200 with valid auth
         response = http_session.get(
-            f"{gateway_url}/ingress/ready",
+            f"{gateway_url}/cost-management/v1/status/",
             headers=jwt_token.authorization_header,
             timeout=10,
         )
 
-        assert response.status_code not in [401, 403], (
-            f"Valid JWT token was rejected: {response.status_code}"
+        assert response.status_code == 200, (
+            f"Expected 200 from status endpoint, got {response.status_code}"
         )
 
     def test_cost_management_api_accessible(
@@ -172,22 +176,23 @@ class TestGatewayJWTAuthentication:
             timeout=10,
         )
 
-        # Accept 200 (success), 404 (endpoint may not exist), but not 401/403
-        assert response.status_code not in [401, 403], (
-            f"Valid JWT token was rejected for cost-management API: {response.status_code}"
+        # Koku status endpoint returns 200 with API version info
+        assert response.status_code == 200, (
+            f"Expected 200 for cost-management status, got {response.status_code}"
         )
 
     def test_sources_api_accessible(
         self, gateway_url: str, jwt_token, http_session: requests.Session
     ):
-        """Verify Sources API is accessible through gateway with valid JWT."""
+        """Verify Sources API (now part of Koku) is accessible through gateway with valid JWT."""
+        # Sources API is now at /api/cost-management/v1/sources/ (merged into Koku)
         response = http_session.get(
-            f"{gateway_url}/sources/v1.0/source_types",
+            f"{gateway_url}/cost-management/v1/sources/",
             headers=jwt_token.authorization_header,
             timeout=10,
         )
 
-        # Accept 200 (success), 404 (endpoint may not exist), but not 401/403
-        assert response.status_code not in [401, 403], (
-            f"Valid JWT token was rejected for sources API: {response.status_code}"
+        # Koku sources endpoint returns 200 with list of sources (may be empty)
+        assert response.status_code == 200, (
+            f"Expected 200 for sources endpoint, got {response.status_code}"
         )

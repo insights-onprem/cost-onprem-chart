@@ -82,8 +82,8 @@ class DatabaseConfig:
 
     pod_name: str
     namespace: str
-    database: str = "costonprem_koku"
-    user: str = "costonprem_koku"
+    database: str = "koku"
+    user: str = "koku"
     password: Optional[str] = None
 
 
@@ -251,7 +251,11 @@ def ingress_url(gateway_url: str) -> str:
 
 @pytest.fixture(scope="session")
 def database_config(cluster_config: ClusterConfig) -> DatabaseConfig:
-    """Get database configuration for Koku."""
+    """Get database configuration for Koku.
+    
+    Detects the actual database name from the Koku deployment's DATABASE_NAME
+    environment variable, falling back to 'koku' if not found.
+    """
     # Find database pod
     result = run_oc_command([
         "get", "pods", "-n", cluster_config.namespace,
@@ -270,12 +274,23 @@ def database_config(cluster_config: ClusterConfig) -> DatabaseConfig:
     db_password = get_secret_value(cluster_config.namespace, secret_name, "koku-password")
     
     if not db_user:
-        db_user = "costonprem_koku"
+        db_user = "koku"
+    
+    # Detect actual database name from Koku deployment
+    db_name_result = run_oc_command([
+        "get", "deployment", f"{cluster_config.helm_release_name}-koku-api-reads",
+        "-n", cluster_config.namespace,
+        "-o", "jsonpath={.spec.template.spec.containers[0].env[?(@.name=='DATABASE_NAME')].value}"
+    ], check=False)
+    
+    db_name = db_name_result.stdout.strip() if db_name_result.returncode == 0 else ""
+    if not db_name:
+        db_name = "koku"  # Default to 'koku' (current chart default)
     
     return DatabaseConfig(
         pod_name=db_pod,
         namespace=cluster_config.namespace,
-        database="costonprem_koku",
+        database=db_name,
         user=db_user,
         password=db_password,
     )
@@ -454,3 +469,156 @@ def http_session() -> requests.Session:
     session = requests.Session()
     session.verify = False
     return session
+
+
+# =============================================================================
+# External API Access Fixtures (for api/ tests)
+# =============================================================================
+
+
+@pytest.fixture(scope="function")
+def authenticated_session(jwt_token: JWTToken) -> requests.Session:
+    """Pre-configured requests session with JWT authentication.
+    
+    Scope: function - Matches jwt_token scope to ensure fresh auth per test.
+    
+    Use this fixture for external API tests that go through the gateway.
+    The session includes:
+    - Authorization header with Bearer token
+    - SSL verification disabled (for self-signed certs)
+    
+    Note: Content-Type is NOT set by default to allow multipart/form-data
+    uploads to work correctly. Set it explicitly in tests that need JSON.
+    """
+    session = requests.Session()
+    session.headers.update({
+        "Authorization": f"Bearer {jwt_token.access_token}",
+    })
+    session.verify = False
+    return session
+
+
+# =============================================================================
+# Internal Cluster Access Fixtures (for internal/ tests)
+# =============================================================================
+
+
+@pytest.fixture(scope="session")
+def test_runner_pod(cluster_config: ClusterConfig):
+    """Dedicated test runner pod for internal cluster commands.
+    
+    Provides a consistent environment for executing commands inside the cluster
+    without depending on application pod availability.
+    
+    Benefits:
+    - Isolation: Tests don't interfere with application pods
+    - Consistent tooling: Same tools available regardless of app pods
+    - No container guessing: Don't need to find "a pod that has curl"
+    - Cleaner logs: Test output doesn't pollute application logs
+    
+    The pod is created at session start and cleaned up at session end
+    (unless E2E_CLEANUP_AFTER=false).
+    """
+    import json
+    
+    namespace = cluster_config.namespace
+    pod_name = "cost-onprem-test-runner"
+    
+    # Check if pod already exists and is ready
+    check_result = run_oc_command([
+        "get", "pod", pod_name, "-n", namespace,
+        "-o", "jsonpath={.status.phase}"
+    ], check=False)
+    
+    if check_result.returncode == 0 and check_result.stdout.strip() == "Running":
+        # Pod already exists and is running
+        yield pod_name
+        # Don't delete if we didn't create it
+        return
+    
+    # Delete any existing pod that's not running
+    run_oc_command([
+        "delete", "pod", pod_name, "-n", namespace, "--ignore-not-found"
+    ], check=False)
+    
+    pod_manifest = {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": pod_name,
+            "namespace": namespace,
+            "labels": {
+                "app.kubernetes.io/name": "test-runner",
+                "app.kubernetes.io/component": "testing",
+                "app.kubernetes.io/part-of": "cost-onprem-tests",
+            }
+        },
+        "spec": {
+            "restartPolicy": "Never",
+            "containers": [{
+                "name": "runner",
+                "image": "registry.access.redhat.com/ubi9/ubi:latest",
+                "command": ["sleep", "infinity"],
+                "resources": {
+                    "requests": {"memory": "64Mi", "cpu": "100m"},
+                    "limits": {"memory": "256Mi", "cpu": "500m"}
+                }
+            }]
+        }
+    }
+    
+    # Create pod using kubectl apply with stdin
+    import subprocess
+    result = subprocess.run(
+        ["oc", "apply", "-n", namespace, "-f", "-"],
+        input=json.dumps(pod_manifest),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    
+    if result.returncode != 0:
+        pytest.skip(f"Failed to create test runner pod: {result.stderr}")
+    
+    # Wait for pod to be ready
+    wait_result = run_oc_command([
+        "wait", "pod", pod_name, "-n", namespace,
+        "--for=condition=Ready", "--timeout=120s"
+    ], check=False)
+    
+    if wait_result.returncode != 0:
+        # Clean up failed pod
+        run_oc_command(["delete", "pod", pod_name, "-n", namespace, "--ignore-not-found"], check=False)
+        pytest.skip(f"Test runner pod failed to become ready: {wait_result.stderr}")
+    
+    yield pod_name
+    
+    # Cleanup (unless E2E_CLEANUP_AFTER=false)
+    if os.environ.get("E2E_CLEANUP_AFTER", "true").lower() == "true":
+        run_oc_command([
+            "delete", "pod", pod_name, "-n", namespace, "--ignore-not-found"
+        ], check=False)
+
+
+@pytest.fixture(scope="session")
+def internal_api_url(cluster_config: ClusterConfig) -> str:
+    """Internal Koku API URL (ClusterIP service).
+    
+    Use this for tests that need to bypass the gateway and test
+    Koku API directly via internal service networking.
+    
+    Format: http://{release}-koku-api-reads.{namespace}.svc:8000
+    """
+    return f"http://{cluster_config.helm_release_name}-koku-api-reads.{cluster_config.namespace}.svc:8000"
+
+
+@pytest.fixture(scope="session")
+def internal_ros_api_url(cluster_config: ClusterConfig) -> str:
+    """Internal ROS API URL (ClusterIP service).
+    
+    Use this for tests that need to bypass the gateway and test
+    ROS API directly via internal service networking.
+    
+    Format: http://{release}-ros-api.{namespace}.svc:8000
+    """
+    return f"http://{cluster_config.helm_release_name}-ros-api.{cluster_config.namespace}.svc:8000"
