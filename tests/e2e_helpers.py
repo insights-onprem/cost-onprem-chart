@@ -28,6 +28,7 @@ from typing import Dict, List, Optional, Tuple
 import requests
 
 from utils import (
+    create_pod_session,
     create_upload_package_from_files,
     execute_db_query,
     exec_in_pod,
@@ -358,27 +359,26 @@ def get_source_type_id(
     Returns:
         Source type ID as string, or None if not found
     """
-    result = exec_in_pod(
-        namespace,
-        pod,
-        [
-            "curl", "-s",
-            f"{api_url}/source_types",
-            "-H", "Content-Type: application/json",
-            "-H", f"X-Rh-Identity: {rh_identity_header}",
-        ],
+    session = create_pod_session(
+        namespace=namespace,
+        pod=pod,
         container=container,
+        headers={
+            "X-Rh-Identity": rh_identity_header,
+            "Content-Type": "application/json",
+        },
     )
     
-    if not result:
-        return None
-    
     try:
-        data = json.loads(result)
+        response = session.get(f"{api_url}/source_types")
+        if not response.ok:
+            return None
+        
+        data = response.json()
         for st in data.get("data", []):
             if st.get("name") == source_type_name:
                 return st.get("id")
-    except json.JSONDecodeError:
+    except (requests.RequestException, json.JSONDecodeError):
         pass
     
     return None
@@ -405,27 +405,26 @@ def get_application_type_id(
     Returns:
         Application type ID as string, or None if not found
     """
-    result = exec_in_pod(
-        namespace,
-        pod,
-        [
-            "curl", "-s",
-            f"{api_url}/application_types",
-            "-H", "Content-Type: application/json",
-            "-H", f"X-Rh-Identity: {rh_identity_header}",
-        ],
+    session = create_pod_session(
+        namespace=namespace,
+        pod=pod,
         container=container,
+        headers={
+            "X-Rh-Identity": rh_identity_header,
+            "Content-Type": "application/json",
+        },
     )
     
-    if not result:
-        return None
-    
     try:
-        data = json.loads(result)
+        response = session.get(f"{api_url}/application_types")
+        if not response.ok:
+            return None
+        
+        data = response.json()
         for at in data.get("data", []):
             if at.get("name") == app_type_name:
                 return at.get("id")
-    except json.JSONDecodeError:
+    except (requests.RequestException, json.JSONDecodeError):
         pass
     
     return None
@@ -483,12 +482,24 @@ def register_source(
     if not source_name:
         source_name = f"e2e-source-{cluster_id[-8:]}"
     
-    # Create source with source_ref (critical for matching incoming data)
-    source_payload = json.dumps({
+    # Create session for API calls
+    session = create_pod_session(
+        namespace=namespace,
+        pod=pod,
+        container=container,
+        headers={
+            "X-Rh-Identity": rh_identity_header,
+            "Content-Type": "application/json",
+        },
+        timeout=120,  # Longer timeout for first request (schema creation)
+    )
+    
+    # Source payload
+    source_data = {
         "name": source_name,
         "source_type_id": source_type_id,
         "source_ref": cluster_id,
-    })
+    }
     
     # Retry logic for source creation
     # First request may fail due to tenant schema creation (slow operation)
@@ -539,10 +550,10 @@ def register_source(
             source_id = source_data.get("id")
             if source_id:
                 break
-            else:
-                last_error = f"No 'id' in response: {result[:200]}"
-        except json.JSONDecodeError as e:
-            last_error = f"Invalid JSON: {result[:200]} - {e}"
+                
+        except requests.RequestException as e:
+            last_error = f"Request failed: {e}"
+            continue
     
     if not source_id:
         raise RuntimeError(
@@ -553,24 +564,16 @@ def register_source(
     
     # Create application with cluster_id in extra
     if app_type_id:
-        app_payload = json.dumps({
+        app_data = {
             "source_id": source_id,
             "application_type_id": app_type_id,
             "extra": {"bucket": bucket, "cluster_id": cluster_id},
-        })
+        }
         
-        exec_in_pod(
-            namespace,
-            pod,
-            [
-                "curl", "-s", "-X", "POST",
-                f"{api_url}/applications",
-                "-H", "Content-Type: application/json",
-                "-H", f"X-Rh-Identity: {rh_identity_header}",
-                "-d", app_payload,
-            ],
-            container=container,
-        )
+        try:
+            session.post(f"{api_url}/applications", json=app_data)
+        except requests.RequestException:
+            pass  # Application creation is optional
     
     return SourceRegistration(
         source_id=source_id,
@@ -602,17 +605,16 @@ def delete_source(
         True if successful, False otherwise
     """
     try:
-        exec_in_pod(
-            namespace,
-            pod,
-            [
-                "curl", "-s", "-X", "DELETE",
-                f"{api_url}/sources/{source_id}",
-                "-H", f"X-Rh-Identity: {rh_identity_header}",
-            ],
+        session = create_pod_session(
+            namespace=namespace,
+            pod=pod,
             container=container,
+            headers={"X-Rh-Identity": rh_identity_header},
         )
-        return True
+        
+        response = session.delete(f"{api_writes_url}/sources/{source_id}")
+        # 204 No Content or 200 OK both indicate success
+        return response.status_code in (200, 204, 404)  # 404 means already deleted
     except Exception:
         return False
 
@@ -796,37 +798,57 @@ def cleanup_e2e_sources(
     sources_api_url: str,
     org_id: str,
     prefix: str = "e2e-source-",
+    rh_identity_header: Optional[str] = None,
+    container: str = "sources-listener",
 ) -> int:
     """Clean up E2E test sources matching a prefix.
     
-    Returns number of sources deleted.
+    Args:
+        namespace: Kubernetes namespace
+        listener_pod: Pod name for executing curl commands
+        sources_api_url: Sources API URL
+        org_id: Organization ID (used for x-rh-sources-org-id header if no rh_identity_header)
+        prefix: Source name prefix to match for deletion
+        rh_identity_header: Optional X-Rh-Identity header (if None, uses x-rh-sources-org-id)
+        container: Container name in the pod
+    
+    Returns:
+        Number of sources deleted.
     """
     deleted = 0
     
     try:
-        result = exec_in_pod(
-            namespace,
-            listener_pod,
-            [
-                "curl", "-s", f"{sources_api_url}/sources",
-                "-H", "Content-Type: application/json",
-                "-H", f"x-rh-sources-org-id: {org_id}",
-            ],
-            container="sources-listener",
+        # Build headers based on what's provided
+        headers = {"Content-Type": "application/json"}
+        if rh_identity_header:
+            headers["X-Rh-Identity"] = rh_identity_header
+        else:
+            headers["x-rh-sources-org-id"] = org_id
+        
+        session = create_pod_session(
+            namespace=namespace,
+            pod=listener_pod,
+            container=container,
+            headers=headers,
         )
         
-        if not result:
+        response = session.get(f"{sources_api_url}/sources")
+        if not response.ok:
             return 0
         
-        sources = json.loads(result)
+        sources = response.json()
         for source in sources.get("data", []):
             source_name = source.get("name", "")
             source_id = source.get("id")
             
             if source_id and source_name.startswith(prefix):
-                if delete_source(namespace, listener_pod, sources_api_url, source_id, org_id):
-                    deleted += 1
-                    time.sleep(1)  # Brief pause between deletions
+                try:
+                    del_response = session.delete(f"{sources_api_url}/sources/{source_id}")
+                    if del_response.status_code in (200, 204, 404):
+                        deleted += 1
+                        time.sleep(1)  # Brief pause between deletions
+                except requests.RequestException:
+                    pass
     except Exception:
         pass
     

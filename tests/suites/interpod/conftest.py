@@ -7,16 +7,21 @@ via the dedicated test-runner pod, testing internal service networking.
 
 import json
 import pytest
+import requests
 from dataclasses import dataclass
 from typing import Callable, Optional
 
 from conftest import ClusterConfig
-from utils import run_oc_command, create_rh_identity_header
+from utils import run_oc_command, create_rh_identity_header, create_pod_session
 
 
 @dataclass
 class CurlResult:
-    """Result from internal curl command."""
+    """Result from internal curl command.
+    
+    DEPRECATED: Use pod_session fixture instead for a standard requests API.
+    This class is kept for backward compatibility with existing tests.
+    """
     stdout: str
     stderr: str
     returncode: int
@@ -37,6 +42,8 @@ def internal_curl(
     cluster_config: ClusterConfig,
 ) -> Callable:
     """Helper to execute curl commands from the test runner pod.
+    
+    DEPRECATED: Use pod_session fixture instead for a standard requests API.
     
     This fixture provides a callable that executes curl commands inside
     the cluster, useful for testing internal service endpoints.
@@ -102,3 +109,68 @@ def internal_identity_header(cluster_config: ClusterConfig, org_id: str) -> str:
         org_id=org_id,
         account_number="1234567",
     )
+
+
+@pytest.fixture
+def pod_session(
+    test_runner_pod: str,
+    cluster_config: ClusterConfig,
+    rh_identity_header: str,
+) -> requests.Session:
+    """Pre-configured requests.Session that routes through the test-runner pod.
+    
+    This fixture provides a standard requests.Session API for making HTTP
+    calls that execute inside the cluster via kubectl exec curl. It includes
+    the X-Rh-Identity header required for internal service authentication.
+    
+    Usage:
+        def test_something(pod_session, internal_api_url):
+            response = pod_session.get(f"{internal_api_url}/api/v1/status/")
+            assert response.ok
+            data = response.json()
+            assert data["status"] == "ok"
+    
+    The session supports all standard requests methods:
+    - response = pod_session.get(url)
+    - response = pod_session.post(url, json=data)
+    - response = pod_session.put(url, json=data)
+    - response = pod_session.delete(url)
+    
+    And all standard response attributes:
+    - response.ok (True if status_code < 400)
+    - response.status_code
+    - response.json()
+    - response.text
+    - response.headers
+    - response.raise_for_status()
+    """
+    session = create_pod_session(
+        namespace=cluster_config.namespace,
+        pod=test_runner_pod,
+        container="runner",
+        headers={
+            "X-Rh-Identity": rh_identity_header,
+            "Content-Type": "application/json",
+        },
+        timeout=60,
+    )
+    return session
+
+
+@pytest.fixture
+def pod_session_no_auth(
+    test_runner_pod: str,
+    cluster_config: ClusterConfig,
+) -> requests.Session:
+    """Pre-configured requests.Session without authentication headers.
+    
+    Use this fixture when testing endpoints that don't require authentication
+    or when you want to explicitly test authentication failures.
+    """
+    session = create_pod_session(
+        namespace=cluster_config.namespace,
+        pod=test_runner_pod,
+        container="runner",
+        timeout=60,
+    )
+    return session

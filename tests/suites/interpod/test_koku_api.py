@@ -5,12 +5,16 @@ These tests execute commands inside the cluster to test Koku API directly,
 bypassing the external gateway. This validates pod-to-pod service communication
 and X-Rh-Identity header handling.
 
+Uses the pod_session fixture which provides a standard requests.Session API
+that routes through kubectl exec curl inside the test-runner pod.
+
 Jira Test Cases:
 - FLPATH-3173: Verify Koku API status endpoint returns healthy
 - FLPATH-3174: Verify source types endpoint works with X-Rh-Identity header
 """
 
 import pytest
+import requests
 
 
 @pytest.mark.interpod
@@ -20,7 +24,7 @@ class TestKokuAPIInternal:
 
     def test_status_endpoint(
         self,
-        internal_curl,
+        pod_session: requests.Session,
         internal_api_url: str,
     ):
         """Verify Koku /api/cost-management/v1/status/ returns healthy.
@@ -32,20 +36,19 @@ class TestKokuAPIInternal:
         - Response contains API version info
         - Service is healthy
         """
-        result = internal_curl(f"{internal_api_url}/api/cost-management/v1/status/")
+        response = pod_session.get(f"{internal_api_url}/api/cost-management/v1/status/")
         
-        assert result.ok, f"curl failed: {result.stderr}"
+        assert response.ok, f"Request failed: {response.status_code} - {response.text}"
         
-        data = result.json()
+        data = response.json()
         assert "api_version" in data or "server_address" in data, (
             f"Unexpected status response: {data}"
         )
 
     def test_reports_endpoint_with_identity(
         self,
-        internal_curl,
+        pod_session: requests.Session,
         internal_api_url: str,
-        internal_identity_header: str,
     ):
         """Verify reports endpoint works with X-Rh-Identity header.
         
@@ -56,25 +59,20 @@ class TestKokuAPIInternal:
         - Reports endpoint returns valid response
         - Response structure is valid
         """
-        result = internal_curl(
-            f"{internal_api_url}/api/cost-management/v1/reports/openshift/costs/",
-            headers={
-                "Content-Type": "application/json",
-                "X-Rh-Identity": internal_identity_header,
-            },
+        response = pod_session.get(
+            f"{internal_api_url}/api/cost-management/v1/reports/openshift/costs/"
         )
         
-        assert result.ok, f"curl failed: {result.stderr}"
+        assert response.ok, f"Request failed: {response.status_code} - {response.text}"
         
-        data = result.json()
+        data = response.json()
         assert "data" in data, f"Response missing 'data' field: {data}"
         assert "meta" in data, f"Response missing 'meta' field: {data}"
 
     def test_sources_list_with_identity(
         self,
-        internal_curl,
+        pod_session: requests.Session,
         internal_api_url: str,
-        internal_identity_header: str,
     ):
         """Verify sources list endpoint works with X-Rh-Identity header.
         
@@ -82,17 +80,13 @@ class TestKokuAPIInternal:
         - Sources endpoint is accessible internally
         - Response structure is valid (may be empty)
         """
-        result = internal_curl(
-            f"{internal_api_url}/api/cost-management/v1/sources/",
-            headers={
-                "Content-Type": "application/json",
-                "X-Rh-Identity": internal_identity_header,
-            },
+        response = pod_session.get(
+            f"{internal_api_url}/api/cost-management/v1/sources/"
         )
         
-        assert result.ok, f"curl failed: {result.stderr}"
+        assert response.ok, f"Request failed: {response.status_code} - {response.text}"
         
-        data = result.json()
+        data = response.json()
         assert "data" in data, f"Response missing 'data' field: {data}"
         assert "meta" in data, f"Response missing 'meta' field: {data}"
 
@@ -104,7 +98,7 @@ class TestKokuAPIInternalRouting:
 
     def test_reads_service_accessible(
         self,
-        internal_curl,
+        pod_session: requests.Session,
         internal_api_url: str,
     ):
         """Verify koku-api-reads service is accessible internally.
@@ -112,16 +106,16 @@ class TestKokuAPIInternalRouting:
         Tests:
         - Reads service responds to health check
         """
-        result = internal_curl(f"{internal_api_url}/api/cost-management/v1/status/")
+        response = pod_session.get(f"{internal_api_url}/api/cost-management/v1/status/")
         
-        assert result.ok, f"curl failed: {result.stderr}"
+        assert response.ok, f"Request failed: {response.status_code} - {response.text}"
         # Any valid JSON response indicates the service is up
-        data = result.json()
+        data = response.json()
         assert data is not None
 
     def test_writes_service_accessible(
         self,
-        internal_curl,
+        pod_session: requests.Session,
         cluster_config,
     ):
         """Verify koku-api-writes service is accessible internally.
@@ -131,9 +125,9 @@ class TestKokuAPIInternalRouting:
         """
         writes_url = f"http://{cluster_config.helm_release_name}-koku-api-writes.{cluster_config.namespace}.svc:8000"
         
-        result = internal_curl(f"{writes_url}/api/cost-management/v1/status/")
+        response = pod_session.get(f"{writes_url}/api/cost-management/v1/status/")
         
-        assert result.ok, f"curl failed: {result.stderr}"
+        assert response.ok, f"Request failed: {response.status_code} - {response.text}"
         # Any valid JSON response indicates the service is up
-        data = result.json()
+        data = response.json()
         assert data is not None

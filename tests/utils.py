@@ -5,7 +5,9 @@ These are helper functions that can be imported by test modules across all suite
 """
 
 import base64
+import io
 import json
+import re
 import subprocess
 import tarfile
 import tempfile
@@ -13,6 +15,12 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
+
+import requests
+from requests.adapters import HTTPAdapter
+from requests.structures import CaseInsensitiveDict
+from urllib3.response import HTTPResponse
 
 
 # =============================================================================
@@ -131,6 +139,266 @@ def exec_in_pod(
         return result.stdout if result.returncode == 0 else None
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return None
+
+
+def exec_in_pod_raw(
+    namespace: str,
+    pod_name: str,
+    command: list[str],
+    container: Optional[str] = None,
+    timeout: int = 60,
+) -> subprocess.CompletedProcess:
+    """Execute a command in a pod and return the full CompletedProcess.
+    
+    Unlike exec_in_pod(), this returns the full result including stderr
+    and returncode, useful for the PodAdapter.
+    """
+    args = ["exec", "-n", namespace, pod_name]
+    if container:
+        args.extend(["-c", container])
+    args.append("--")
+    args.extend(command)
+    
+    return run_oc_command(args, check=False, timeout=timeout)
+
+
+# =============================================================================
+# Pod HTTP Adapter - Route requests.Session through kubectl exec curl
+# =============================================================================
+
+
+class PodAdapter(HTTPAdapter):
+    """HTTP adapter that routes requests through curl inside a Kubernetes pod.
+    
+    This adapter allows using the standard requests.Session API for making
+    HTTP calls that execute inside a pod, useful for testing internal
+    cluster services that aren't exposed externally.
+    
+    Usage:
+        session = requests.Session()
+        adapter = PodAdapter(namespace="cost-onprem", pod="test-runner", container="runner")
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        
+        # Now use standard requests API
+        response = session.get("http://koku-api:8000/api/v1/status/")
+        assert response.status_code == 200
+        data = response.json()
+    """
+    
+    def __init__(
+        self,
+        namespace: str,
+        pod: str,
+        container: Optional[str] = None,
+        timeout: int = 60,
+        **kwargs,
+    ):
+        """Initialize the PodAdapter.
+        
+        Args:
+            namespace: Kubernetes namespace where the pod is running
+            pod: Name of the pod to execute curl in
+            container: Container name (if pod has multiple containers)
+            timeout: Timeout for curl commands in seconds
+        """
+        self.namespace = namespace
+        self.pod = pod
+        self.container = container
+        self.timeout = timeout
+        super().__init__(**kwargs)
+    
+    def send(
+        self,
+        request: requests.PreparedRequest,
+        stream: bool = False,
+        timeout: Any = None,
+        verify: bool = True,
+        cert: Any = None,
+        proxies: Any = None,
+    ) -> requests.Response:
+        """Send a PreparedRequest by executing curl inside the pod.
+        
+        This method builds a curl command from the PreparedRequest,
+        executes it inside the pod, and parses the raw HTTP response
+        into a requests.Response object.
+        """
+        # Build curl command with -i to include headers in output
+        cmd = ["curl", "-i", "-s", "-S"]
+        
+        # Add method
+        cmd.extend(["-X", request.method])
+        
+        # Add headers
+        if request.headers:
+            for key, value in request.headers.items():
+                # Skip host header as curl sets it automatically
+                if key.lower() != "host":
+                    cmd.extend(["-H", f"{key}: {value}"])
+        
+        # Add request body
+        if request.body:
+            if isinstance(request.body, bytes):
+                # For binary data, write to a temp approach won't work in pod
+                # Use base64 encoding workaround
+                body_str = request.body.decode("utf-8", errors="replace")
+            else:
+                body_str = request.body
+            cmd.extend(["--data-raw", body_str])
+        
+        # Add URL
+        cmd.append(request.url)
+        
+        # Add timeout
+        effective_timeout = timeout if timeout else self.timeout
+        if isinstance(effective_timeout, tuple):
+            effective_timeout = effective_timeout[1]  # Use read timeout
+        cmd.extend(["--max-time", str(effective_timeout)])
+        
+        # For self-signed certs, add -k flag
+        if not verify:
+            cmd.append("-k")
+        
+        # Execute curl in pod
+        result = exec_in_pod_raw(
+            self.namespace,
+            self.pod,
+            cmd,
+            container=self.container,
+            timeout=effective_timeout + 10,  # Add buffer for kubectl overhead
+        )
+        
+        # Parse the raw HTTP response
+        return self._parse_curl_response(result, request)
+    
+    def _parse_curl_response(
+        self,
+        result: subprocess.CompletedProcess,
+        request: requests.PreparedRequest,
+    ) -> requests.Response:
+        """Parse curl -i output into a requests.Response object."""
+        response = requests.Response()
+        response.request = request
+        
+        # Handle curl errors
+        if result.returncode != 0:
+            # Create a fake response for connection errors
+            response.status_code = 0
+            response._content = result.stderr.encode() if result.stderr else b"Connection failed"
+            response.reason = "Connection Error"
+            response.headers = CaseInsensitiveDict()
+            return response
+        
+        raw_output = result.stdout
+        
+        # curl -i output format:
+        # HTTP/1.1 200 OK
+        # Header: Value
+        # Header: Value
+        # 
+        # Body content
+        
+        # Split headers and body (separated by \r\n\r\n or \n\n)
+        header_body_split = re.split(r'\r?\n\r?\n', raw_output, maxsplit=1)
+        
+        if len(header_body_split) < 1:
+            response.status_code = 0
+            response._content = b"Failed to parse response"
+            response.reason = "Parse Error"
+            response.headers = CaseInsensitiveDict()
+            return response
+        
+        header_section = header_body_split[0]
+        body = header_body_split[1] if len(header_body_split) > 1 else ""
+        
+        # Handle HTTP/1.1 100 Continue followed by actual response
+        while header_section.startswith("HTTP/") and "100" in header_section.split("\n")[0]:
+            # Skip the 100 Continue and find the real response
+            remaining = body
+            header_body_split = re.split(r'\r?\n\r?\n', remaining, maxsplit=1)
+            if len(header_body_split) >= 1:
+                header_section = header_body_split[0]
+                body = header_body_split[1] if len(header_body_split) > 1 else ""
+            else:
+                break
+        
+        # Parse status line
+        header_lines = header_section.split("\n")
+        status_line = header_lines[0].strip()
+        
+        # Parse "HTTP/1.1 200 OK" or "HTTP/2 200"
+        status_match = re.match(r'HTTP/[\d.]+\s+(\d+)(?:\s+(.*))?', status_line)
+        if status_match:
+            response.status_code = int(status_match.group(1))
+            response.reason = status_match.group(2) or ""
+        else:
+            response.status_code = 0
+            response.reason = "Unknown"
+        
+        # Parse headers
+        headers = CaseInsensitiveDict()
+        for line in header_lines[1:]:
+            line = line.strip()
+            if ":" in line:
+                key, value = line.split(":", 1)
+                headers[key.strip()] = value.strip()
+        
+        response.headers = headers
+        
+        # Set body content
+        response._content = body.encode("utf-8")
+        
+        # Set encoding from Content-Type header
+        content_type = headers.get("Content-Type", "")
+        if "charset=" in content_type:
+            charset_match = re.search(r'charset=([^\s;]+)', content_type)
+            if charset_match:
+                response.encoding = charset_match.group(1)
+        else:
+            response.encoding = "utf-8"
+        
+        return response
+
+
+def create_pod_session(
+    namespace: str,
+    pod: str,
+    container: Optional[str] = None,
+    headers: Optional[dict] = None,
+    timeout: int = 60,
+) -> requests.Session:
+    """Create a requests.Session that routes through a pod.
+    
+    This is a convenience function to create a pre-configured session
+    with the PodAdapter mounted for both http:// and https:// URLs.
+    
+    Args:
+        namespace: Kubernetes namespace where the pod is running
+        pod: Name of the pod to execute curl in
+        container: Container name (if pod has multiple containers)
+        headers: Default headers to include in all requests
+        timeout: Default timeout for requests
+    
+    Returns:
+        A requests.Session configured to route through the pod
+    
+    Example:
+        session = create_pod_session("cost-onprem", "test-runner", container="runner")
+        session.headers["X-Rh-Identity"] = identity_header
+        
+        response = session.get("http://koku-api:8000/api/v1/status/")
+        assert response.ok
+        data = response.json()
+    """
+    session = requests.Session()
+    adapter = PodAdapter(namespace, pod, container=container, timeout=timeout)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    
+    if headers:
+        session.headers.update(headers)
+    
+    return session
 
 
 # =============================================================================

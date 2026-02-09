@@ -36,8 +36,41 @@ pytest -m interpod -v
 | `test_runner_pod` | session | Dedicated pod for executing commands |
 | `internal_api_url` | session | Internal Koku API URL (ClusterIP) |
 | `internal_ros_api_url` | session | Internal ROS API URL (ClusterIP) |
-| `internal_curl` | function | Helper to execute curl in test-runner pod |
+| `pod_session` | function | **Recommended** - requests.Session routed through pod |
+| `pod_session_no_auth` | function | Session without X-Rh-Identity header |
+| `internal_curl` | function | *Deprecated* - Use pod_session instead |
 | `internal_identity_header` | function | Pre-built X-Rh-Identity header |
+
+## Using pod_session (Recommended)
+
+The `pod_session` fixture provides a standard `requests.Session` API that routes
+HTTP calls through `kubectl exec curl` inside the test-runner pod. This gives you
+the familiar requests API while executing inside the cluster.
+
+### Before (internal_curl - deprecated)
+
+```python
+def test_something(internal_curl, internal_api_url):
+    result = internal_curl(f"{internal_api_url}/api/v1/status/")
+    assert result.ok
+    data = result.json()
+```
+
+### After (pod_session - recommended)
+
+```python
+def test_something(pod_session, internal_api_url):
+    response = pod_session.get(f"{internal_api_url}/api/v1/status/")
+    assert response.ok
+    data = response.json()
+```
+
+### Benefits of pod_session
+
+- **Standard API**: Same `requests` API as external tests
+- **Better errors**: `response.raise_for_status()` gives clear HTTP errors
+- **Full response**: Access to headers, status codes, cookies
+- **Familiar**: Everyone knows the `requests` library
 
 ## Test Runner Pod
 

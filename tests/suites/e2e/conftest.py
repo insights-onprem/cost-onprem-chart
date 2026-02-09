@@ -29,6 +29,7 @@ from typing import Optional
 import pytest
 
 from utils import (
+    create_pod_session,
     create_rh_identity_header,
     exec_in_pod,
     get_pod_by_label,
@@ -358,38 +359,29 @@ def registered_source(
     
     # Delete any existing e2e sources using test_runner_pod
     print(f"  🔍 Checking for existing e2e sources...")
-    result = exec_in_pod(
-        cluster_config.namespace,
-        test_runner_pod,
-        [
-            "curl", "-s", f"{koku_api_reads_url}/sources",
-            "-H", "Content-Type: application/json",
-            "-H", f"X-Rh-Identity: {rh_identity_header}",
-        ],
+    session = create_pod_session(
+        namespace=cluster_config.namespace,
+        pod=test_runner_pod,
         container="runner",
+        headers={
+            "X-Rh-Identity": rh_identity_header,
+            "Content-Type": "application/json",
+        },
     )
     
-    if result:
-        try:
-            existing_sources = json.loads(result)
+    try:
+        response = session.get(f"{koku_api_reads_url}/sources")
+        if response.ok:
+            existing_sources = response.json()
             for existing in existing_sources.get("data", []):
                 existing_name = existing.get("name", "")
                 existing_id = existing.get("id")
                 if existing_id and existing_name.startswith("e2e-source-"):
                     print(f"     🗑️  Deleting existing source '{existing_name}' (id={existing_id})...")
-                    exec_in_pod(
-                        cluster_config.namespace,
-                        test_runner_pod,
-                        [
-                            "curl", "-s", "-X", "DELETE",
-                            f"{koku_api_writes_url}/sources/{existing_id}",
-                            "-H", f"X-Rh-Identity: {rh_identity_header}",
-                        ],
-                        container="runner",
-                    )
+                    session.delete(f"{koku_api_writes_url}/sources/{existing_id}")
                     time.sleep(2)
-        except (json.JSONDecodeError, TypeError):
-            pass
+    except Exception:
+        pass
     
     # Register the source using test_runner_pod
     print(f"  📝 Registering source for cluster: {e2e_cluster_id}")

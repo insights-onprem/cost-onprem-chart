@@ -40,6 +40,7 @@ from e2e_helpers import (
     wait_for_summary_tables,
 )
 from utils import (
+    create_pod_session,
     create_rh_identity_header,
     create_upload_package_from_files,
     execute_db_query,
@@ -66,38 +67,27 @@ def cleanup_old_cost_val_clusters(
     This ensures cost_validation tests start with a clean slate and don't
     pick up data from previous runs.
     """
-    import json
-    
     # Find and delete old cost-val sources
     try:
-        result = exec_in_pod(
-            namespace,
-            test_runner_pod,
-            [
-                "curl", "-s", f"{api_url}/sources",
-                "-H", "Content-Type: application/json",
-                "-H", f"X-Rh-Identity: {rh_identity_header}",
-            ],
+        session = create_pod_session(
+            namespace=namespace,
+            pod=test_runner_pod,
             container="runner",
+            headers={
+                "X-Rh-Identity": rh_identity_header,
+                "Content-Type": "application/json",
+            },
         )
         
-        if result:
-            sources = json.loads(result)
+        response = session.get(f"{api_reads_url}/sources")
+        if response.ok:
+            sources = response.json()
             for source in sources.get("data", []):
                 source_ref = source.get("source_ref", "")
                 if source_ref and source_ref.startswith("cost-val-"):
                     source_id = source.get("id")
                     print(f"       Deleting old source: {source.get('name')} (ref: {source_ref})")
-                    exec_in_pod(
-                        namespace,
-                        test_runner_pod,
-                        [
-                            "curl", "-s", "-X", "DELETE",
-                            f"{api_url}/sources/{source_id}",
-                            "-H", f"X-Rh-Identity: {rh_identity_header}",
-                        ],
-                        container="runner",
-                    )
+                    session.delete(f"{api_url}/sources/{source_id}")
     except Exception as e:
         print(f"       Warning: Could not clean old sources: {e}")
     
