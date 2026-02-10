@@ -31,15 +31,16 @@ The PR summary document includes:
 - High-level summary of changes
 
 ### Sections
-1. **Summary** - Brief description of the PR's purpose
-2. **Key Changes** - Bullet points of major changes
-3. **New Files** - Table of files created with line counts
-4. **Modified Files** - Table of files changed with descriptions
-5. **Deleted Files** - Table of files removed with reasons
-6. **Bug Fixes** - Specific bugs addressed
-7. **Test Results** - Latest test run output
-8. **Architecture** - Diagrams if applicable
+1. **Summary** - Brief description of the PR's purpose with key changes list
+2. **Commits** - Table of commits with descriptions
+3. **New Test Suites** - Tables of new test files with test counts
+4. **Files Changed** - Statistics and categorized tables (new, modified, deleted)
+5. **Bug Fixes** - Detailed problem/solution descriptions with affected files
+6. **New Markers/Config** - Any new pytest markers or configuration
+7. **Architecture** - ASCII diagrams showing test/fixture relationships
+8. **CI Impact** - How changes affect CI runs
 9. **Related Documents** - Links to relevant docs
+10. **Checklist** - Completion status of major items
 
 ## Commands
 
@@ -70,7 +71,7 @@ Generate PR summary from git diff against main
 
 **Branch**: `<branch-name>`  
 **Target**: `main`  
-**Last Updated**: <date>
+**Last Updated**: <YYYY-MM-DD>
 
 ---
 
@@ -80,25 +81,50 @@ Generate PR summary from git diff against main
 
 ### Key Changes
 
-- Change 1
-- Change 2
-- Change 3
+1. **Category 1**: Description
+2. **Category 2**: Description
+3. **Category 3**: Description
 
 ---
 
-## New Files
+## Commits
+
+| Commit | Description |
+|--------|-------------|
+| `abc1234` | Commit message summary |
+| *(pending)* | Uncommitted changes description |
+
+---
+
+## New Test Suites
+
+### Suite Name (`tests/suites/name/`)
+
+<Brief description of what this suite tests>
+
+| File | Tests | Description |
+|------|-------|-------------|
+| `test_file.py` | 7 | What these tests cover |
+
+**Total**: X new tests
+
+---
+
+## Files Changed (X files, +Y / -Z lines)
+
+### New Files Created
 
 | File | Lines | Purpose |
 |------|-------|---------|
 | `path/to/file.py` | 100 | Description |
 
-## Modified Files
+### Files Modified
 
 | File | Change |
 |------|--------|
-| `path/to/file.py` | Description of changes |
+| `path/to/file.py` | +50/-20 lines - Description of changes |
 
-## Deleted Files
+### Files Deleted
 
 | File | Reason |
 |------|--------|
@@ -108,24 +134,90 @@ Generate PR summary from git diff against main
 
 ## Bug Fixes
 
-### Issue Title
-**Problem**: Description of the bug
-**Solution**: How it was fixed
+### 1. Issue Title
+
+**Problem**: Description of the bug or issue.
+
+**Solution**: How it was fixed, including approach taken.
+
+**Files Changed**:
+- `file1.py`
+- `file2.py`
 
 ---
 
-## Test Results
+## New Pytest Markers
+
+```ini
+markers =
+    marker_name: Description of what this marker indicates
+```
+
+### Usage
+
+```bash
+# Example command
+pytest -m marker_name
+```
+
+---
+
+## Test Architecture
 
 ```
-<Latest test output>
+┌─────────────────────────────────────────────────────────────────┐
+│                        Test Execution                           │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐      │
+│  │   suite1/    │    │   suite2/    │    │   suite3/    │      │
+│  │              │    │              │    │              │      │
+│  │ test_file1   │    │ test_file2   │    │ test_file3   │      │
+│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘      │
+│         │                   │                   │               │
+│         ▼                   ▼                   ▼               │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐      │
+│  │  fixture1    │    │  fixture2    │    │  fixture3    │      │
+│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘      │
+│         │                   │                   │               │
+│         ▼                   ▼                   ▼               │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │                    conftest.py                          │   │
+│  │            shared_fixture1, shared_fixture2             │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │              Self-Contained Data Fixtures               │   │
+│  │  data_fixture1 (suite1/)                                │   │
+│  │  data_fixture2 (suite2/)                                │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## CI Impact
+
+- **Impact 1**: Description of how this affects CI
+- **Impact 2**: Any new requirements or flags
+- **Test count**: X tests collected (was Y before changes)
 
 ---
 
 ## Related Documents
 
-- [Document 1](./path/to/doc.md)
-- [Document 2](./path/to/doc.md)
+- [Document 1](./path/to/doc.md) - Description
+- [Document 2](./path/to/doc.md) - Description
+
+---
+
+## Checklist
+
+- [x] Completed item
+- [x] Another completed item
+- [ ] Pending item
+- [ ] CI validation (pending merge)
 ```
 
 ## Notes
@@ -134,3 +226,7 @@ Generate PR summary from git diff against main
 - Use the workspaces folder for summaries you want to persist across sessions
 - The summary can be copied into the actual PR description when ready
 - Updates are additive - new changes are appended to existing sections
+- Run `git diff --stat main` to get accurate line change counts
+- Run `pytest --collect-only -q` to get accurate test counts
+- Keep the architecture diagram updated as fixtures change
+- Mark items in checklist as completed when done
