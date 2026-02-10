@@ -19,11 +19,12 @@
 #   --sources           Run Sources API tests (CRUD, auth, schemas)
 #   --ros               Run ROS/Kruize recommendation tests
 #   --e2e               Run end-to-end tests
+#   --ui                Run UI tests only (Playwright browser automation)
+#   --no-ui             Exclude UI tests from the run
 #
 # Filter Options:
 #   --smoke             Run only smoke tests (quick validation)
 #   --slow              Include slow tests (processing, recommendations)
-#   --ui                Run UI tests (Playwright browser automation)
 #
 # Setup Options:
 #   --setup-only        Only setup the environment, don't run tests
@@ -37,19 +38,20 @@
 #   PYTHON                 Python interpreter (default: python3)
 #
 # Examples:
-#   ./run-pytest.sh                         # Run all tests (excludes UI by default)
+#   ./run-pytest.sh                         # Run all tests (including UI)
+#   ./run-pytest.sh --no-ui                 # Run all tests except UI
 #   ./run-pytest.sh --smoke                 # Run smoke tests only
 #   ./run-pytest.sh --helm                  # Run Helm suite only
 #   ./run-pytest.sh --auth --ros            # Run auth and ROS suites
 #   ./run-pytest.sh --e2e --smoke           # Run E2E smoke tests
 #   ./run-pytest.sh --e2e                   # Run full E2E flow
-#   ./run-pytest.sh --ui                    # Run UI tests (requires Playwright deps)
+#   ./run-pytest.sh --ui                    # Run UI tests only
 #   ./run-pytest.sh -k "test_jwt"           # Run tests matching pattern
 #   ./run-pytest.sh suites/helm/            # Run specific suite directory
 #   ./run-pytest.sh -m "smoke and auth"     # Custom marker expression
 #
-# Note: UI tests are excluded by default because they require Playwright system
-# dependencies. Use --ui to run them explicitly. This wil change in the future.
+# Note: UI tests require Playwright and system dependencies. The script will
+# automatically install Playwright browsers when UI tests are included.
 
 set -e
 
@@ -104,6 +106,10 @@ show_help() {
     echo "Markers:"
     echo "  smoke             Quick validation tests (~1 min)"
     echo "  slow              Long-running tests (processing, recommendations)"
+    echo ""
+    echo "UI Tests:"
+    echo "  UI tests are included by default. Use --no-ui to exclude them."
+    echo "  Use --ui to run ONLY UI tests."
     exit 0
 }
 
@@ -232,7 +238,9 @@ run_pytest() {
 main() {
     local pytest_markers=()
     local pytest_extra_args=()
-    local include_ui=false
+    local include_ui=true   # UI tests included by default
+    local exclude_ui=false  # Flag to explicitly exclude UI
+    local ui_only=false     # Flag for running only UI tests
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -267,8 +275,14 @@ main() {
                 shift
                 ;;
             --ui)
-                pytest_markers+=("ui")
-                include_ui=true
+                # Run ONLY UI tests
+                ui_only=true
+                shift
+                ;;
+            --no-ui)
+                # Exclude UI tests
+                exclude_ui=true
+                include_ui=false
                 shift
                 ;;
             # Filter options
@@ -293,9 +307,12 @@ main() {
                 show_help
                 ;;
             -m)
-                # Check if marker expression includes UI or is empty (all tests)
-                if [[ -z "$2" ]] || [[ "$2" == *"ui"* ]]; then
-                    include_ui=true
+                # Check if marker expression explicitly excludes UI
+                if [[ "$2" == *"not ui"* ]]; then
+                    include_ui=false
+                    exclude_ui=true
+                elif [[ "$2" == "ui" ]]; then
+                    ui_only=true
                 fi
                 pytest_extra_args+=("$1" "$2")
                 shift 2
@@ -319,8 +336,8 @@ main() {
     # Setup virtual environment
     setup_venv
 
-    # Install Playwright browsers only if UI tests are requested
-    if [[ "$include_ui" == "true" ]]; then
+    # Install Playwright browsers if UI tests will be included
+    if [[ "$include_ui" == "true" ]] || [[ "$ui_only" == "true" ]]; then
         install_playwright_browsers
     fi
 
@@ -336,11 +353,18 @@ main() {
     local pytest_args=()
 
     # Handle marker filtering
-    if [[ ${#pytest_markers[@]} -gt 0 ]]; then
+    if [[ "$ui_only" == "true" ]]; then
+        # Run only UI tests
+        pytest_args+=("-m" "ui")
+    elif [[ ${#pytest_markers[@]} -gt 0 ]]; then
         local marker_expr
         marker_expr=$(IFS=" or "; echo "${pytest_markers[*]}")
         pytest_args+=("-m" "$marker_expr")
+    elif [[ "$exclude_ui" == "true" ]]; then
+        # Exclude UI tests when --no-ui is specified and no other markers
+        pytest_args+=("-m" "not ui")
     fi
+    # If no markers and no --no-ui, run all tests (including UI) - no -m flag needed
 
     # Add any extra arguments
     if [[ ${#pytest_extra_args[@]} -gt 0 ]]; then

@@ -413,16 +413,16 @@ The E2E test validates the entire data pipeline:
 ### Running the Test
 
 ```bash
-cd /path/to/cost-onprem-helm-chart/scripts
+cd /path/to/cost-onprem-helm-chart
 
-# Run E2E test (smoke test mode - ~3 minutes)
-./cost-onprem-ocp-dataflow.sh
+# Run all tests (including UI) - ~15 minutes
+NAMESPACE=cost-onprem ./scripts/run-pytest.sh
 
-# Re-run with force cleanup (recommended for repeated runs)
-./cost-onprem-ocp-dataflow.sh --force
+# Run E2E tests only - ~5 minutes
+NAMESPACE=cost-onprem ./scripts/run-pytest.sh --e2e
 
-# Run with diagnostics (shows infrastructure health on failure)
-./cost-onprem-ocp-dataflow.sh --diagnose
+# Run smoke tests only - ~1 minute
+NAMESPACE=cost-onprem ./scripts/run-pytest.sh --smoke
 ```
 
 ### Expected Output
@@ -670,12 +670,13 @@ oc logs -n $NAMESPACE $(oc get pod -n $NAMESPACE -l app=koku-api-listener -o nam
 
 **Solution:**
 ```bash
-# Run test with force cleanup
-./cost-onprem-ocp-dataflow.sh --force
+# Tests automatically clean up before and after runs
+# To force cleanup, set environment variables:
+E2E_CLEANUP_BEFORE=true E2E_CLEANUP_AFTER=true NAMESPACE=cost-onprem ./scripts/run-pytest.sh --e2e
 
 # Or manually clear summary table
 oc exec -n $NAMESPACE cost-onprem-database-0 -- psql -U koku -d costonprem_koku -c \
-  "DELETE FROM org1234567.reporting_ocpusagelineitem_daily_summary WHERE cluster_id = 'test-cluster-123';"
+  "DELETE FROM org1234567.reporting_ocpusagelineitem_daily_summary WHERE cluster_id LIKE 'e2e-%';"
 ```
 
 #### 3. Nise Generates Random Data

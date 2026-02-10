@@ -82,7 +82,7 @@ Key environment variables:
 
 ```bash
 # Run E2E test (uses Koku Sources API automatically)
-./scripts/test-ocp-dataflow-jwt.sh --namespace cost-onprem
+NAMESPACE=cost-onprem ./scripts/run-pytest.sh --e2e
 ```
 
 ## Flow Details

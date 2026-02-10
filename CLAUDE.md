@@ -70,11 +70,11 @@ pytest -m "not extended" --junit-xml=reports/junit.xml
 ### Running Tests Locally
 
 ```bash
-# CI mode (default) - excludes extended tests
-NAMESPACE=cost-onprem-ocp ./scripts/run-pytest.sh
+# Run all tests (including UI)
+NAMESPACE=cost-onprem ./scripts/run-pytest.sh
 
-# Extended tests (requires ODF/S3)
-NAMESPACE=cost-onprem-ocp ./scripts/run-pytest.sh --extended
+# Run all tests except UI
+NAMESPACE=cost-onprem ./scripts/run-pytest.sh --no-ui
 
 # Specific suites
 ./scripts/run-pytest.sh --helm
@@ -82,6 +82,7 @@ NAMESPACE=cost-onprem-ocp ./scripts/run-pytest.sh --extended
 ./scripts/run-pytest.sh --e2e
 ./scripts/run-pytest.sh --infrastructure
 ./scripts/run-pytest.sh --ros
+./scripts/run-pytest.sh --ui
 ```
 
 ### Test Markers
