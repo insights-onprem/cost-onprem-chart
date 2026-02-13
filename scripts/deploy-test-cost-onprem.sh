@@ -417,7 +417,16 @@ deploy_helm_chart() {
     export NAMESPACE="${NAMESPACE}"
     export JWT_AUTH_ENABLED="true"
     export USE_LOCAL_CHART="${USE_LOCAL_CHART}"
-    export SKIP_S3_SETUP="true"  # Skip S3/ODF detection in CI environments
+    
+    # Only skip S3 setup if MINIO_ENDPOINT is already set (CI environment)
+    # In CI, the insights-onprem-minio-deploy step creates buckets before this runs
+    # Locally, we need install-helm-chart.sh to create the buckets
+    if [ -n "${MINIO_ENDPOINT:-}" ]; then
+        export SKIP_S3_SETUP="true"
+        log_verbose "MINIO_ENDPOINT set - skipping S3 bucket creation (CI mode)"
+    else
+        log_verbose "MINIO_ENDPOINT not set - S3 buckets will be created"
+    fi
 
     if [[ "${VERBOSE}" == "true" ]]; then
         export VERBOSE="true"

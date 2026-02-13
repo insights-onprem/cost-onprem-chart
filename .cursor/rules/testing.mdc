@@ -1,8 +1,6 @@
 ---
-description: Pytest test infrastructure commands and configuration
-globs: ["tests/**", "scripts/run-pytest.sh", "scripts/deploy-test-*.sh"]
+alwaysApply: true
 ---
-
 # Testing Infrastructure
 
 ## OpenShift CI Execution Flow
@@ -50,10 +48,10 @@ pytest -m "not extended" --junit-xml=reports/junit.xml
 
 ```bash
 # CI mode (default) - excludes extended tests
-NAMESPACE=cost-onprem-ocp ./scripts/run-pytest.sh
+NAMESPACE=cost-onprem ./scripts/run-pytest.sh
 
 # Extended tests (requires ODF/S3)
-NAMESPACE=cost-onprem-ocp ./scripts/run-pytest.sh --extended
+NAMESPACE=cost-onprem ./scripts/run-pytest.sh --extended
 
 # Specific suites
 ./scripts/run-pytest.sh --helm
@@ -88,3 +86,29 @@ Key points:
 4. Check pod labels: `kubectl get pods -n NAMESPACE -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.labels.app\.kubernetes\.io/component}{"\n"}{end}'`
 5. Run `--all` tests to verify: `./scripts/run-pytest.sh --all`
 6. Check `tests/conftest.py` and `tests/e2e_helpers.py` for shared utilities
+
+## IMPORTANT: Do NOT tail logs automatically
+
+**NEVER run `kubectl logs --follow` or `tail -f` or any log-tailing command unless explicitly asked by the user.** These commands block and waste time. Instead:
+- Use `kubectl logs --tail=50` for recent logs
+- Use `grep` to search for specific errors
+- Run tests and check output directly
+
+## IMPORTANT: Always use run-pytest.sh
+
+**NEVER run pytest directly.** Always use the `run-pytest.sh` script:
+
+```bash
+# Correct - uses virtual environment and proper setup
+NAMESPACE=cost-onprem ./scripts/run-pytest.sh --no-ui
+
+# WRONG - missing venv, dependencies, and environment setup
+python3 -m pytest tests/
+cd tests && pytest
+```
+
+The script:
+1. Creates/activates a virtual environment with all dependencies
+2. Installs koku-nise for data generation
+3. Sets up proper environment variables
+4. Configures pytest with correct paths and markers

@@ -55,8 +55,7 @@ def cleanup_old_cost_val_clusters(
     database: str,
     db_user: str,
     test_runner_pod: str,
-    api_reads_url: str,
-    api_writes_url: str,
+    api_url: str,
     rh_identity_header: str,
 ):
     """Clean up any leftover cost-val clusters from previous test runs.
@@ -79,7 +78,7 @@ def cleanup_old_cost_val_clusters(
             },
         )
         
-        response = session.get(f"{api_reads_url}/sources")
+        response = session.get(f"{api_url}/sources")
         if response.ok:
             sources = response.json()
             for source in sources.get("data", []):
@@ -158,39 +157,34 @@ def cleanup_old_cost_val_clusters(
 
 
 @pytest.fixture(scope="module")
-def koku_api_reads_url_cost_mgmt(cluster_config) -> str:
-    """Get Koku API reads URL for cost management tests."""
-    return get_koku_api_reads_url(cluster_config.helm_release_name, cluster_config.namespace)
+def koku_api_url_cost_mgmt(cluster_config) -> str:
+    """Get Koku API URL for cost management tests (unified deployment)."""
+    return get_koku_api_url(cluster_config.helm_release_name, cluster_config.namespace)
+
+
+# Backward compatibility aliases - all point to unified API
+@pytest.fixture(scope="module")
+def koku_api_reads_url_cost_mgmt(koku_api_url_cost_mgmt) -> str:
+    """Alias for koku_api_url_cost_mgmt (backward compatibility)."""
+    return koku_api_url_cost_mgmt
 
 
 @pytest.fixture(scope="module")
-def koku_api_writes_url_cost_mgmt(cluster_config) -> str:
-    """Get Koku API writes URL for cost management tests."""
-    return get_koku_api_writes_url(cluster_config.helm_release_name, cluster_config.namespace)
+def koku_api_writes_url_cost_mgmt(koku_api_url_cost_mgmt) -> str:
+    """Alias for koku_api_url_cost_mgmt (backward compatibility)."""
+    return koku_api_url_cost_mgmt
 
 
 @pytest.fixture(scope="module")
-def koku_api_writes_url(cluster_config) -> str:
-    """Get Koku API writes URL for operations that modify state (POST, PUT, DELETE).
-    
-    The Koku deployment separates reads/writes for scalability.
-    """
-    return (
-        f"http://{cluster_config.helm_release_name}-koku-api-writes."
-        f"{cluster_config.namespace}.svc.cluster.local:8000/api/cost-management/v1"
-    )
+def koku_api_writes_url(koku_api_url_cost_mgmt) -> str:
+    """Alias for koku_api_url_cost_mgmt (backward compatibility)."""
+    return koku_api_url_cost_mgmt
 
 
 @pytest.fixture(scope="module")
-def koku_api_reads_url(cluster_config) -> str:
-    """Get Koku API reads URL for read-only operations (GET).
-    
-    The Koku deployment separates reads/writes for scalability.
-    """
-    return (
-        f"http://{cluster_config.helm_release_name}-koku-api-reads."
-        f"{cluster_config.namespace}.svc.cluster.local:8000/api/cost-management/v1"
-    )
+def koku_api_reads_url(koku_api_url_cost_mgmt) -> str:
+    """Alias for koku_api_url_cost_mgmt (backward compatibility)."""
+    return koku_api_url_cost_mgmt
 
 
 @pytest.fixture(scope="module")
@@ -273,8 +267,7 @@ def cost_validation_data(cluster_config, database_config, s3_config, keycloak_co
                 database_config.database,
                 database_config.user,
                 test_runner_pod,
-                api_reads_url,
-                api_writes_url,
+                api_url,
                 rh_identity,
             )
             print("       Cleanup complete")
@@ -301,8 +294,7 @@ def cost_validation_data(cluster_config, database_config, s3_config, keycloak_co
         source_registration = register_source(
             namespace=cluster_config.namespace,
             pod=test_runner_pod,
-            api_reads_url=api_reads_url,
-            api_writes_url=api_writes_url,
+            api_url=api_url,
             rh_identity_header=rh_identity,
             cluster_id=cluster_id,
             org_id=org_id,
@@ -318,6 +310,7 @@ def cost_validation_data(cluster_config, database_config, s3_config, keycloak_co
             db_pod,
             cluster_id,
             database=database_config.database,
+            user=database_config.user,
         ):
             pytest.fail(f"Provider not created for cluster {cluster_id}")
         print("       Provider created")
@@ -369,6 +362,7 @@ def cost_validation_data(cluster_config, database_config, s3_config, keycloak_co
             db_pod,
             cluster_id,
             database=database_config.database,
+            user=database_config.user,
         )
         
         if not schema_name:
@@ -416,7 +410,7 @@ def cost_validation_data(cluster_config, database_config, s3_config, keycloak_co
                 if delete_source(
                     cluster_config.namespace,
                     test_runner_pod,
-                    api_writes_url,
+                    api_url,
                     rh_identity,
                     source_registration.source_id,
                     container="runner",
@@ -431,6 +425,7 @@ def cost_validation_data(cluster_config, database_config, s3_config, keycloak_co
                     db_pod,
                     cluster_id,
                     database=database_config.database,
+                    user=database_config.user,
                 ):
                     print("  Cleaned up database records")
                 else:

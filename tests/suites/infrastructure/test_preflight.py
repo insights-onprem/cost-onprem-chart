@@ -88,20 +88,20 @@ class TestDatabaseConnectivity:
         
         assert result is not None and "1" in result, f"{db_name} database not found"
 
-    def test_kruize_database_exists(self, cluster_config, database_config):
+    def test_kruize_database_exists(self, cluster_config, kruize_database_config):
         """Verify Kruize database exists."""
-        # Kruize uses 'kruize_db' database name
+        db_name = kruize_database_config.database
         cmd = [
-            "psql", "-U", database_config.user, "-d", "postgres",
-            "-t", "-c", "SELECT 1 FROM pg_database WHERE datname='kruize_db'"
+            "psql", "-U", kruize_database_config.user, "-d", "postgres",
+            "-t", "-c", f"SELECT 1 FROM pg_database WHERE datname='{db_name}'"
         ]
         
-        if database_config.password:
-            cmd = ["env", f"PGPASSWORD={database_config.password}"] + cmd
+        if kruize_database_config.password:
+            cmd = ["env", f"PGPASSWORD={kruize_database_config.password}"] + cmd
         
-        result = exec_in_pod(cluster_config.namespace, database_config.pod_name, cmd)
+        result = exec_in_pod(cluster_config.namespace, kruize_database_config.pod_name, cmd)
         
-        assert result is not None and "1" in result, "kruize_db database not found"
+        assert result is not None and "1" in result, f"{db_name} database not found"
 
 
 @pytest.mark.infrastructure

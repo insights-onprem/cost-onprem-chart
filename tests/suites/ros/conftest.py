@@ -22,8 +22,7 @@ from e2e_helpers import (
     ensure_nise_available,
     generate_cluster_id,
     generate_nise_data,
-    get_koku_api_reads_url,
-    get_koku_api_writes_url,
+    get_koku_api_url,
     register_source,
     upload_with_retry,
     wait_for_provider,
@@ -52,7 +51,11 @@ def kruize_pod(cluster_config) -> str:
 
 @pytest.fixture(scope="module")
 def kruize_credentials(cluster_config) -> dict:
-    """Get Kruize database credentials."""
+    """Get Kruize database credentials.
+    
+    Detects the actual database name from the Kruize deployment's
+    database_name environment variable.
+    """
     secret_name = f"{cluster_config.helm_release_name}-db-credentials"
     user = get_secret_value(cluster_config.namespace, secret_name, "kruize-user")
     password = get_secret_value(cluster_config.namespace, secret_name, "kruize-password")
@@ -60,7 +63,18 @@ def kruize_credentials(cluster_config) -> dict:
     if not user or not password:
         pytest.skip("Kruize database credentials not found")
     
-    return {"user": user, "password": password, "database": "kruize_db"}
+    # Detect actual database name from Kruize deployment
+    db_name_result = run_oc_command([
+        "get", "deployment", f"{cluster_config.helm_release_name}-kruize",
+        "-n", cluster_config.namespace,
+        "-o", "jsonpath={.spec.template.spec.containers[0].env[?(@.name=='database_name')].value}"
+    ], check=False)
+    
+    db_name = db_name_result.stdout.strip() if db_name_result.returncode == 0 else ""
+    if not db_name:
+        db_name = "costonprem_kruize"  # Default from values.yaml
+    
+    return {"user": user, "password": password, "database": db_name}
 
 
 @pytest.fixture(scope="module")
@@ -88,6 +102,7 @@ def wait_for_kruize_recommendations(
     cluster_id: str,
     kruize_user: str,
     kruize_password: str,
+    kruize_database: str = "costonprem_kruize",
     timeout: int = 300,
     poll_interval: int = 10,
 ) -> bool:
@@ -100,7 +115,7 @@ def wait_for_kruize_recommendations(
     while time.time() - start_time < timeout:
         # Check for experiments first
         exp_result = execute_db_query(
-            namespace, db_pod, "kruize_db", kruize_user,
+            namespace, db_pod, kruize_database, kruize_user,
             f"""
             SELECT COUNT(*) FROM kruize_experiments
             WHERE cluster_name LIKE '%{cluster_id}%'
@@ -113,7 +128,7 @@ def wait_for_kruize_recommendations(
         if exp_count > 0:
             # Check for recommendations
             rec_result = execute_db_query(
-                namespace, db_pod, "kruize_db", kruize_user,
+                namespace, db_pod, kruize_database, kruize_user,
                 f"""
                 SELECT COUNT(*) FROM kruize_recommendations kr
                 JOIN kruize_experiments ke ON kr.experiment_name = ke.experiment_name
@@ -141,6 +156,7 @@ def ros_test_data(
     ingress_url,
     org_id,
     test_runner_pod,
+    kruize_credentials,
 ):
     """Run full E2E setup for ROS/recommendations tests - SELF-CONTAINED.
     
@@ -179,8 +195,7 @@ def ros_test_data(
     temp_dir = tempfile.mkdtemp(prefix="ros_test_")
     source_registration = None
     
-    api_reads_url = get_koku_api_reads_url(cluster_config.helm_release_name, cluster_config.namespace)
-    api_writes_url = get_koku_api_writes_url(cluster_config.helm_release_name, cluster_config.namespace)
+    api_url = get_koku_api_url(cluster_config.helm_release_name, cluster_config.namespace)
     rh_identity = create_rh_identity_header(org_id)
     
     nise_config = NISEConfig()
@@ -215,8 +230,7 @@ def ros_test_data(
         source_registration = register_source(
             namespace=cluster_config.namespace,
             pod=test_runner_pod,
-            api_reads_url=api_reads_url,
-            api_writes_url=api_writes_url,
+            api_url=api_url,
             rh_identity_header=rh_identity,
             cluster_id=cluster_id,
             org_id=org_id,
@@ -232,6 +246,7 @@ def ros_test_data(
             db_pod,
             cluster_id,
             database=database_config.database,
+            user=database_config.user,
         ):
             pytest.fail(f"Provider not created for cluster {cluster_id}")
         print("       Provider created")
@@ -272,6 +287,7 @@ def ros_test_data(
             db_pod,
             cluster_id,
             database=database_config.database,
+            user=database_config.user,
         )
         
         if not schema_name:
@@ -280,17 +296,19 @@ def ros_test_data(
         
         # Step 6: Wait for Kruize recommendations
         print("\n  [6/6] Waiting for Kruize recommendations...")
+        kruize_db = kruize_credentials["database"]
         if not wait_for_kruize_recommendations(
             cluster_config.namespace,
             db_pod,
             cluster_id,
             kruize_user,
             kruize_password,
+            kruize_database=kruize_db,
             timeout=300,
         ):
             # Check if experiments exist at least
             exp_result = execute_db_query(
-                cluster_config.namespace, db_pod, "kruize_db", kruize_user,
+                cluster_config.namespace, db_pod, kruize_db, kruize_user,
                 f"SELECT COUNT(*) FROM kruize_experiments WHERE cluster_name LIKE '%{cluster_id}%'",
                 password=kruize_password,
             )
@@ -331,7 +349,7 @@ def ros_test_data(
                 if delete_source(
                     cluster_config.namespace,
                     test_runner_pod,
-                    api_writes_url,
+                    api_url,
                     rh_identity,
                     source_registration.source_id,
                     container="runner",
@@ -344,6 +362,7 @@ def ros_test_data(
                     db_pod,
                     cluster_id,
                     database=database_config.database,
+                    user=database_config.user,
                 )
                 print("  Cleaned up database records")
         else:

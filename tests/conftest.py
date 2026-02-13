@@ -276,9 +276,9 @@ def database_config(cluster_config: ClusterConfig) -> DatabaseConfig:
     if not db_user:
         db_user = "koku"
     
-    # Detect actual database name from Koku deployment
+    # Detect actual database name from Koku deployment (unified koku-api)
     db_name_result = run_oc_command([
-        "get", "deployment", f"{cluster_config.helm_release_name}-koku-api-reads",
+        "get", "deployment", f"{cluster_config.helm_release_name}-koku-api",
         "-n", cluster_config.namespace,
         "-o", "jsonpath={.spec.template.spec.containers[0].env[?(@.name=='DATABASE_NAME')].value}"
     ], check=False)
@@ -286,6 +286,52 @@ def database_config(cluster_config: ClusterConfig) -> DatabaseConfig:
     db_name = db_name_result.stdout.strip() if db_name_result.returncode == 0 else ""
     if not db_name:
         db_name = "koku"  # Default to 'koku' (current chart default)
+    
+    return DatabaseConfig(
+        pod_name=db_pod,
+        namespace=cluster_config.namespace,
+        database=db_name,
+        user=db_user,
+        password=db_password,
+    )
+
+
+@pytest.fixture(scope="session")
+def kruize_database_config(cluster_config: ClusterConfig) -> DatabaseConfig:
+    """Get database configuration for Kruize.
+    
+    Detects the actual database name from the Kruize deployment's
+    database_name environment variable.
+    """
+    # Find database pod (same as Koku - unified database)
+    result = run_oc_command([
+        "get", "pods", "-n", cluster_config.namespace,
+        "-l", "app.kubernetes.io/component=database",
+        "-o", "jsonpath={.items[0].metadata.name}"
+    ], check=False)
+    
+    db_pod = result.stdout.strip()
+    if not db_pod:
+        db_pod = f"{cluster_config.helm_release_name}-database-0"
+    
+    # Get Kruize credentials from secret
+    secret_name = f"{cluster_config.helm_release_name}-db-credentials"
+    db_user = get_secret_value(cluster_config.namespace, secret_name, "kruize-user")
+    db_password = get_secret_value(cluster_config.namespace, secret_name, "kruize-password")
+    
+    if not db_user:
+        db_user = "kruize_user"
+    
+    # Detect actual database name from Kruize deployment
+    db_name_result = run_oc_command([
+        "get", "deployment", f"{cluster_config.helm_release_name}-kruize",
+        "-n", cluster_config.namespace,
+        "-o", "jsonpath={.spec.template.spec.containers[0].env[?(@.name=='database_name')].value}"
+    ], check=False)
+    
+    db_name = db_name_result.stdout.strip() if db_name_result.returncode == 0 else ""
+    if not db_name:
+        db_name = "costonprem_kruize"  # Default from values.yaml
     
     return DatabaseConfig(
         pod_name=db_pod,
@@ -607,9 +653,9 @@ def internal_api_url(cluster_config: ClusterConfig) -> str:
     Use this for tests that need to bypass the gateway and test
     Koku API directly via internal service networking.
     
-    Format: http://{release}-koku-api-reads.{namespace}.svc:8000
+    Format: http://{release}-koku-api.{namespace}.svc:8000
     """
-    return f"http://{cluster_config.helm_release_name}-koku-api-reads.{cluster_config.namespace}.svc:8000"
+    return f"http://{cluster_config.helm_release_name}-koku-api.{cluster_config.namespace}.svc:8000"
 
 
 @pytest.fixture(scope="session")

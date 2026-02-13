@@ -512,46 +512,25 @@ def register_source(
             time.sleep(retry_delay)
             retry_delay = min(retry_delay * 2, 30)  # Exponential backoff, max 30s
         
-        result = exec_in_pod(
-            namespace,
-            pod,
-            [
-                "curl", "-s", "-w", "\n__HTTP_CODE__:%{http_code}", "-X", "POST",
-                f"{api_url}/sources",
-                "-H", "Content-Type: application/json",
-                "-H", f"X-Rh-Identity: {rh_identity_header}",
-                "-d", source_payload,
-            ],
-            container=container,
-            timeout=120,  # Longer timeout for first request (schema creation)
-        )
-        
-        if not result:
-            last_error = "exec_in_pod returned None (curl failed or timed out)"
-            continue
-        
-        # Parse response and status code
-        http_code = None
-        if "__HTTP_CODE__:" in result:
-            body, http_code = result.rsplit("__HTTP_CODE__:", 1)
-            result = body.strip()
-            http_code = http_code.strip()
-        
-        if http_code and http_code not in ("200", "201"):
-            last_error = f"HTTP {http_code}: {result[:200]}"
-            # 5xx errors might be transient, retry
-            if http_code.startswith("5"):
-                continue
-            # 4xx errors are not retryable - break and fail
-            break
-        
         try:
-            source_data = json.loads(result)
-            source_id = source_data.get("id")
+            response = session.post(f"{api_url}/sources", json=source_data)
+            
+            if response.status_code not in (200, 201):
+                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+                # 5xx errors might be transient, retry
+                if response.status_code >= 500:
+                    continue
+                # 4xx errors are not retryable - break and fail
+                break
+            
+            response_data = response.json()
+            source_id = response_data.get("id")
             if source_id:
+                # Update source_data with response for return value
+                source_data = response_data
                 break
                 
-        except requests.RequestException as e:
+        except Exception as e:
             last_error = f"Request failed: {e}"
             continue
     
@@ -612,7 +591,7 @@ def delete_source(
             headers={"X-Rh-Identity": rh_identity_header},
         )
         
-        response = session.delete(f"{api_writes_url}/sources/{source_id}")
+        response = session.delete(f"{api_url}/sources/{source_id}")
         # 204 No Content or 200 OK both indicate success
         return response.status_code in (200, 204, 404)  # 404 means already deleted
     except Exception:
@@ -691,6 +670,7 @@ def wait_for_provider(
     timeout: int = 300,
     interval: int = 10,
     database: str = "koku",
+    user: str = "koku_user",
 ) -> bool:
     """Wait for provider to be created in Koku database.
     
@@ -701,7 +681,7 @@ def wait_for_provider(
     """
     def check_provider():
         result = execute_db_query(
-            namespace, db_pod, database, "koku",
+            namespace, db_pod, database, user,
             f"""
             SELECT p.uuid FROM api_provider p
             JOIN api_providerauthentication pa ON p.authentication_id = pa.id
@@ -721,6 +701,7 @@ def wait_for_summary_tables(
     timeout: int = 600,
     interval: int = 30,
     database: str = "koku",
+    user: str = "koku_user",
 ) -> Optional[str]:
     """Wait for summary tables to be populated and return schema name.
     
@@ -730,7 +711,7 @@ def wait_for_summary_tables(
     
     def check_summary():
         result = execute_db_query(
-            namespace, db_pod, database, "koku",
+            namespace, db_pod, database, user,
             f"""
             SELECT c.schema_name FROM reporting_common_costusagereportmanifest m
             JOIN api_provider p ON m.provider_id = p.uuid
@@ -743,7 +724,7 @@ def wait_for_summary_tables(
         
         schema = result[0][0].strip()
         result = execute_db_query(
-            namespace, db_pod, database, "koku",
+            namespace, db_pod, database, user,
             f"SELECT COUNT(*) FROM {schema}.reporting_ocpusagelineitem_daily_summary WHERE cluster_id = '{cluster_id}'"
         )
         
@@ -766,12 +747,13 @@ def cleanup_database_records(
     db_pod: str,
     cluster_id: str,
     database: str = "koku",
+    user: str = "koku_user",
 ) -> bool:
     """Clean up database records for a cluster."""
     try:
         # Delete file statuses first (foreign key constraint)
         execute_db_query(
-            namespace, db_pod, database, "koku",
+            namespace, db_pod, database, user,
             f"""
             DELETE FROM reporting_common_costusagereportstatus
             WHERE manifest_id IN (
@@ -783,7 +765,7 @@ def cleanup_database_records(
         
         # Delete manifests
         execute_db_query(
-            namespace, db_pod, database, "koku",
+            namespace, db_pod, database, user,
             f"DELETE FROM reporting_common_costusagereportmanifest WHERE cluster_id = '{cluster_id}'"
         )
         

@@ -44,8 +44,7 @@ from e2e_helpers import (
     ensure_nise_available,
     generate_nise_data,
     generate_dynamic_static_report,
-    get_koku_api_reads_url,
-    get_koku_api_writes_url,
+    get_koku_api_url,
     register_source,
     delete_source,
 )
@@ -78,21 +77,25 @@ def rh_identity_header(org_id: str) -> str:
 
 
 @pytest.fixture(scope="class")
-def koku_api_reads_url(cluster_config) -> str:
-    """Internal Koku API reads URL for GET operations."""
-    return get_koku_api_reads_url(
+def koku_api_url(cluster_config) -> str:
+    """Internal Koku API URL for all operations (unified deployment)."""
+    return get_koku_api_url(
         cluster_config.helm_release_name,
         cluster_config.namespace,
     )
+
+
+# Backward compatibility aliases - all point to unified API
+@pytest.fixture(scope="class")
+def koku_api_reads_url(koku_api_url) -> str:
+    """Alias for koku_api_url (backward compatibility)."""
+    return koku_api_url
 
 
 @pytest.fixture(scope="class")
-def koku_api_writes_url(cluster_config) -> str:
-    """Internal Koku API writes URL for POST/PUT/DELETE operations."""
-    return get_koku_api_writes_url(
-        cluster_config.helm_release_name,
-        cluster_config.namespace,
-    )
+def koku_api_writes_url(koku_api_url) -> str:
+    """Alias for koku_api_url (backward compatibility)."""
+    return koku_api_url
 
 
 # =============================================================================
@@ -289,8 +292,7 @@ def registered_source(
     org_id: str,
     e2e_cluster_id: str,
     s3_config,
-    koku_api_reads_url: str,
-    koku_api_writes_url: str,
+    koku_api_url: str,
     test_runner_pod: str,
     rh_identity_header: str,
 ):
@@ -370,7 +372,7 @@ def registered_source(
     )
     
     try:
-        response = session.get(f"{koku_api_reads_url}/sources")
+        response = session.get(f"{koku_api_url}/sources")
         if response.ok:
             existing_sources = response.json()
             for existing in existing_sources.get("data", []):
@@ -378,7 +380,7 @@ def registered_source(
                 existing_id = existing.get("id")
                 if existing_id and existing_name.startswith("e2e-source-"):
                     print(f"     🗑️  Deleting existing source '{existing_name}' (id={existing_id})...")
-                    session.delete(f"{koku_api_writes_url}/sources/{existing_id}")
+                    session.delete(f"{koku_api_url}/sources/{existing_id}")
                     time.sleep(2)
     except Exception:
         pass
@@ -388,8 +390,7 @@ def registered_source(
     registration = register_source(
         namespace=cluster_config.namespace,
         pod=test_runner_pod,
-        api_reads_url=koku_api_reads_url,
-        api_writes_url=koku_api_writes_url,
+        api_url=koku_api_url,
         rh_identity_header=rh_identity_header,
         cluster_id=e2e_cluster_id,
         org_id=org_id,
@@ -404,8 +405,7 @@ def registered_source(
         "cluster_id": e2e_cluster_id,
         "org_id": org_id,
         "test_runner_pod": test_runner_pod,
-        "koku_api_reads_url": koku_api_reads_url,
-        "koku_api_writes_url": koku_api_writes_url,
+        "koku_api_url": koku_api_url,
         "rh_identity_header": rh_identity_header,
         "db_pod": db_pod,
         "database": database_config.database,
@@ -424,7 +424,7 @@ def registered_source(
         delete_source(
             namespace=cluster_config.namespace,
             pod=test_runner_pod,
-            api_writes_url=koku_api_writes_url,
+            api_url=koku_api_url,
             rh_identity_header=rh_identity_header,
             source_id=registration.source_id,
             container="runner",

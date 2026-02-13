@@ -1,0 +1,35 @@
+---
+alwaysApply: true
+---
+# Terminal Command Rules
+
+## NEVER Do These
+
+1. **NEVER run a command in the background and then separately tail/monitor it**
+   - BAD: `./script.sh &` then `tail -f output.txt`
+   - BAD: `./script.sh 2>&1 | tee file.txt &` then `tail file.txt`
+   - GOOD: Just run the command directly and wait for it to complete
+
+2. **NEVER use `tail -f`, `--follow`, or any streaming/watching commands** unless explicitly asked
+   - BAD: `kubectl logs --follow`
+   - BAD: `tail -f /var/log/something`
+   - GOOD: `kubectl logs --tail=50`
+   - GOOD: `tail -100 file.txt`
+
+3. **NEVER poll/check output repeatedly** while a command is running
+   - If a command times out, that is fine - check the terminal file for results
+   - Do not run the same command multiple times to check progress
+
+## Long-Running Commands
+
+For commands that take a long time (like test suites):
+1. Run the command directly with is_background: false
+2. If it times out, read the terminal file to see results
+3. Do NOT start it in background and then poll for results
+
+## Test Execution
+
+Always use the project test script:
+NAMESPACE=cost-onprem ./scripts/run-pytest.sh --no-ui
+
+Never run pytest directly or tail test output separately.

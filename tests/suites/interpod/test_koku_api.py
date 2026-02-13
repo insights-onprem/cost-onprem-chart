@@ -96,36 +96,20 @@ class TestKokuAPIInternal:
 class TestKokuAPIInternalRouting:
     """Test internal routing to different Koku API services."""
 
-    def test_reads_service_accessible(
+    def test_unified_api_service_accessible(
         self,
         pod_session: requests.Session,
         internal_api_url: str,
     ):
-        """Verify koku-api-reads service is accessible internally.
+        """Verify unified koku-api service is accessible internally.
         
         Tests:
-        - Reads service responds to health check
+        - Koku API service responds to health check
+        
+        Note: The chart now uses a unified koku-api service instead of
+        separate reads/writes services.
         """
         response = pod_session.get(f"{internal_api_url}/api/cost-management/v1/status/")
-        
-        assert response.ok, f"Request failed: {response.status_code} - {response.text}"
-        # Any valid JSON response indicates the service is up
-        data = response.json()
-        assert data is not None
-
-    def test_writes_service_accessible(
-        self,
-        pod_session: requests.Session,
-        cluster_config,
-    ):
-        """Verify koku-api-writes service is accessible internally.
-        
-        Tests:
-        - Writes service responds to health check
-        """
-        writes_url = f"http://{cluster_config.helm_release_name}-koku-api-writes.{cluster_config.namespace}.svc:8000"
-        
-        response = pod_session.get(f"{writes_url}/api/cost-management/v1/status/")
         
         assert response.ok, f"Request failed: {response.status_code} - {response.text}"
         # Any valid JSON response indicates the service is up
