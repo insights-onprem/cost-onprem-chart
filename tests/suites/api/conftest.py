@@ -42,7 +42,7 @@ def ocp_source_type_id(
     
     try:
         response = session.get(
-            f"{gateway_url}/api/cost-management/v1/source-types/",
+            f"{gateway_url}/cost-management/v1/source_types/",
             timeout=30,
         )
         

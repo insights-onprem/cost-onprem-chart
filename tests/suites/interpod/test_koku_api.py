@@ -9,8 +9,10 @@ Uses the pod_session fixture which provides a standard requests.Session API
 that routes through kubectl exec curl inside the test-runner pod.
 
 Jira Test Cases:
-- FLPATH-3173: Verify Koku API status endpoint returns healthy
-- FLPATH-3174: Verify source types endpoint works with X-Rh-Identity header
+- FLPATH-3162: Verify Koku accepts X-Rh-Identity header for auth
+  https://issues.redhat.com/browse/FLPATH-3162
+
+Note: source_types endpoint tests are in sources/test_sources_api.py
 """
 
 import pytest
@@ -29,7 +31,7 @@ class TestKokuAPIInternal:
     ):
         """Verify Koku /api/cost-management/v1/status/ returns healthy.
         
-        FLPATH-3173: Verify Koku API status endpoint returns healthy
+        FLPATH-3162: Verify Koku accepts X-Rh-Identity header for auth
         
         Tests:
         - Status endpoint is accessible internally
@@ -52,7 +54,7 @@ class TestKokuAPIInternal:
     ):
         """Verify reports endpoint works with X-Rh-Identity header.
         
-        FLPATH-3174: Verify internal API accepts X-Rh-Identity header
+        FLPATH-3162: Verify Koku accepts X-Rh-Identity header for auth
         
         Tests:
         - Internal service accepts X-Rh-Identity header

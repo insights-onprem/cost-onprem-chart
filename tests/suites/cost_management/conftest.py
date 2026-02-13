@@ -5,12 +5,6 @@ Note: Sources API has been merged into Koku. All sources endpoints are now
 available via the Koku API at /api/cost-management/v1/ using X-Rh-Identity
 header for authentication instead of x-rh-sources-org-id.
 
-All internal API calls use the dedicated test_runner_pod fixture from the root
-conftest.py, ensuring isolation from application pods.
-
-Database configuration is obtained from the database_config fixture which
-dynamically detects the actual database name and user from the deployment.
-
 Includes the cost_validation_data fixture that runs the full E2E flow for cost validation tests.
 This makes cost_validation tests SELF-CONTAINED - they don't depend on other test modules.
 """
@@ -25,7 +19,7 @@ from typing import Optional
 import pytest
 import requests
 
-from conftest import obtain_jwt_token, DatabaseConfig
+from conftest import obtain_jwt_token
 from e2e_helpers import (
     NISEConfig,
     cleanup_database_records,
@@ -40,7 +34,6 @@ from e2e_helpers import (
     wait_for_summary_tables,
 )
 from utils import (
-    create_pod_session,
     create_rh_identity_header,
     create_upload_package_from_files,
     execute_db_query,
@@ -52,41 +45,47 @@ from utils import (
 def cleanup_old_cost_val_clusters(
     namespace: str,
     db_pod: str,
-    database: str,
-    db_user: str,
-    test_runner_pod: str,
+    ingress_pod: str,
     api_url: str,
     rh_identity_header: str,
 ):
     """Clean up any leftover cost-val clusters from previous test runs.
     
-    Uses the dedicated test_runner_pod for all internal API calls.
-    Database configuration is passed in from the database_config fixture.
-    
     This ensures cost_validation tests start with a clean slate and don't
     pick up data from previous runs.
     """
+    import json
+    
     # Find and delete old cost-val sources
     try:
-        session = create_pod_session(
-            namespace=namespace,
-            pod=test_runner_pod,
-            container="runner",
-            headers={
-                "X-Rh-Identity": rh_identity_header,
-                "Content-Type": "application/json",
-            },
+        result = exec_in_pod(
+            namespace,
+            ingress_pod,
+            [
+                "curl", "-s", f"{api_url}/sources",
+                "-H", "Content-Type: application/json",
+                "-H", f"X-Rh-Identity: {rh_identity_header}",
+            ],
+            container="ingress",
         )
         
-        response = session.get(f"{api_url}/sources")
-        if response.ok:
-            sources = response.json()
+        if result:
+            sources = json.loads(result)
             for source in sources.get("data", []):
                 source_ref = source.get("source_ref", "")
                 if source_ref and source_ref.startswith("cost-val-"):
                     source_id = source.get("id")
                     print(f"       Deleting old source: {source.get('name')} (ref: {source_ref})")
-                    session.delete(f"{api_url}/sources/{source_id}")
+                    exec_in_pod(
+                        namespace,
+                        ingress_pod,
+                        [
+                            "curl", "-s", "-X", "DELETE",
+                            f"{api_url}/sources/{source_id}",
+                            "-H", f"X-Rh-Identity: {rh_identity_header}",
+                        ],
+                        container="ingress",
+                    )
     except Exception as e:
         print(f"       Warning: Could not clean old sources: {e}")
     
@@ -94,7 +93,7 @@ def cleanup_old_cost_val_clusters(
     try:
         # Delete manifest statuses
         execute_db_query(
-            namespace, db_pod, database, db_user,
+            namespace, db_pod, "costonprem_koku", "koku_user",
             """
             DELETE FROM reporting_common_costusagereportstatus 
             WHERE manifest_id IN (
@@ -106,13 +105,13 @@ def cleanup_old_cost_val_clusters(
         
         # Delete manifests
         execute_db_query(
-            namespace, db_pod, database, db_user,
+            namespace, db_pod, "costonprem_koku", "koku_user",
             "DELETE FROM reporting_common_costusagereportmanifest WHERE cluster_id LIKE 'cost-val-%'"
         )
         
         # Get all schemas and clean summary tables + tenant provider mappings
         schemas = execute_db_query(
-            namespace, db_pod, database, db_user,
+            namespace, db_pod, "costonprem_koku", "koku_user",
             "SELECT DISTINCT schema_name FROM api_customer WHERE schema_name IS NOT NULL"
         )
         
@@ -122,7 +121,7 @@ def cleanup_old_cost_val_clusters(
                 if schema:
                     try:
                         execute_db_query(
-                            namespace, db_pod, database, db_user,
+                            namespace, db_pod, "costonprem_koku", "koku_user",
                             f"DELETE FROM {schema}.reporting_ocpusagelineitem_daily_summary WHERE cluster_id LIKE 'cost-val-%'"
                         )
                     except Exception:
@@ -131,7 +130,7 @@ def cleanup_old_cost_val_clusters(
                     # Delete tenant-provider mappings (FK constraint on api_provider)
                     try:
                         execute_db_query(
-                            namespace, db_pod, database, db_user,
+                            namespace, db_pod, "costonprem_koku", "koku_user",
                             f"""
                             DELETE FROM {schema}.reporting_tenant_api_provider 
                             WHERE provider_id IN (
@@ -146,7 +145,7 @@ def cleanup_old_cost_val_clusters(
         # Delete providers (after FK references are removed)
         try:
             execute_db_query(
-                namespace, db_pod, database, db_user,
+                namespace, db_pod, "costonprem_koku", "koku_user",
                 "DELETE FROM public.api_provider WHERE name LIKE 'cost-validation%'"
             )
         except Exception:
@@ -157,40 +156,9 @@ def cleanup_old_cost_val_clusters(
 
 
 @pytest.fixture(scope="module")
-def koku_api_url_cost_mgmt(cluster_config) -> str:
+def koku_api_url(cluster_config) -> str:
     """Get Koku API URL for cost management tests (unified deployment)."""
     return get_koku_api_url(cluster_config.helm_release_name, cluster_config.namespace)
-
-
-# Backward compatibility aliases - all point to unified API
-@pytest.fixture(scope="module")
-def koku_api_reads_url_cost_mgmt(koku_api_url_cost_mgmt) -> str:
-    """Alias for koku_api_url_cost_mgmt (backward compatibility)."""
-    return koku_api_url_cost_mgmt
-
-
-@pytest.fixture(scope="module")
-def koku_api_writes_url_cost_mgmt(koku_api_url_cost_mgmt) -> str:
-    """Alias for koku_api_url_cost_mgmt (backward compatibility)."""
-    return koku_api_url_cost_mgmt
-
-
-@pytest.fixture(scope="module")
-def koku_api_writes_url(koku_api_url_cost_mgmt) -> str:
-    """Alias for koku_api_url_cost_mgmt (backward compatibility)."""
-    return koku_api_url_cost_mgmt
-
-
-@pytest.fixture(scope="module")
-def koku_api_reads_url(koku_api_url_cost_mgmt) -> str:
-    """Alias for koku_api_url_cost_mgmt (backward compatibility)."""
-    return koku_api_url_cost_mgmt
-
-
-@pytest.fixture(scope="module")
-def rh_identity_header(org_id) -> str:
-    """Get X-Rh-Identity header value for the test org."""
-    return create_rh_identity_header(org_id)
 
 
 # =============================================================================
@@ -198,14 +166,8 @@ def rh_identity_header(org_id) -> str:
 # =============================================================================
 
 @pytest.fixture(scope="module")
-def cost_validation_data(cluster_config, database_config, s3_config, keycloak_config, ingress_url, org_id, test_runner_pod):
+def cost_validation_data(cluster_config, s3_config, keycloak_config, ingress_url, org_id):
     """Run full E2E setup for cost validation tests - SELF-CONTAINED.
-    
-    Uses the dedicated test_runner_pod for all internal API calls, ensuring
-    isolation from application pods.
-    
-    Database configuration is obtained from the database_config fixture which
-    dynamically detects the actual database name and user from the deployment.
     
     This fixture:
     1. Generates NISE data with known expected values
@@ -234,10 +196,14 @@ def cost_validation_data(cluster_config, database_config, s3_config, keycloak_co
     # Generate unique cluster ID
     cluster_id = generate_cluster_id(prefix="cost-val")
     
-    # Get database pod from database_config fixture
-    db_pod = database_config.pod_name
+    # Get required pods
+    db_pod = get_pod_by_label(cluster_config.namespace, "app.kubernetes.io/component=database")
     if not db_pod:
         pytest.skip("Database pod not found")
+    
+    ingress_pod = get_pod_by_label(cluster_config.namespace, "app.kubernetes.io/component=ingress")
+    if not ingress_pod:
+        pytest.skip("Ingress pod not found")
     
     temp_dir = tempfile.mkdtemp(prefix="cost_validation_")
     source_registration = None
@@ -254,7 +220,6 @@ def cost_validation_data(cluster_config, database_config, s3_config, keycloak_co
         print("COST VALIDATION TEST SETUP (Self-Contained)")
         print(f"{'='*60}")
         print(f"  Cluster ID: {cluster_id}")
-        print(f"  Database: {database_config.database} (user: {database_config.user})")
         print(f"  Cleanup before: {cleanup_before}")
         print(f"  Cleanup after: {cleanup_after}")
         
@@ -262,13 +227,8 @@ def cost_validation_data(cluster_config, database_config, s3_config, keycloak_co
         if cleanup_before:
             print("\n  [0/5] Pre-test cleanup...")
             cleanup_old_cost_val_clusters(
-                cluster_config.namespace,
-                db_pod,
-                database_config.database,
-                database_config.user,
-                test_runner_pod,
-                api_url,
-                rh_identity,
+                cluster_config.namespace, db_pod, ingress_pod,
+                api_url, rh_identity,
             )
             print("       Cleanup complete")
         else:
@@ -289,29 +249,23 @@ def cost_validation_data(cluster_config, database_config, s3_config, keycloak_co
         if not files["all_files"]:
             pytest.skip("NISE generated no CSV files")
         
-        # Step 2: Register source via Koku API using test_runner_pod
+        # Step 2: Register source via Koku API
         print("\n  [2/5] Registering source...")
         source_registration = register_source(
             namespace=cluster_config.namespace,
-            pod=test_runner_pod,
+            pod=ingress_pod,
             api_url=api_url,
             rh_identity_header=rh_identity,
             cluster_id=cluster_id,
             org_id=org_id,
             source_name=f"cost-validation-{cluster_id[-8:]}",
-            container="runner",
+            container="ingress",
         )
         print(f"       Source ID: {source_registration.source_id}")
         
         # Step 3: Wait for provider
         print("\n  [3/5] Waiting for provider in Koku...")
-        if not wait_for_provider(
-            cluster_config.namespace,
-            db_pod,
-            cluster_id,
-            database=database_config.database,
-            user=database_config.user,
-        ):
+        if not wait_for_provider(cluster_config.namespace, db_pod, cluster_id):
             pytest.fail(f"Provider not created for cluster {cluster_id}")
         print("       Provider created")
         
@@ -357,13 +311,7 @@ def cost_validation_data(cluster_config, database_config, s3_config, keycloak_co
         
         # Step 5: Wait for processing
         print("\n  [5/5] Waiting for Koku processing...")
-        schema_name = wait_for_summary_tables(
-            cluster_config.namespace,
-            db_pod,
-            cluster_id,
-            database=database_config.database,
-            user=database_config.user,
-        )
+        schema_name = wait_for_summary_tables(cluster_config.namespace, db_pod, cluster_id)
         
         if not schema_name:
             pytest.fail(f"Timeout waiting for summary tables for cluster {cluster_id}")
@@ -376,7 +324,7 @@ def cost_validation_data(cluster_config, database_config, s3_config, keycloak_co
         # Query the actual number of days of data in the DB
         # Koku aggregates hourly data into daily summaries
         result = execute_db_query(
-            cluster_config.namespace, db_pod, database_config.database, database_config.user,
+            cluster_config.namespace, db_pod, "costonprem_koku", "koku",
             f"""
             SELECT COUNT(DISTINCT usage_start)
             FROM {schema_name}.reporting_ocpusagelineitem_daily_summary
@@ -390,8 +338,6 @@ def cost_validation_data(cluster_config, database_config, s3_config, keycloak_co
         yield {
             "namespace": cluster_config.namespace,
             "db_pod": db_pod,
-            "database": database_config.database,
-            "db_user": database_config.user,
             "cluster_id": cluster_id,
             "schema_name": schema_name,
             "source_id": source_registration.source_id,
@@ -409,24 +355,18 @@ def cost_validation_data(cluster_config, database_config, s3_config, keycloak_co
             if source_registration:
                 if delete_source(
                     cluster_config.namespace,
-                    test_runner_pod,
+                    ingress_pod,
                     api_url,
                     rh_identity,
                     source_registration.source_id,
-                    container="runner",
+                    container="ingress",
                 ):
                     print(f"  Deleted source {source_registration.source_id}")
                 else:
                     print(f"  Warning: Could not delete source {source_registration.source_id}")
             
             if db_pod:
-                if cleanup_database_records(
-                    cluster_config.namespace,
-                    db_pod,
-                    cluster_id,
-                    database=database_config.database,
-                    user=database_config.user,
-                ):
+                if cleanup_database_records(cluster_config.namespace, db_pod, cluster_id):
                     print("  Cleaned up database records")
                 else:
                     print("  Warning: Could not clean database records")

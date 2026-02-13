@@ -28,7 +28,6 @@ from typing import Dict, List, Optional, Tuple
 import requests
 
 from utils import (
-    create_pod_session,
     create_upload_package_from_files,
     execute_db_query,
     exec_in_pod,
@@ -190,37 +189,6 @@ def ensure_nise_available() -> bool:
     return install_nise()
 
 
-def generate_dynamic_static_report(
-    start_date: datetime,
-    end_date: datetime,
-    output_dir: str,
-    config: Optional[NISEConfig] = None,
-) -> str:
-    """Generate a dynamic NISE static report YAML with current dates.
-    
-    This ensures the dates in the nise-generated data match the current billing period,
-    which is required for Koku to process and summarize the data correctly.
-    
-    Args:
-        start_date: Start date for data generation
-        end_date: End date for data generation
-        output_dir: Directory to write the YAML file
-        config: NISE configuration (uses defaults if not provided)
-        
-    Returns:
-        Path to the generated YAML file
-    """
-    if config is None:
-        config = NISEConfig()
-    
-    yaml_content = config.to_yaml("placeholder", start_date, end_date)
-    yaml_path = os.path.join(output_dir, "dynamic_ocp_static_report.yml")
-    with open(yaml_path, "w") as f:
-        f.write(yaml_content)
-    
-    return yaml_path
-
-
 def generate_nise_data(
     cluster_id: str,
     start_date: datetime,
@@ -344,41 +312,42 @@ def get_source_type_id(
     api_url: str,
     rh_identity_header: str,
     source_type_name: str = "openshift",
-    container: str = "runner",
+    container: str = "ingress",
 ) -> Optional[str]:
     """Get the source type ID for a given source type name.
     
     Args:
         namespace: Kubernetes namespace
-        pod: Pod name for executing curl commands (test-runner pod)
+        pod: Pod name for executing curl commands (typically ingress pod)
         api_url: Koku API URL (reads or writes)
         rh_identity_header: Base64-encoded X-Rh-Identity header value
         source_type_name: Name of the source type (default: "openshift")
-        container: Container name in the pod (default: "runner")
+        container: Container name in the pod (default: "ingress")
     
     Returns:
         Source type ID as string, or None if not found
     """
-    session = create_pod_session(
-        namespace=namespace,
-        pod=pod,
+    result = exec_in_pod(
+        namespace,
+        pod,
+        [
+            "curl", "-s",
+            f"{api_url}/source_types",
+            "-H", "Content-Type: application/json",
+            "-H", f"X-Rh-Identity: {rh_identity_header}",
+        ],
         container=container,
-        headers={
-            "X-Rh-Identity": rh_identity_header,
-            "Content-Type": "application/json",
-        },
     )
     
+    if not result:
+        return None
+    
     try:
-        response = session.get(f"{api_url}/source_types")
-        if not response.ok:
-            return None
-        
-        data = response.json()
+        data = json.loads(result)
         for st in data.get("data", []):
             if st.get("name") == source_type_name:
                 return st.get("id")
-    except (requests.RequestException, json.JSONDecodeError):
+    except json.JSONDecodeError:
         pass
     
     return None
@@ -390,41 +359,42 @@ def get_application_type_id(
     api_url: str,
     rh_identity_header: str,
     app_type_name: str = "/insights/platform/cost-management",
-    container: str = "runner",
+    container: str = "ingress",
 ) -> Optional[str]:
     """Get the application type ID for cost management.
     
     Args:
         namespace: Kubernetes namespace
-        pod: Pod name for executing curl commands (test-runner pod)
+        pod: Pod name for executing curl commands (typically ingress pod)
         api_url: Koku API URL (reads or writes)
         rh_identity_header: Base64-encoded X-Rh-Identity header value
         app_type_name: Name of the application type
-        container: Container name in the pod (default: "runner")
+        container: Container name in the pod (default: "ingress")
     
     Returns:
         Application type ID as string, or None if not found
     """
-    session = create_pod_session(
-        namespace=namespace,
-        pod=pod,
+    result = exec_in_pod(
+        namespace,
+        pod,
+        [
+            "curl", "-s",
+            f"{api_url}/application_types",
+            "-H", "Content-Type: application/json",
+            "-H", f"X-Rh-Identity: {rh_identity_header}",
+        ],
         container=container,
-        headers={
-            "X-Rh-Identity": rh_identity_header,
-            "Content-Type": "application/json",
-        },
     )
     
+    if not result:
+        return None
+    
     try:
-        response = session.get(f"{api_url}/application_types")
-        if not response.ok:
-            return None
-        
-        data = response.json()
+        data = json.loads(result)
         for at in data.get("data", []):
             if at.get("name") == app_type_name:
                 return at.get("id")
-    except (requests.RequestException, json.JSONDecodeError):
+    except json.JSONDecodeError:
         pass
     
     return None
@@ -439,7 +409,7 @@ def register_source(
     org_id: str,
     source_name: Optional[str] = None,
     bucket: str = DEFAULT_S3_BUCKET,
-    container: str = "runner",
+    container: str = "ingress",
     max_retries: int = 5,
     initial_retry_delay: int = 5,
 ) -> SourceRegistration:
@@ -454,14 +424,14 @@ def register_source(
     
     Args:
         namespace: Kubernetes namespace
-        pod: Pod name for executing curl commands (test-runner pod)
+        pod: Pod name for executing curl commands (typically ingress pod)
         api_url: Koku API URL (unified deployment)
         rh_identity_header: Base64-encoded X-Rh-Identity header value
         cluster_id: Cluster ID for the source
         org_id: Organization ID
         source_name: Optional custom source name (defaults to e2e-source-{cluster_id[-8:]})
         bucket: S3 bucket name
-        container: Container name in the pod (default: "runner")
+        container: Container name in the pod (default: "ingress")
         max_retries: Maximum number of retry attempts (default: 5)
         initial_retry_delay: Initial delay between retries in seconds (default: 5)
     
@@ -482,24 +452,12 @@ def register_source(
     if not source_name:
         source_name = f"e2e-source-{cluster_id[-8:]}"
     
-    # Create session for API calls
-    session = create_pod_session(
-        namespace=namespace,
-        pod=pod,
-        container=container,
-        headers={
-            "X-Rh-Identity": rh_identity_header,
-            "Content-Type": "application/json",
-        },
-        timeout=120,  # Longer timeout for first request (schema creation)
-    )
-    
-    # Source payload
-    source_data = {
+    # Create source with source_ref (critical for matching incoming data)
+    source_payload = json.dumps({
         "name": source_name,
         "source_type_id": source_type_id,
         "source_ref": cluster_id,
-    }
+    })
     
     # Retry logic for source creation
     # First request may fail due to tenant schema creation (slow operation)
@@ -512,27 +470,48 @@ def register_source(
             time.sleep(retry_delay)
             retry_delay = min(retry_delay * 2, 30)  # Exponential backoff, max 30s
         
-        try:
-            response = session.post(f"{api_url}/sources", json=source_data)
-            
-            if response.status_code not in (200, 201):
-                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
-                # 5xx errors might be transient, retry
-                if response.status_code >= 500:
-                    continue
-                # 4xx errors are not retryable - break and fail
-                break
-            
-            response_data = response.json()
-            source_id = response_data.get("id")
-            if source_id:
-                # Update source_data with response for return value
-                source_data = response_data
-                break
-                
-        except Exception as e:
-            last_error = f"Request failed: {e}"
+        result = exec_in_pod(
+            namespace,
+            pod,
+            [
+                "curl", "-s", "-w", "\n__HTTP_CODE__:%{http_code}", "-X", "POST",
+                f"{api_url}/sources",
+                "-H", "Content-Type: application/json",
+                "-H", f"X-Rh-Identity: {rh_identity_header}",
+                "-d", source_payload,
+            ],
+            container=container,
+            timeout=120,  # Longer timeout for first request (schema creation)
+        )
+        
+        if not result:
+            last_error = "exec_in_pod returned None (curl failed or timed out)"
             continue
+        
+        # Parse response and status code
+        http_code = None
+        if "__HTTP_CODE__:" in result:
+            body, http_code = result.rsplit("__HTTP_CODE__:", 1)
+            result = body.strip()
+            http_code = http_code.strip()
+        
+        if http_code and http_code not in ("200", "201"):
+            last_error = f"HTTP {http_code}: {result[:200]}"
+            # 5xx errors might be transient, retry
+            if http_code.startswith("5"):
+                continue
+            # 4xx errors are not retryable - break and fail
+            break
+        
+        try:
+            source_data = json.loads(result)
+            source_id = source_data.get("id")
+            if source_id:
+                break
+            else:
+                last_error = f"No 'id' in response: {result[:200]}"
+        except json.JSONDecodeError as e:
+            last_error = f"Invalid JSON: {result[:200]} - {e}"
     
     if not source_id:
         raise RuntimeError(
@@ -543,16 +522,24 @@ def register_source(
     
     # Create application with cluster_id in extra
     if app_type_id:
-        app_data = {
+        app_payload = json.dumps({
             "source_id": source_id,
             "application_type_id": app_type_id,
             "extra": {"bucket": bucket, "cluster_id": cluster_id},
-        }
+        })
         
-        try:
-            session.post(f"{api_url}/applications", json=app_data)
-        except requests.RequestException:
-            pass  # Application creation is optional
+        exec_in_pod(
+            namespace,
+            pod,
+            [
+                "curl", "-s", "-X", "POST",
+                f"{api_url}/applications",
+                "-H", "Content-Type: application/json",
+                "-H", f"X-Rh-Identity: {rh_identity_header}",
+                "-d", app_payload,
+            ],
+            container=container,
+        )
     
     return SourceRegistration(
         source_id=source_id,
@@ -568,32 +555,33 @@ def delete_source(
     api_url: str,
     rh_identity_header: str,
     source_id: str,
-    container: str = "runner",
+    container: str = "ingress",
 ) -> bool:
     """Delete a source from Koku Sources API.
     
     Args:
         namespace: Kubernetes namespace
-        pod: Pod name for executing curl commands (test-runner pod)
+        pod: Pod name for executing curl commands (typically ingress pod)
         api_url: Koku API URL (unified deployment)
         rh_identity_header: Base64-encoded X-Rh-Identity header value
         source_id: ID of the source to delete
-        container: Container name in the pod (default: "runner")
+        container: Container name in the pod (default: "ingress")
     
     Returns:
         True if successful, False otherwise
     """
     try:
-        session = create_pod_session(
-            namespace=namespace,
-            pod=pod,
+        exec_in_pod(
+            namespace,
+            pod,
+            [
+                "curl", "-s", "-X", "DELETE",
+                f"{api_url}/sources/{source_id}",
+                "-H", f"X-Rh-Identity: {rh_identity_header}",
+            ],
             container=container,
-            headers={"X-Rh-Identity": rh_identity_header},
         )
-        
-        response = session.delete(f"{api_url}/sources/{source_id}")
-        # 204 No Content or 200 OK both indicate success
-        return response.status_code in (200, 204, 404)  # 404 means already deleted
+        return True
     except Exception:
         return False
 
@@ -669,8 +657,6 @@ def wait_for_provider(
     cluster_id: str,
     timeout: int = 300,
     interval: int = 10,
-    database: str = "koku",
-    user: str = "koku_user",
 ) -> bool:
     """Wait for provider to be created in Koku database.
     
@@ -681,7 +667,7 @@ def wait_for_provider(
     """
     def check_provider():
         result = execute_db_query(
-            namespace, db_pod, database, user,
+            namespace, db_pod, "costonprem_koku", "koku_user",
             f"""
             SELECT p.uuid FROM api_provider p
             JOIN api_providerauthentication pa ON p.authentication_id = pa.id
@@ -700,8 +686,6 @@ def wait_for_summary_tables(
     cluster_id: str,
     timeout: int = 600,
     interval: int = 30,
-    database: str = "koku",
-    user: str = "koku_user",
 ) -> Optional[str]:
     """Wait for summary tables to be populated and return schema name.
     
@@ -711,7 +695,7 @@ def wait_for_summary_tables(
     
     def check_summary():
         result = execute_db_query(
-            namespace, db_pod, database, user,
+            namespace, db_pod, "costonprem_koku", "koku_user",
             f"""
             SELECT c.schema_name FROM reporting_common_costusagereportmanifest m
             JOIN api_provider p ON m.provider_id = p.uuid
@@ -724,7 +708,7 @@ def wait_for_summary_tables(
         
         schema = result[0][0].strip()
         result = execute_db_query(
-            namespace, db_pod, database, user,
+            namespace, db_pod, "costonprem_koku", "koku_user",
             f"SELECT COUNT(*) FROM {schema}.reporting_ocpusagelineitem_daily_summary WHERE cluster_id = '{cluster_id}'"
         )
         
@@ -746,14 +730,12 @@ def cleanup_database_records(
     namespace: str,
     db_pod: str,
     cluster_id: str,
-    database: str = "koku",
-    user: str = "koku_user",
 ) -> bool:
     """Clean up database records for a cluster."""
     try:
         # Delete file statuses first (foreign key constraint)
         execute_db_query(
-            namespace, db_pod, database, user,
+            namespace, db_pod, "costonprem_koku", "koku_user",
             f"""
             DELETE FROM reporting_common_costusagereportstatus
             WHERE manifest_id IN (
@@ -765,7 +747,7 @@ def cleanup_database_records(
         
         # Delete manifests
         execute_db_query(
-            namespace, db_pod, database, user,
+            namespace, db_pod, "costonprem_koku", "koku_user",
             f"DELETE FROM reporting_common_costusagereportmanifest WHERE cluster_id = '{cluster_id}'"
         )
         
@@ -780,57 +762,37 @@ def cleanup_e2e_sources(
     sources_api_url: str,
     org_id: str,
     prefix: str = "e2e-source-",
-    rh_identity_header: Optional[str] = None,
-    container: str = "sources-listener",
 ) -> int:
     """Clean up E2E test sources matching a prefix.
     
-    Args:
-        namespace: Kubernetes namespace
-        listener_pod: Pod name for executing curl commands
-        sources_api_url: Sources API URL
-        org_id: Organization ID (used for x-rh-sources-org-id header if no rh_identity_header)
-        prefix: Source name prefix to match for deletion
-        rh_identity_header: Optional X-Rh-Identity header (if None, uses x-rh-sources-org-id)
-        container: Container name in the pod
-    
-    Returns:
-        Number of sources deleted.
+    Returns number of sources deleted.
     """
     deleted = 0
     
     try:
-        # Build headers based on what's provided
-        headers = {"Content-Type": "application/json"}
-        if rh_identity_header:
-            headers["X-Rh-Identity"] = rh_identity_header
-        else:
-            headers["x-rh-sources-org-id"] = org_id
-        
-        session = create_pod_session(
-            namespace=namespace,
-            pod=listener_pod,
-            container=container,
-            headers=headers,
+        result = exec_in_pod(
+            namespace,
+            listener_pod,
+            [
+                "curl", "-s", f"{sources_api_url}/sources",
+                "-H", "Content-Type: application/json",
+                "-H", f"x-rh-sources-org-id: {org_id}",
+            ],
+            container="sources-listener",
         )
         
-        response = session.get(f"{sources_api_url}/sources")
-        if not response.ok:
+        if not result:
             return 0
         
-        sources = response.json()
+        sources = json.loads(result)
         for source in sources.get("data", []):
             source_name = source.get("name", "")
             source_id = source.get("id")
             
             if source_id and source_name.startswith(prefix):
-                try:
-                    del_response = session.delete(f"{sources_api_url}/sources/{source_id}")
-                    if del_response.status_code in (200, 204, 404):
-                        deleted += 1
-                        time.sleep(1)  # Brief pause between deletions
-                except requests.RequestException:
-                    pass
+                if delete_source(namespace, listener_pod, sources_api_url, source_id, org_id):
+                    deleted += 1
+                    time.sleep(1)  # Brief pause between deletions
     except Exception:
         pass
     

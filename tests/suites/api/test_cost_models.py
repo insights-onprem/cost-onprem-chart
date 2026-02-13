@@ -13,8 +13,9 @@ API Endpoint: /api/cost-management/v1/cost-models/
 
 Note: This is a SaaS parity feature - no Jira epic currently exists for on-prem.
 
-Status: VALIDATED (2026-02-06)
+Status: VALIDATED (2026-02-13)
 - All 6 tests pass against live cluster
+- Cost models can be created without source_uuids (empty sources list)
 - Endpoint exists at /api/cost-management/v1/cost-models/
 - CRUD operations work as expected
 """
@@ -112,6 +113,9 @@ class TestCostModelCRUD:
     """Test cost model CRUD operations.
     
     Note: These tests create/modify data. They should clean up after themselves.
+    
+    Cost models can be created without source_uuids - they will have an empty
+    sources list until sources are assigned.
     """
 
     @pytest.fixture
@@ -141,10 +145,12 @@ class TestCostModelCRUD:
         - POST with valid payload returns 201
         - Response contains created cost model with UUID
         """
+        # Note: Don't follow redirects to avoid POST->GET conversion
         response = authenticated_session.post(
             f"{gateway_url}/cost-management/v1/cost-models/",
             json=sample_cost_model_payload,
             timeout=30,
+            allow_redirects=False,
         )
         
         # Note: If this fails with 400, the payload structure may need adjustment
