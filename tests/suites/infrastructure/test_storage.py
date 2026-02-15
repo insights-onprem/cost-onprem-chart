@@ -97,7 +97,7 @@ def get_s3_credentials(namespace: str) -> dict:
         "cost-onprem-storage-credentials",
         f"{namespace}-storage-credentials",
         "koku-storage-credentials",
-        "cost-onprem-odf-credentials",
+        "cost-onprem-object-storage-credentials",
     ]
     
     for secret_name in secret_patterns:

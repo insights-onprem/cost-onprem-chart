@@ -307,7 +307,7 @@ def s3_config(cluster_config: ClusterConfig) -> Optional[S3Config]:
         f"{cluster_config.namespace}-storage-credentials",  # Namespace-based
         "cost-onprem-storage-credentials",  # Default helm release name
         "koku-storage-credentials",  # Legacy name
-        f"{cluster_config.helm_release_name}-odf-credentials",  # ODF credentials
+        f"{cluster_config.helm_release_name}-object-storage-credentials",  # Object storage credentials
     ]
     
     access_key = None

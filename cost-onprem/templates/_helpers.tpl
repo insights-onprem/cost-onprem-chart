@@ -324,7 +324,7 @@ Returns the storage class name if defined, empty string otherwise
 {{- end }}
 
 {{/*
-Get default storage class for OpenShift ODF
+Get default storage class for OpenShift
 */}}
 {{- define "cost-onprem.storage.getPlatformDefault" -}}
 ocs-storagecluster-ceph-rbd
@@ -451,83 +451,76 @@ valkey
 {{- end }}
 
 {{/*
-Storage endpoint (ODF endpoint)
-Requires: ODF (OpenShift Data Foundation) with NooBaa
+Resolve object storage config from .Values.objectStorage.
+Returns a dict with keys: endpoint, port, useSSL, existingSecret, s3Region
+*/}}
+{{- define "cost-onprem.storage.config" -}}
+  {{- $os := dict "endpoint" "" "port" 443 "useSSL" true "existingSecret" "" "s3Region" "onprem" -}}
+  {{- if .Values.objectStorage -}}
+    {{- if and .Values.objectStorage.endpoint (ne .Values.objectStorage.endpoint "") -}}
+      {{- $_ := set $os "endpoint" .Values.objectStorage.endpoint -}}
+    {{- end -}}
+    {{- if .Values.objectStorage.port -}}
+      {{- $_ := set $os "port" .Values.objectStorage.port -}}
+    {{- end -}}
+    {{- if hasKey .Values.objectStorage "useSSL" -}}
+      {{- $_ := set $os "useSSL" .Values.objectStorage.useSSL -}}
+    {{- end -}}
+    {{- if and .Values.objectStorage.existingSecret (ne .Values.objectStorage.existingSecret "") -}}
+      {{- $_ := set $os "existingSecret" .Values.objectStorage.existingSecret -}}
+    {{- end -}}
+    {{- if and .Values.objectStorage.s3 .Values.objectStorage.s3.region -}}
+      {{- $_ := set $os "s3Region" .Values.objectStorage.s3.region -}}
+    {{- end -}}
+  {{- end -}}
+  {{- $os | toJson -}}
+{{- end }}
+
+{{/*
+Storage endpoint (S3-compatible)
+Reads from objectStorage.endpoint.
+Must be set in values.yaml or via --set.
+The install script auto-populates this when using automated deployment.
 */}}
 {{- define "cost-onprem.storage.endpoint" -}}
-{{- /* 1. Check for explicit override */ -}}
-{{- if and .Values.odf .Values.odf.endpoint -}}
-{{- .Values.odf.endpoint -}}
+{{- $cfg := include "cost-onprem.storage.config" . | fromJson -}}
+{{- if ne $cfg.endpoint "" -}}
+{{- $cfg.endpoint -}}
 {{- else -}}
-  {{- /* 2. Discover ODF S3 endpoint from NooBaa CRD */ -}}
-  {{- $noobaaList := lookup "noobaa.io/v1alpha1" "NooBaa" "" "" -}}
-  {{- if and $noobaaList $noobaaList.items (gt (len $noobaaList.items) 0) -}}
-    {{- /* ODF detected - discover S3 endpoint from NooBaa CRD */ -}}
-    {{- $s3Endpoint := "" -}}
-    {{- range $noobaaList.items -}}
-      {{- if and .status .status.services .status.services.serviceS3 .status.services.serviceS3.internalDNS -}}
-        {{- $internalDNS := index .status.services.serviceS3.internalDNS 0 -}}
-        {{- if $internalDNS -}}
-          {{- $serviceName := regexReplaceAll "https://" $internalDNS "" -}}
-          {{- $serviceName = regexReplaceAll ":443" $serviceName "" -}}
-          {{- if not (hasSuffix ".cluster.local" $serviceName) -}}
-            {{- $serviceName = printf "%s.cluster.local" $serviceName -}}
-          {{- end -}}
-          {{- $s3Endpoint = $serviceName -}}
-          {{- break -}}
-        {{- end -}}
-      {{- end -}}
-    {{- end -}}
-    {{- if $s3Endpoint -}}
-{{- $s3Endpoint -}}
-    {{- else -}}
-      {{- fail "ODF detected but unable to discover S3 endpoint from NooBaa CRD. Please specify 'odf.endpoint' in values.yaml" -}}
-    {{- end -}}
-  {{- else -}}
-    {{- /* ODF not detected - fail with helpful error */ -}}
-    {{- fail "ODF (OpenShift Data Foundation) not detected. This chart requires ODF with NooBaa for S3 storage. Please either install ODF or specify 'odf.endpoint' in values.yaml" -}}
-  {{- end -}}
+  {{- fail "S3 endpoint not configured. Set 'objectStorage.endpoint' in values.yaml or use install-helm-chart.sh for auto-detection." -}}
 {{- end -}}
 {{- end }}
 
 {{/*
-Storage port (ODF S3 port)
+Storage port (S3 port)
 */}}
 {{- define "cost-onprem.storage.port" -}}
-{{- if and .Values.odf .Values.odf.port -}}
-{{- .Values.odf.port -}}
-{{- else -}}
-443
-{{- end -}}
+{{- $cfg := include "cost-onprem.storage.config" . | fromJson -}}
+{{- $cfg.port -}}
 {{- end }}
 
 {{/*
-Storage endpoint with protocol and port for S3 connections
-This helper constructs the full S3 endpoint URL including protocol and port.
-Uses .Values.odf.useSSL (set by install script) to determine protocol.
-No lookup() calls - relies on values passed via --set flags.
+Storage endpoint with protocol and port for S3 connections.
+Constructs the full S3 endpoint URL including protocol and port.
 
-Returns:
-  - ODF (useSSL=true):  https://s3.openshift-storage.svc:443
+Returns examples:
+  - HTTPS (useSSL=true):  https://s3.openshift-storage.svc:443
+  - HTTP (useSSL=false):  http://minio.minio-test.svc.cluster.local
 */}}
 {{- define "cost-onprem.storage.endpointWithProtocol" -}}
 {{- $endpoint := include "cost-onprem.storage.endpoint" . -}}
 {{- $port := include "cost-onprem.storage.port" . -}}
-{{- $useSSL := false -}}
-
-{{- /* Determine protocol based on .Values.odf.useSSL (passed by install script) */ -}}
-{{- if and .Values.odf (hasKey .Values.odf "useSSL") -}}
-  {{- $useSSL = .Values.odf.useSSL -}}
-{{- end -}}
+{{- $cfg := include "cost-onprem.storage.config" . | fromJson -}}
+{{- $useSSL := $cfg.useSSL -}}
 
 {{- if $useSSL -}}
-  {{- if eq $port "443" -}}
+  {{- if eq (toString $port) "443" -}}
 https://{{ $endpoint }}
   {{- else -}}
 https://{{ $endpoint }}:{{ $port }}
   {{- end -}}
 {{- else -}}
-  {{- if eq $port "80" -}}
+  {{- if eq (toString $port) "80" -}}
 http://{{ $endpoint }}
   {{- else -}}
 http://{{ $endpoint }}:{{ $port }}
@@ -560,24 +553,38 @@ ROS (Resource Optimization Service) data bucket name
 Storage use SSL flag
 */}}
 {{- define "cost-onprem.storage.useSSL" -}}
-{{- if ne .Values.odf.useSSL nil -}}
-{{- .Values.odf.useSSL -}}
+{{- $cfg := include "cost-onprem.storage.config" . | fromJson -}}
+{{- $cfg.useSSL -}}
+{{- end }}
+
+{{/*
+S3 region for signature generation
+*/}}
+{{- define "cost-onprem.storage.s3Region" -}}
+{{- $cfg := include "cost-onprem.storage.config" . | fromJson -}}
+{{- $cfg.s3Region -}}
+{{- end }}
+
+{{/*
+Storage credentials secret name.
+Uses existingSecret if set, otherwise generates '<release>-storage-credentials'.
+*/}}
+{{- define "cost-onprem.storage.secretName" -}}
+{{- $cfg := include "cost-onprem.storage.config" . | fromJson -}}
+{{- if ne $cfg.existingSecret "" -}}
+{{- $cfg.existingSecret -}}
 {{- else -}}
-  {{- /* Auto-detect based on ODF NooBaa CRD */ -}}
-  {{- $noobaaList := lookup "noobaa.io/v1alpha1" "NooBaa" "" "" -}}
-  {{- if and $noobaaList $noobaaList.items (gt (len $noobaaList.items) 0) -}}
-true
-  {{- else -}}
-false
-  {{- end -}}
+{{- printf "%s-storage-credentials" (include "cost-onprem.fullname" .) -}}
 {{- end -}}
 {{- end }}
 
 {{/*
-Storage credentials secret name
+Check if user provided an existing secret for storage credentials.
+Returns "true" or "false" as string.
 */}}
-{{- define "cost-onprem.storage.secretName" -}}
-{{- printf "%s-storage-credentials" (include "cost-onprem.fullname" .) -}}
+{{- define "cost-onprem.storage.hasExistingSecret" -}}
+{{- $cfg := include "cost-onprem.storage.config" . | fromJson -}}
+{{- if ne $cfg.existingSecret "" -}}true{{- else -}}false{{- end -}}
 {{- end }}
 
 {{/*

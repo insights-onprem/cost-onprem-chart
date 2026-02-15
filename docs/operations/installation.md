@@ -97,7 +97,7 @@ The script deploys a unified chart containing all components:
 **Features:**
 - ✅ Two-phase deployment (infrastructure first, then application)
 - ✅ Automatic secret creation (Django, Sources, S3 credentials)
-- ✅ Auto-discovers ODF S3 credentials
+- ✅ Auto-discovers S3 credentials (OBC, NooBaa, MinIO)
 - ✅ OpenShift platform verification
 - ✅ Automatic upgrade detection
 - ✅ Perfect for CI/CD pipelines
@@ -187,32 +187,55 @@ helm install cost-onprem ./cost-onprem \
 
 ## OpenShift Prerequisites
 
-### 1. OpenShift Data Foundation (ODF)
+### 1. S3-Compatible Object Storage
 
-ODF must be installed and operational:
+The chart requires S3-compatible object storage. ODF is **not required** — any S3 provider works. For full configuration details, see the [Storage Configuration](configuration.md#storage-configuration) section.
+
+**Supported backends:**
+
+| Backend | Use Case | Auto-Detected |
+|---------|----------|---------------|
+| AWS S3 | Production (disconnected AWS) | No — configure in `values.yaml` |
+| Direct Ceph RGW (ODF) | Production (OpenShift with ODF) | Yes — via OBC |
+| MinIO | Development/Testing | Yes — via `MINIO_ENDPOINT` |
+| NooBaa (ODF) | Fallback only | Yes — not recommended |
+
+Choose your path:
+
+#### Path A: Manual S3 Configuration (AWS S3 or any provider)
+
+Pre-create buckets, create a credentials secret, and configure `values.yaml`:
 
 ```bash
-# Verify ODF installation
-oc get noobaa -n openshift-storage
-oc get storagecluster -n openshift-storage
+# 1. Create namespace
+kubectl create namespace cost-onprem
 
-# Check S3 service availability
-oc get route s3 -n openshift-storage
+# 2. Create credentials secret
+kubectl create secret generic my-s3-credentials \
+  --namespace=cost-onprem \
+  --from-literal=access-key=<YOUR_ACCESS_KEY> \
+  --from-literal=secret-key=<YOUR_SECRET_KEY>
 ```
 
-**ODF endpoints:**
-- Internal: `s3.openshift-storage.svc.cluster.local:443`
-- External: Check routes in `openshift-storage` namespace
+```yaml
+# 3. In your values.yaml:
+objectStorage:
+  endpoint: "s3.us-east-1.amazonaws.com"  # Your S3 endpoint
+  port: 443
+  useSSL: true
+  existingSecret: "my-s3-credentials"
+  s3:
+    region: "us-east-1"
+```
 
-**Storage Class Requirement:**
+The install script detects the pre-configured endpoint and skips all S3 auto-detection.
 
-⚠️ **Important**: Use **Direct Ceph RGW** (`ocs-storagecluster-ceph-rgw`) instead of NooBaa (`ocs-storagecluster-ceph-rbd`) for strong consistency. NooBaa has eventual consistency issues that can cause ROS processing failures with 403 errors.
+#### Path B: ODF with Direct Ceph RGW (OBC auto-detection)
+
+Create an ObjectBucketClaim and let the install script handle the rest:
 
 ```bash
-# Verify Ceph RGW StorageClass is available
-oc get storageclass ocs-storagecluster-ceph-rgw
-
-# Create ObjectBucketClaim (OBC) for Direct Ceph RGW (Recommended)
+# Create OBC for Direct Ceph RGW
 cat <<EOF | oc apply -f -
 apiVersion: objectbucket.io/v1alpha1
 kind: ObjectBucketClaim
@@ -224,141 +247,55 @@ spec:
   storageClassName: ocs-storagecluster-ceph-rgw
 EOF
 
-# Wait for OBC to provision
 oc wait --for=condition=Ready obc/ros-data-ceph -n cost-onprem --timeout=5m
 ```
 
-**Storage Class Selection:**
-- ✅ **Direct Ceph RGW**: `ocs-storagecluster-ceph-rgw` (recommended for ROS)
-- ⚠️ **NooBaa**: `ocs-storagecluster-ceph-rbd` (eventual consistency issues)
+The install script automatically detects the OBC, extracts configuration (endpoint, credentials, bucket name), and passes it to Helm. No `values.yaml` changes needed.
 
-**OBC Auto-Detection**: The installation script automatically detects ObjectBucketClaims, extracts configuration (bucket name, endpoint, credentials), and configures the Helm deployment. No manual credential management needed when using OBC.
+> **Note**: Use Direct Ceph RGW (`ocs-storagecluster-ceph-rgw`) over NooBaa (`ocs-storagecluster-ceph-rbd`). NooBaa's eventual consistency causes 403 errors when reading freshly uploaded files.
 
-### 2. ODF S3 Credentials Secret (Alternative to OBC)
-
-Create credentials secret in deployment namespace:
+#### Path C: MinIO (development/testing only)
 
 ```bash
-# Create secret with ODF S3 credentials
-kubectl create secret generic cost-onprem-odf-credentials \
+# Deploy MinIO
+./scripts/deploy-minio-test.sh cost-onprem
+
+# Install with MinIO
+MINIO_ENDPOINT=http://minio.cost-onprem.svc.cluster.local:80 \
+  ./scripts/install-helm-chart.sh --namespace cost-onprem
+```
+
+The script creates credentials, buckets, and passes `objectStorage.*` values to Helm.
+
+See [MinIO Development Setup Guide](../development/ocp-dev-setup-minio.md) for details.
+
+### 2. Credentials and Secret Management
+
+**Security Best Practices:**
+- Use dedicated service accounts (not admin credentials)
+- Rotate credentials regularly
+- Use external secret management (Vault, Sealed Secrets) where possible
+- Use least-privilege access (specific buckets only)
+- Never commit credentials to version control
+
+**External Secret Management Example:**
+
+```bash
+# Sealed Secrets
+kubectl create secret generic my-s3-credentials \
   --namespace=cost-onprem \
-  --from-literal=access-key=<your-access-key> \
-  --from-literal=secret-key=<your-secret-key>
-
-# Verify secret
-kubectl get secret cost-onprem-odf-credentials -n cost-onprem
-```
-
-### Getting ODF Credentials
-
-#### Method 1: OpenShift Console (Recommended)
-
-1. Navigate to **Storage** → **Object Storage**
-2. Create or select bucket (e.g., `ros-data`)
-3. Go to **Access Keys** tab
-4. Click **Create Access Key**
-5. **Important**: Copy both keys immediately (secret key shown only once)
-
-#### Method 2: NooBaa CLI
-
-```bash
-# Install NooBaa CLI
-curl -LO https://github.com/noobaa/noobaa-operator/releases/download/v5.13.0/noobaa-linux
-chmod +x noobaa-linux
-sudo mv noobaa-linux /usr/local/bin/noobaa
-
-# Create account and bucket
-noobaa account create ros-account -n openshift-storage
-noobaa bucket create ros-data -n openshift-storage
-noobaa account attach ros-account --bucket ros-data -n openshift-storage
-
-# Get credentials
-noobaa account show ros-account -n openshift-storage
-```
-
-#### Method 3: Using Admin Credentials (Not Recommended)
-
-```bash
-# Get admin credentials from noobaa-admin secret
-kubectl get secret noobaa-admin -n openshift-storage \
-  -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d
-
-kubectl get secret noobaa-admin -n openshift-storage \
-  -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d
-
-# ⚠️ Warning: These are admin credentials with full access
-```
-
-#### Method 4: External Secret Management
-
-```bash
-# Example with Vault
-vault kv get -field=access_key secret/odf/ros-credentials
-vault kv get -field=secret_key secret/odf/ros-credentials
-
-# Example with Sealed Secrets
-kubectl create secret generic cost-onprem-odf-credentials \
   --from-literal=access-key=<key> \
   --from-literal=secret-key=<secret> \
   --dry-run=client -o yaml | \
   kubeseal -o yaml > sealed-secret.yaml
 ```
 
-**Security Best Practices:**
-- ✅ Use dedicated service accounts (not admin credentials)
-- ✅ Rotate credentials regularly
-- ✅ Store in external secret management (Vault, Sealed Secrets)
-- ✅ Use least-privilege access (specific buckets only)
-- ❌ Never commit credentials to version control
-
-### 3. Using MinIO Instead of ODF (Development/Testing Only)
-
-For development and testing on OCP clusters without ODF, you can use a standalone
-MinIO instance. This avoids the resource overhead of ODF (which requires 3+ nodes,
-30GB+ block devices, and the ODF operator).
-
-> **Warning**: MinIO is not supported for production deployments. Use ODF for
-> production environments.
-
-**Step 1: Deploy MinIO**
-
-```bash
-# Deploy MinIO into the cost-onprem namespace
-./scripts/deploy-minio-test.sh cost-onprem
-```
-
-This creates:
-- A MinIO Deployment (single replica, 512Mi memory)
-- A Service on port 80 (forwarding to MinIO's container port 9000)
-- A `minio-credentials` secret with access/secret keys
-- A PersistentVolumeClaim (10Gi, uses default StorageClass)
-
-**Step 2: Install the chart with `MINIO_ENDPOINT`**
-
-```bash
-MINIO_ENDPOINT=http://minio.cost-onprem.svc.cluster.local \
-  ./scripts/install-helm-chart.sh
-```
-
-The install script automatically:
-- Detects the `minio-credentials` secret and creates `cost-onprem-storage-credentials`
-- Sets `odf.endpoint`, `odf.port=80`, and `odf.useSSL=false` for the Helm chart
-- Creates the required S3 buckets via `mc`
-
-**MinIO Resource Requirements:**
-
-| Resource | Request | Limit |
-|----------|---------|-------|
-| CPU | 250m | 500m |
-| Memory | 512Mi | 1Gi |
-| Storage | 10Gi PVC | - |
-
-### 4. Namespace Permissions
+### 3. Namespace Permissions
 
 Ensure you have permissions to:
 - Create secrets in target namespace
 - Deploy Helm charts
-- Access ODF resources (or MinIO for dev)
+- Access S3 storage resources
 - Create routes (OpenShift)
 
 ```bash
@@ -371,8 +308,8 @@ oc auth can-i create routes -n cost-onprem
 ### 5. Resource Requirements
 
 **Single Node OpenShift (SNO):**
-- SNO cluster with ODF installed
-- 30GB+ block devices for ODF
+- SNO cluster with S3-compatible storage (ODF, MinIO, or external S3)
+- 30GB+ block devices for persistent volumes
 - Additional 6GB RAM for Cost Management On-Premise workloads
 - Additional 2 CPU cores
 
@@ -582,9 +519,9 @@ kubectl exec -it deployment/cost-onprem-ros-api -n cost-onprem -- \
 kubectl exec -it statefulset/cost-onprem-kafka -n cost-onprem -- \
   kafka-topics.sh --list --bootstrap-server localhost:29092
 
-# Test ODF access
+# Test S3 access (endpoint depends on your storage backend)
 oc rsh -n cost-onprem deployment/cost-onprem-ingress -- \
-  aws s3 ls --endpoint-url https://s3.openshift-storage.svc.cluster.local
+  aws s3 ls --endpoint-url https://<your-s3-endpoint>
 ```
 
 ---

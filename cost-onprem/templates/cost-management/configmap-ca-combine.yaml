@@ -37,7 +37,7 @@ data:
         echo "" >> /tmp/combined-ca.crt
     fi
 
-    # Add OpenShift Service CA (signs *.svc certificates like s3.openshift-storage.svc)
+    # Add OpenShift Service CA (signs *.svc certificates for in-cluster S3 endpoints)
     if [ -f /ca-source/service-ca.crt ] && [ -s /ca-source/service-ca.crt ]; then
         echo "📋 Adding OpenShift Service CA..."
         cat /ca-source/service-ca.crt >> /tmp/combined-ca.crt

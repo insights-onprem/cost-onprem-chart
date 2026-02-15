@@ -1,23 +1,23 @@
 # OCP Development Setup with MinIO
 
 Guide for setting up a development environment on OpenShift (OCP) using MinIO
-instead of ODF for S3-compatible object storage.
+instead of production S3 storage for S3-compatible object storage.
 
 > **This setup is for development and testing only.** Production deployments
-> must use ODF (OpenShift Data Foundation).
+> should use dedicated S3 storage (AWS S3, ODF with Direct Ceph RGW, or another S3 provider).
 
 ## When to Use This
 
 Use MinIO when:
 
-- Your OCP cluster does not have ODF installed
+- Your OCP cluster does not have dedicated object storage
 - You are on a Single Node OpenShift (SNO) or resource-constrained cluster
-- You want to avoid ODF's multi-node and storage requirements
+- You want a lightweight S3-compatible backend without extra operators
 - You are developing or testing chart changes locally
 
 ## Cluster Requirements
 
-### Minimum Resources (with MinIO instead of ODF)
+### Minimum Resources (with MinIO)
 
 | Resource | Requirement |
 |----------|-------------|
@@ -38,7 +38,7 @@ The following must be deployed **before** the chart:
 |-----------|---------------|-------|
 | **Kafka (Strimzi)** | `./scripts/deploy-strimzi.sh` | Required for event streaming |
 | **Keycloak (RHBK)** | `./scripts/deploy-rhbk.sh` | Required for JWT authentication |
-| **MinIO** | `./scripts/deploy-minio-test.sh cost-onprem` | S3 storage (replaces ODF) |
+| **MinIO** | `./scripts/deploy-minio-test.sh cost-onprem` | S3 storage for dev/test |
 
 ## Step-by-Step Setup
 
@@ -66,7 +66,7 @@ The install script detects `MINIO_ENDPOINT` and automatically:
 
 - Locates the `minio-credentials` secret (by parsing the namespace from the FQDN)
 - Creates the `cost-onprem-storage-credentials` secret used by the chart
-- Passes `odf.endpoint`, `odf.port=80`, `odf.useSSL=false` to Helm
+- Passes `objectStorage.endpoint`, `objectStorage.port=80`, `objectStorage.useSSL=false` to Helm
 - Creates the S3 buckets (names read from `values.yaml`: `insights-upload-perma`, `koku-bucket`, `ros-data`)
 
 ### 3. Verify the deployment
@@ -91,14 +91,14 @@ NAMESPACE=cost-onprem ./scripts/run-pytest.sh
 
 ## How It Works
 
-The chart itself has no MinIO-specific configuration. The existing `odf.*` values
+The chart itself has no MinIO-specific configuration. The `objectStorage.*` values
 in `values.yaml` are generic S3 settings:
 
 | Helm Value | Set By Install Script | Effect |
 |------------|----------------------|--------|
-| `odf.endpoint` | `minio.cost-onprem.svc.cluster.local` | S3 hostname for all components |
-| `odf.port` | `80` | Service port (MinIO Service maps 80 → 9000) |
-| `odf.useSSL` | `false` | Use HTTP instead of HTTPS |
+| `objectStorage.endpoint` | `minio.cost-onprem.svc.cluster.local` | S3 hostname for all components |
+| `objectStorage.port` | `80` | Service port (MinIO Service maps 80 → 9000) |
+| `objectStorage.useSSL` | `false` | Use HTTP instead of HTTPS |
 
 These values flow into the chart's template helpers:
 
@@ -149,7 +149,7 @@ kubectl get secret cost-onprem-storage-credentials -n cost-onprem -o jsonpath='{
 
 Both should return the same access key.
 
-### "ODF not detected" error during helm install
+### "S3 endpoint not configured" error during helm install
 
 Make sure `MINIO_ENDPOINT` is set when running the install script:
 

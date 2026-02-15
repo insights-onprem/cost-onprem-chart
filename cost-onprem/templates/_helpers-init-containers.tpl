@@ -48,7 +48,8 @@ Usage: {{ include "cost-onprem.initContainer.waitForKafka" . | nindent 8 }}
 {{- end -}}
 
 {{/*
-Wait for Storage (ODF) init container
+Wait for S3 storage init container
+Checks TCP reachability of the configured S3 endpoint before the main container starts.
 Usage: {{ include "cost-onprem.initContainer.waitForStorage" . | nindent 8 }}
 */}}
 {{- define "cost-onprem.initContainer.waitForStorage" -}}
@@ -59,12 +60,12 @@ Usage: {{ include "cost-onprem.initContainer.waitForStorage" . | nindent 8 }}
   command: ['bash', '-c']
   args:
     - |
-      echo "Waiting for ODF S3 endpoint at {{ include "cost-onprem.storage.endpoint" . }}:{{ include "cost-onprem.storage.port" . }}..."
+      echo "Waiting for S3 endpoint at {{ include "cost-onprem.storage.endpoint" . }}:{{ include "cost-onprem.storage.port" . }}..."
       until timeout 3 bash -c "echo > /dev/tcp/{{ include "cost-onprem.storage.endpoint" . }}/{{ include "cost-onprem.storage.port" . }}" 2>/dev/null; do
-        echo "ODF S3 endpoint not ready yet, retrying in 5 seconds..."
+        echo "S3 endpoint not ready yet, retrying in 5 seconds..."
         sleep 5
       done
-      echo "ODF S3 endpoint is ready"
+      echo "S3 endpoint is ready"
 {{- end -}}
 
 {{/*

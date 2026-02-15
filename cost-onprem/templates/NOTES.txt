@@ -63,7 +63,11 @@ For authentication setup details:
 
 💾 STORAGE
 
-OpenShift Data Foundation (ODF):
+S3 Object Storage:
+  Endpoint: {{ include "cost-onprem.storage.endpoint" . }}:{{ include "cost-onprem.storage.port" . }}
+  Credentials: {{ include "cost-onprem.storage.secretName" . }}
+
+Persistent Volumes:
   oc get pvc -n {{ $namespace }}
 
 Storage Classes:

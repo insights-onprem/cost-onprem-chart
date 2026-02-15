@@ -466,75 +466,75 @@ create_storage_credentials_secret() {
         echo_warning "MinIO credentials secret not found in $minio_ns or $NAMESPACE, falling back to default logic..."
     fi
 
-    # OpenShift-only deployment (supports both ODF and MinIO)
-    # Try ODF first, fall back to MinIO for testing/CI environments
-    local odf_secret_name="cost-onprem-odf-credentials"
-    
-    if kubectl get secret "$odf_secret_name" -n "$NAMESPACE" >/dev/null 2>&1; then
-        # Scenario 1: ODF credentials secret exists (created by CI or manually)
-        echo_info "Found existing ODF credentials secret: $odf_secret_name"
-        echo_info "Creating storage credentials secret from ODF credentials..."
-        local access_key=$(kubectl get secret "$odf_secret_name" -n "$NAMESPACE" -o jsonpath='{.data.access-key}')
-        local secret_key=$(kubectl get secret "$odf_secret_name" -n "$NAMESPACE" -o jsonpath='{.data.secret-key}')
+    # OpenShift-only deployment: discover S3 credentials from known sources
+    # Priority: existing S3 credentials secret > NooBaa admin > MinIO > fail
+    local s3_creds_secret="cost-onprem-s3-credentials"
+
+    if kubectl get secret "$s3_creds_secret" -n "$NAMESPACE" >/dev/null 2>&1; then
+        # Scenario 1: S3 credentials secret exists (created manually or by prior run)
+        echo_info "Found existing S3 credentials secret: $s3_creds_secret"
+        echo_info "Creating storage credentials from existing secret..."
+        local access_key=$(kubectl get secret "$s3_creds_secret" -n "$NAMESPACE" -o jsonpath='{.data.access-key}')
+        local secret_key=$(kubectl get secret "$s3_creds_secret" -n "$NAMESPACE" -o jsonpath='{.data.secret-key}')
         kubectl create secret generic "$secret_name" \
             --namespace="$NAMESPACE" \
             --from-literal=access-key="$(echo "$access_key" | base64 -d)" \
             --from-literal=secret-key="$(echo "$secret_key" | base64 -d)"
-        echo_success "Storage credentials secret created from ODF credentials"
-        echo_info "  Storage backend: ODF (OpenShift Data Foundation)"
+        echo_success "Storage credentials created from $s3_creds_secret"
     elif kubectl get secret noobaa-admin -n openshift-storage >/dev/null 2>&1; then
-        # Scenario 2: NooBaa admin secret exists (production ODF deployment)
+        # Scenario 2: NooBaa admin secret exists (ODF deployment)
         echo_info "Found noobaa-admin secret in openshift-storage namespace"
-        echo_info "Extracting ODF credentials from NooBaa..."
+        echo_info "Extracting S3 credentials from NooBaa..."
 
         local access_key=$(kubectl get secret noobaa-admin -n openshift-storage -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)
         local secret_key=$(kubectl get secret noobaa-admin -n openshift-storage -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d)
 
-        # Create ODF credentials secret for reference
-        kubectl create secret generic "$odf_secret_name" \
+        # Cache S3 credentials for future runs
+        kubectl create secret generic "$s3_creds_secret" \
             --namespace="$NAMESPACE" \
             --from-literal=access-key="$access_key" \
             --from-literal=secret-key="$secret_key"
-        echo_success "Created ODF credentials secret from noobaa-admin"
+        echo_success "Cached S3 credentials from noobaa-admin"
 
         # Create storage credentials secret
         kubectl create secret generic "$secret_name" \
             --namespace="$NAMESPACE" \
             --from-literal=access-key="$access_key" \
             --from-literal=secret-key="$secret_key"
-        echo_success "Storage credentials secret created from noobaa-admin credentials"
-        echo_info "  Storage backend: ODF (OpenShift Data Foundation)"
+        echo_success "Storage credentials created from NooBaa"
+        echo_info "  Storage backend: NooBaa (via ODF)"
     elif kubectl get secret minio-credentials -n minio >/dev/null 2>&1; then
         # Scenario 3: MinIO credentials exist (testing/CI environment on OpenShift)
-        echo_info "ODF not detected, checking for MinIO deployment..."
+        echo_info "Checking for MinIO deployment..."
         echo_info "Found MinIO credentials secret in minio namespace"
-        echo_info "Creating storage credentials secret from MinIO credentials..."
-        
+
         local access_key=$(kubectl get secret minio-credentials -n minio -o jsonpath='{.data.access-key}')
         local secret_key=$(kubectl get secret minio-credentials -n minio -o jsonpath='{.data.secret-key}')
         kubectl create secret generic "$secret_name" \
             --namespace="$NAMESPACE" \
             --from-literal=access-key="$(echo "$access_key" | base64 -d)" \
             --from-literal=secret-key="$(echo "$secret_key" | base64 -d)"
-        echo_success "Storage credentials secret created from MinIO credentials"
-        echo_info "  Storage backend: MinIO (standalone on OpenShift)"
+        echo_success "Storage credentials created from MinIO"
+        echo_info "  Storage backend: MinIO"
     else
         # Scenario 4: No storage backend found - FAIL
-        echo_error "No storage backend detected!"
+        echo_error "No S3 storage credentials detected!"
         echo_error ""
-        echo_error "This chart requires either ODF (OpenShift Data Foundation) or MinIO for S3-compatible storage."
+        echo_error "This chart requires S3-compatible storage credentials."
         echo_error ""
         echo_info "Available options:"
         echo_info ""
-        echo_info "Option 1: Deploy with ODF (Production - recommended)"
-        echo_info "  - Ensure ODF operator is installed on your OpenShift cluster"
-        echo_info "  - The script will auto-discover credentials from: openshift-storage/noobaa-admin"
-        echo_info "  - Or manually create: kubectl create secret generic cost-onprem-odf-credentials \\"
+        echo_info "Option 1: Configure in values.yaml (production - recommended)"
+        echo_info "  - Set objectStorage.endpoint and objectStorage.existingSecret"
+        echo_info "  - Pre-create the secret with 'access-key' and 'secret-key' keys"
+        echo_info ""
+        echo_info "Option 2: Provide credentials manually"
+        echo_info "  kubectl create secret generic $s3_creds_secret \\"
         echo_info "      --namespace=$NAMESPACE \\"
         echo_info "      --from-literal=access-key=<your-access-key> \\"
         echo_info "      --from-literal=secret-key=<your-secret-key>"
         echo_info ""
-        echo_info "Option 2: Deploy with MinIO (Testing/CI only)"
+        echo_info "Option 3: Deploy with MinIO (Testing/CI only)"
         echo_info "  - First deploy MinIO: ./scripts/deploy-minio-test.sh minio"
         echo_info "  - Then re-run this installation script"
         echo_info ""
@@ -599,19 +599,18 @@ create_s3_buckets() {
         echo_info "  ✓ Using MinIO: $s3_url"
     elif kubectl get crd noobaas.noobaa.io >/dev/null 2>&1 && \
        kubectl get noobaa -n openshift-storage >/dev/null 2>&1; then
-        # ODF NooBaa detected
+        # NooBaa detected (ODF S3 backend)
         s3_url="https://s3.openshift-storage.svc:443"
         mc_insecure="--insecure"
-        echo_info "  ✓ Detected: ODF (NooBaa S3)"
+        echo_info "  ✓ Detected: NooBaa S3 (via ODF)"
     else
-        echo_error "Could not detect ODF storage backend"
-        echo_error "Checked for:"
-        echo_error "  - ODF NooBaa CRD in openshift-storage namespace"
+        echo_error "Could not detect S3 storage backend"
+        echo_error "Checked for: MINIO_ENDPOINT env var, NooBaa CRD in openshift-storage"
         echo_error ""
         echo_error "Solutions:"
-        echo_error "  1. Deploy ODF: Ensure OpenShift Data Foundation is properly deployed"
-        echo_error "  2. Manual override: Set MINIO_ENDPOINT environment variable"
-        echo_error "  3. Skip setup: Set SKIP_S3_SETUP=true for CI environments"
+        echo_error "  1. Configure objectStorage.endpoint in values.yaml (recommended)"
+        echo_error "  2. Set MINIO_ENDPOINT environment variable"
+        echo_error "  3. Set SKIP_S3_SETUP=true to skip bucket creation"
         exit 1
     fi
 
@@ -838,12 +837,17 @@ deploy_helm_chart() {
         echo_info "JWT authentication disabled (non-OpenShift platform)"
     fi
 
-    # Add external OBC configuration to Helm if detected in main()
-    if [ "$USING_EXTERNAL_OBC" = "true" ]; then
+    # S3 endpoint configuration for Helm:
+    # If user pre-configured S3 in values.yaml, skip all --set overrides
+    # (the values file already has the right config).
+    # Otherwise, auto-inject from OBC detection or MINIO_ENDPOINT.
+    if [ "$USER_S3_CONFIGURED" = "true" ]; then
+        echo_info "S3 configuration provided in values file — skipping Helm --set overrides"
+    elif [ "$USING_EXTERNAL_OBC" = "true" ]; then
         echo_info "Configuring Helm deployment for external OBC (Direct Ceph RGW)"
-        helm_cmd="$helm_cmd --set odf.endpoint=\"$EXTERNAL_OBC_ENDPOINT\""
-        helm_cmd="$helm_cmd --set odf.port=\"$EXTERNAL_OBC_PORT\""
-        helm_cmd="$helm_cmd --set odf.useExternalOBC=true"
+        helm_cmd="$helm_cmd --set objectStorage.endpoint=\"$EXTERNAL_OBC_ENDPOINT\""
+        helm_cmd="$helm_cmd --set objectStorage.port=\"$EXTERNAL_OBC_PORT\""
+        helm_cmd="$helm_cmd --set objectStorage.useSSL=true"
         helm_cmd="$helm_cmd --set ingress.storage.bucket=\"$EXTERNAL_OBC_BUCKET_NAME\""
 
         # Set bucket names for Koku and ROS (via standardized helpers in _helpers.tpl)
@@ -857,19 +861,31 @@ deploy_helm_chart() {
         echo_info "  Endpoint: https://$EXTERNAL_OBC_ENDPOINT:$EXTERNAL_OBC_PORT"
         echo_info "  Bucket: $EXTERNAL_OBC_BUCKET_NAME"
         echo_info "  Bucket configured for ingress, Koku, and ROS components"
-    fi
-
-    # Add MinIO S3 configuration if specified (for testing/dev with MinIO in OCP)
-    # This sets the generic odf.* values that chart templates actually read.
-    if [ -n "$MINIO_ENDPOINT" ]; then
+    elif [ -n "$MINIO_ENDPOINT" ]; then
+        # MinIO S3 configuration (for testing/dev with MinIO in OCP)
         local minio_host
         minio_host=$(parse_minio_host "$MINIO_ENDPOINT")
 
         echo_info "Configuring S3 endpoint for MinIO (dev/test)"
-        helm_cmd="$helm_cmd --set odf.endpoint=\"${minio_host}\""
-        helm_cmd="$helm_cmd --set odf.port=80"
-        helm_cmd="$helm_cmd --set odf.useSSL=false"
+        helm_cmd="$helm_cmd --set objectStorage.endpoint=\"${minio_host}\""
+        helm_cmd="$helm_cmd --set objectStorage.port=80"
+        helm_cmd="$helm_cmd --set objectStorage.useSSL=false"
         echo_success "✓ S3 endpoint configured: ${minio_host} (port 80, no SSL)"
+    elif kubectl get crd noobaas.noobaa.io >/dev/null 2>&1 && \
+         kubectl get noobaa -n openshift-storage >/dev/null 2>&1; then
+        # NooBaa fallback (ODF S3 backend)
+        echo_info "Configuring S3 endpoint for NooBaa (ODF)"
+        helm_cmd="$helm_cmd --set objectStorage.endpoint=\"s3.openshift-storage.svc\""
+        helm_cmd="$helm_cmd --set objectStorage.port=443"
+        helm_cmd="$helm_cmd --set objectStorage.useSSL=true"
+        echo_success "✓ S3 endpoint configured: s3.openshift-storage.svc (port 443, SSL)"
+    fi
+
+    # Tell Helm about the script-managed storage credentials secret so it
+    # skips rendering the placeholder secret template (avoids ownership conflict).
+    if [ -n "$STORAGE_CREDENTIALS_SECRET" ]; then
+        helm_cmd="$helm_cmd --set objectStorage.existingSecret=\"$STORAGE_CREDENTIALS_SECRET\""
+        echo_info "Storage credentials secret: $STORAGE_CREDENTIALS_SECRET (script-managed)"
     fi
 
     # Add additional Helm arguments passed to the script
@@ -1668,15 +1684,61 @@ main() {
         exit 1
     fi
 
+    # Check if the user has pre-configured S3 storage in their values file.
+    # When objectStorage.endpoint is set, the user manages their own S3
+    # infrastructure and the script skips all S3 auto-detection, credential
+    # creation, and bucket creation.
+    export USER_S3_CONFIGURED="false"
+    export USER_S3_EXISTING_SECRET=""
+    if [ -n "$VALUES_FILE" ] && [ -f "$VALUES_FILE" ] && command_exists yq; then
+        local user_endpoint
+        user_endpoint=$(yq '.objectStorage.endpoint // ""' "$VALUES_FILE" 2>/dev/null)
+        if [ -n "$user_endpoint" ]; then
+            USER_S3_CONFIGURED="true"
+            USER_S3_EXISTING_SECRET=$(yq '.objectStorage.existingSecret // ""' "$VALUES_FILE" 2>/dev/null)
+            echo_info "S3 storage pre-configured in values file:"
+            echo_info "  Endpoint: $user_endpoint"
+            echo_info "  Port: $(yq '.objectStorage.port // 443' "$VALUES_FILE" 2>/dev/null)"
+            echo_info "  SSL: $(yq '.objectStorage.useSSL // true' "$VALUES_FILE" 2>/dev/null)"
+            if [ -n "$USER_S3_EXISTING_SECRET" ]; then
+                echo_info "  Credentials Secret: $USER_S3_EXISTING_SECRET (user-managed)"
+            else
+                echo_info "  Credentials Secret: will be created by install script"
+            fi
+            echo_info "Skipping S3 auto-detection"
+        fi
+    fi
+
     # Detect external ObjectBucketClaim (OBC) for Direct Ceph RGW deployments
     # This must happen BEFORE creating storage credentials
+    # Skip if user has already configured S3 in values.yaml
     export USING_EXTERNAL_OBC="false"
-    if [ "$PLATFORM" = "openshift" ]; then
+    if [ "$USER_S3_CONFIGURED" = "false" ] && [ "$PLATFORM" = "openshift" ]; then
         if detect_external_obc "ros-data-ceph" "$NAMESPACE"; then
             USING_EXTERNAL_OBC="true"
             echo_info "Direct Ceph RGW deployment detected via external OBC"
             echo_info "  Storage credentials and bucket creation will be skipped"
         fi
+    fi
+
+    # Determine whether to skip storage credential and bucket creation:
+    #   - USER_S3_CONFIGURED=true + existingSecret set → skip credentials + buckets
+    #   - USER_S3_CONFIGURED=true + no existingSecret  → create credentials, skip buckets
+    #   - USING_EXTERNAL_OBC=true                      → skip credentials + buckets (OBC provides both)
+    #   - Otherwise                                    → auto-detect and create both
+    local skip_storage_credentials="false"
+    local skip_bucket_creation="false"
+
+    if [ "$USER_S3_CONFIGURED" = "true" ]; then
+        # User manages their S3 — always skip bucket creation
+        skip_bucket_creation="true"
+        if [ -n "$USER_S3_EXISTING_SECRET" ]; then
+            # User also manages their own credentials secret
+            skip_storage_credentials="true"
+        fi
+    elif [ "$USING_EXTERNAL_OBC" = "true" ]; then
+        skip_storage_credentials="true"
+        skip_bucket_creation="true"
     fi
 
     echo ""
@@ -1691,27 +1753,47 @@ main() {
         exit 1
     fi
 
-    # Create storage credentials secret (only if not using external OBC)
-    if [ "$USING_EXTERNAL_OBC" = "false" ]; then
+    # Create storage credentials secret
+    # Track the secret name so we can tell Helm about it via --set objectStorage.existingSecret
+    # This prevents Helm from trying to create a conflicting placeholder secret.
+    export STORAGE_CREDENTIALS_SECRET=""
+    if [ "$skip_storage_credentials" = "false" ]; then
         if ! create_storage_credentials_secret; then
             echo_error "Failed to create storage credentials. Cannot proceed with installation."
             exit 1
         fi
+        # Compute the same secret name used by create_storage_credentials_secret
+        local chart_name="cost-onprem"
+        local fullname
+        if [[ "$HELM_RELEASE_NAME" == *"$chart_name"* ]]; then
+            fullname="$HELM_RELEASE_NAME"
+        else
+            fullname="${HELM_RELEASE_NAME}-${chart_name}"
+        fi
+        STORAGE_CREDENTIALS_SECRET="${fullname}-storage-credentials"
     else
-        echo_info "Skipping storage credentials creation (using OBC credentials)"
+        if [ -n "$USER_S3_EXISTING_SECRET" ]; then
+            echo_info "Skipping storage credentials creation (using existing secret: $USER_S3_EXISTING_SECRET)"
+        else
+            echo_info "Skipping storage credentials creation (using OBC credentials)"
+        fi
     fi
 
     echo ""
     echo_success "✓ All required secrets created successfully"
     echo ""
 
-    # Create S3 buckets (only if not using external OBC)
-    if [ "$USING_EXTERNAL_OBC" = "false" ]; then
+    # Create S3 buckets
+    if [ "$skip_bucket_creation" = "false" ]; then
         if ! create_s3_buckets; then
             echo_warning "Failed to create S3 buckets. Data storage may not work correctly."
         fi
     else
-        echo_info "Skipping bucket creation (bucket provided by external OBC)"
+        if [ "$USER_S3_CONFIGURED" = "true" ]; then
+            echo_info "Skipping bucket creation (user-managed S3 storage)"
+        else
+            echo_info "Skipping bucket creation (bucket provided by external OBC)"
+        fi
     fi
 
     # Create UI secrets (cookie + OAuth client) - required before helm install
@@ -1848,13 +1930,22 @@ case "${1:-}" in
         echo "  KAFKA_BOOTSTRAP_SERVERS - Bootstrap servers for existing Kafka (skips verification)"
         echo "                            Example: my-kafka-bootstrap.kafka:9092"
         echo ""
-        echo "S3/ODF Configuration (for CI or custom storage):"
-        echo "  SKIP_S3_SETUP           - Skip S3 bucket creation entirely (default: false)"
-        echo "                            Set to 'true' for CI environments or external S3 management"
-        echo "  S3_ENDPOINT             - Manual S3 endpoint override (bypasses ODF detection)"
-        echo "                            Example: s3.test.example.com"
-        echo "  S3_ACCESS_KEY           - Manual S3 access key (used with S3_ENDPOINT)"
-        echo "  S3_SECRET_KEY           - Manual S3 secret key (used with S3_ENDPOINT)"
+        echo "S3 Storage Configuration:"
+        echo "  Option 1 (Recommended for production): Configure in values.yaml"
+        echo "    Set objectStorage.endpoint, objectStorage.port, objectStorage.useSSL,"
+        echo "    objectStorage.existingSecret in your values file."
+        echo "    The script skips all S3 auto-detection when objectStorage.endpoint is set."
+        echo ""
+        echo "  Option 2 (Automated): Let the script auto-detect"
+        echo "    MINIO_ENDPOINT        - MinIO endpoint (for dev/test with MinIO in OCP)"
+        echo "                            Example: http://minio.minio-test.svc.cluster.local:80"
+        echo "    (OBC auto-detection)  - Detects ObjectBucketClaim 'ros-data-ceph' automatically"
+        echo "    (NooBaa fallback)     - Falls back to NooBaa if available"
+        echo ""
+        echo "  Option 3 (Legacy): Environment variable overrides"
+        echo "    SKIP_S3_SETUP         - Skip S3 bucket creation entirely (default: false)"
+        echo "    S3_ACCESS_KEY         - Manual S3 access key for credential creation"
+        echo "    S3_SECRET_KEY         - Manual S3 secret key for credential creation"
         echo ""
         echo "Chart Source Options:"
         echo "  - Default: Downloads latest release from GitHub (recommended)"

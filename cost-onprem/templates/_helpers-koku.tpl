@@ -331,9 +331,9 @@ Common environment variables for Koku API and Celery
       name: {{ include "cost-onprem.storage.secretName" . }}
       key: secret-key
 # S3 Region for signature generation (required for S3v4 signatures)
-# NooBaa/MinIO don't use regions, but boto3 requires it for signature calculation
+# Most on-premise S3 backends don't use regions, but boto3 requires it for signature calculation
 - name: S3_REGION
-  value: {{ .Values.odf.s3.region | default "onprem" | quote }}
+  value: {{ include "cost-onprem.storage.s3Region" . | quote }}
 # AWS SDK configuration for S3v4 signatures
 - name: AWS_CONFIG_FILE
   value: /etc/aws/config

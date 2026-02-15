@@ -25,7 +25,7 @@ The deployment scripts provide flexible options for OpenShift:
 Ensure your cluster has adequate resources for the deployment:
 - **Memory**: At least 16GB RAM (24GB+ recommended)
 - **CPU**: 8+ cores
-- **Storage**: 150GB+ (ODF)
+- **Storage**: S3-compatible object storage (ODF, AWS S3, MinIO, or other)
 
 The deployment includes:
 - PostgreSQL databases (unified)
@@ -73,7 +73,7 @@ cd /path/to/cost-onprem-chart/scripts/
 The script will:
 - ✅ Download latest Helm chart release from GitHub
 - ✅ Deploy all services with OpenShift configuration
-- ✅ Configure ODF storage integration
+- ✅ Auto-detect and configure S3 storage
 - ✅ Run comprehensive health checks
 - ✅ Verify connectivity and authentication
 
@@ -164,7 +164,7 @@ NAMESPACE=cost-onprem ./scripts/run-pytest.sh --e2e
 The test will:
 - ✅ Create OCP provider via Koku Sources API
 - ✅ Generate test data with NISE
-- ✅ Upload data to ODF S3 bucket
+- ✅ Upload data to S3 bucket
 - ✅ Publish Kafka event for processing
 - ✅ Verify data processing in PostgreSQL
 - ✅ Validate cost calculations

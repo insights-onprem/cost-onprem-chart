@@ -20,9 +20,6 @@ global:
   # Cluster name - auto-detected if empty, but providing it skips 2 API lookups
   clusterName: ""  # Set by CI or leave empty for auto-detection
 
-  # Storage type for platform detection (overrides empty default in values.yaml)
-  storageType: "odf"
-
 # Explicit storage class names to avoid API lookups (optional but recommended for CI)
 # When provided, skips StorageClass list/get API calls (saves 2-4 lookups)
 # storageClassNames:
@@ -65,49 +62,29 @@ database:
     storage:
       size: "5Gi"
 
-# ODF (Production Storage - for OpenShift deployments)
-# Replaces MinIO on OpenShift
+# S3-Compatible Object Storage
+# ----------------------------
+# This chart requires S3-compatible storage. Options:
 #
-# RECOMMENDED APPROACH: Direct Ceph RGW (Required for Cost Management)
-# -----------------------------------------------------------------------
-# Cost Management requires strong read-after-write consistency for S3.
-# NooBaa's eventual consistency causes 403 errors when reading immediately after write.
-# Direct Ceph RGW provides strong consistency and is the REQUIRED storage backend.
+#   1. Manual (production): Set objectStorage.endpoint/port/useSSL/existingSecret
+#      and pre-create your credentials secret. The install script will skip
+#      all S3 auto-detection.
 #
-# To use Direct Ceph RGW (RECOMMENDED):
-# 1. Create an ObjectBucketClaim BEFORE running the install script:
+#   2. OBC auto-detection: Create an ObjectBucketClaim named "ros-data-ceph"
+#      in the target namespace. The install script auto-detects it and
+#      configures endpoints, credentials, and bucket names.
 #
-#    kubectl apply -f - <<EOF
-#    apiVersion: objectbucket.io/v1alpha1
-#    kind: ObjectBucketClaim
-#    metadata:
-#      name: ros-data-ceph
-#      namespace: cost-onprem
-#    spec:
-#      generateBucketName: ros-data-ceph
-#      storageClassName: ocs-storagecluster-ceph-rgw
-#    EOF
+#   3. MinIO (dev/test): Set MINIO_ENDPOINT env var before running the install
+#      script. See docs/development/ocp-dev-setup-minio.md.
 #
-# 2. The install script will auto-detect the OBC and:
-#    - Extract bucket name, endpoint, and credentials
-#    - Configure all components to use Direct Ceph RGW
-#    - Skip the bucket creation job (bucket managed by OBC)
+#   4. Leave empty: The install script attempts NooBaa auto-detection as fallback.
+#      WARNING: NooBaa's eventual consistency may cause data processing failures.
 #
-# FALLBACK: NooBaa (NOT RECOMMENDED for Cost Management)
-# -------------------------------------------------------
-# If no external OBC is detected, the chart falls back to NooBaa auto-detection.
-# WARNING: NooBaa's eventual consistency may cause data processing failures.
-#
-odf:
-  endpoint: ""  # Auto-detected: Ceph RGW (if OBC exists) or NooBaa (fallback)
+objectStorage:
+  endpoint: ""  # Set manually, or auto-detected by install script
   port: 443
   useSSL: true
-  bucket: "ros-data"  # Only used for NooBaa fallback
-
-  # External ObjectBucketClaim (OBC) configuration
-  # Set to true when using pre-created OBC for Direct Ceph RGW
-  # The install script auto-detects OBC named "ros-data-ceph" and sets this automatically
-  useExternalOBC: false  # Auto-set to true by install script when OBC is detected
+  existingSecret: ""  # Set to use a pre-existing credentials secret (skips secret creation)
 
 # JWT Authentication configuration (avoids Keycloak auto-discovery lookups)
 # Providing explicit Keycloak settings saves ~8 API lookups
