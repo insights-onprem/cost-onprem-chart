@@ -258,12 +258,12 @@ class TestCostModelRates:
         data = response.json()
         
         # If there are existing cost models, examine their rate structures
+        rate_info = "No cost models found"
         if data.get("data"):
             cost_model = data["data"][0]
             rates = cost_model.get("rates", [])
             if rates:
-                # Log the rate structure for documentation
-                print(f"Sample rate structure: {rates[0]}")
+                rate_info = f"Sample rate structure: {rates[0]}"
         
-        # Test passes - this is informational
-        assert True
+        # This is informational/temporary - we will be following up with the full setup to test this
+        pytest.skip(f"Informational only - {rate_info}")

@@ -35,26 +35,31 @@ globs: ["cost-onprem/**", "scripts/deploy-*.sh", "openshift-values.yaml"]
 - `--skip-tls` - Skip TLS configuration
 - `--skip-test` - Skip running tests
 
-## S3 Bucket Creation (Local Testing)
+## S3 Bucket Creation
 
-The `deploy-test-cost-onprem.sh` script sets `SKIP_S3_SETUP=true` by default (for CI where MinIO is managed externally).
+The `deploy-test-cost-onprem.sh` script creates buckets automatically via `install-helm-chart.sh` (bucket creation is idempotent).
 
-**For local testing with ODF**, you need to create buckets manually OR override this:
+**To skip bucket creation** (e.g., CI where S3 is managed externally):
 
 ```bash
-# Option 1: Run install-helm-chart.sh directly (creates buckets)
-SKIP_S3_SETUP=false ./scripts/install-helm-chart.sh --namespace cost-onprem
-
-# Option 2: Create buckets manually using mc (MinIO client)
-mc alias set odf https://s3.openshift-storage.svc:443 $ACCESS_KEY $SECRET_KEY --insecure
-mc mb odf/koku-bucket --ignore-existing
-mc mb odf/ros-data --ignore-existing
-mc mb odf/insights-upload-perma --ignore-existing
+SKIP_S3_SETUP=true ./scripts/install-helm-chart.sh --namespace cost-onprem
 ```
 
-**Required buckets** (from `values.yaml`):
-- `koku-bucket` - Main cost data bucket (`costManagement.storage.bucketName`)
-- `ros-data` - ROS data bucket (`costManagement.storage.rosBucketName`)
+**To create buckets manually using mc (MinIO client):**
+
+```bash
+# Set up mc alias for your S3 endpoint
+mc alias set s3 https://<your-s3-endpoint>:443 $ACCESS_KEY $SECRET_KEY --insecure
+
+# Create required buckets
+mc mb s3/koku-bucket --ignore-existing
+mc mb s3/ros-data --ignore-existing
+mc mb s3/insights-upload-perma --ignore-existing
+```
+
+**Required buckets** (from `values.yaml` - `objectStorage.*` config):
+- `koku-bucket` - Main cost data bucket (`objectStorage.bucketName`)
+- `ros-data` - ROS data bucket (`objectStorage.rosBucketName`)
 - `insights-upload-perma` - Ingress upload bucket (`ingress.storage.bucket`)
 
 ## NEVER Do These

@@ -23,11 +23,74 @@ Source registration flow is tested in suites/e2e/ as part of the complete pipeli
 """
 
 import uuid
+from typing import Optional
 
 import pytest
 import requests
 
 from utils import check_pod_ready
+
+
+# =============================================================================
+# OCP Source Type ID Helper
+# =============================================================================
+# The source_types endpoint is internal-only (not exposed via gateway).
+# OCP source type ID is 1 in standard Koku deployments because DB migrations
+# create source types in a fixed order (OCP=1, AWS=2, Azure=3, GCP=4).
+# This helper provides a fallback lookup via the sources list endpoint.
+# =============================================================================
+
+# Default OCP source type ID (from Koku DB migrations)
+DEFAULT_OCP_SOURCE_TYPE_ID = 1
+
+# Cache for looked-up OCP source type ID
+_ocp_source_type_id_cache: Optional[int] = None
+
+
+def get_ocp_source_type_id(
+    gateway_url: str,
+    session: requests.Session,
+) -> int:
+    """Get OCP source type ID, with fallback lookup from existing sources.
+    
+    Strategy:
+    1. Return cached value if available
+    2. Try to infer from existing OCP sources in the sources list
+    3. Fall back to default (1) if no sources exist
+    
+    Args:
+        gateway_url: The gateway URL
+        session: Authenticated requests session
+        
+    Returns:
+        The OCP source type ID (typically 1)
+    """
+    global _ocp_source_type_id_cache
+    
+    if _ocp_source_type_id_cache is not None:
+        return _ocp_source_type_id_cache
+    
+    # Try to infer from existing sources
+    try:
+        response = session.get(
+            f"{gateway_url}/cost-management/v1/sources/",
+            timeout=30,
+        )
+        if response.ok:
+            data = response.json()
+            for source in data.get("data", []):
+                # Look for a source with source_type name containing "OCP" or "openshift"
+                source_type = source.get("source_type", "")
+                if isinstance(source_type, str) and "ocp" in source_type.lower():
+                    _ocp_source_type_id_cache = source.get("source_type_id")
+                    if _ocp_source_type_id_cache:
+                        return _ocp_source_type_id_cache
+    except Exception:
+        pass
+    
+    # Fall back to default
+    _ocp_source_type_id_cache = DEFAULT_OCP_SOURCE_TYPE_ID
+    return _ocp_source_type_id_cache
 
 
 # =============================================================================
@@ -108,15 +171,14 @@ class TestSourcesExternalSourceTypes:
 class TestSourcesExternalCRUD:
     """External API tests for Sources CRUD operations via gateway."""
 
-    # OCP source type ID is typically 1 in Koku deployments
-    # source_types endpoint is internal-only, so we use the known ID
-    OCP_SOURCE_TYPE_ID = 1
-
     def test_create_and_delete_source_via_gateway(
         self, gateway_url: str, authenticated_session: requests.Session
     ):
         """Verify source creation and deletion works via external gateway."""
-        # Create a test source using known OCP source type ID
+        # Get OCP source type ID (with fallback lookup)
+        ocp_source_type_id = get_ocp_source_type_id(gateway_url, authenticated_session)
+        
+        # Create a test source
         source_name = f"gateway-test-{uuid.uuid4().hex[:8]}"
         cluster_id = f"gateway-cluster-{uuid.uuid4().hex[:8]}"
 
@@ -124,7 +186,7 @@ class TestSourcesExternalCRUD:
             f"{gateway_url}/cost-management/v1/sources/",
             json={
                 "name": source_name,
-                "source_type_id": self.OCP_SOURCE_TYPE_ID,
+                "source_type_id": ocp_source_type_id,
                 "source_ref": cluster_id,
             },
             headers={"Content-Type": "application/json"},
@@ -184,17 +246,17 @@ class TestSourcesExternalCRUD:
 class TestSourcesExternalFiltering:
     """External API tests for Sources filtering via gateway."""
 
-    # OCP source type ID is typically 1 in Koku deployments
-    OCP_SOURCE_TYPE_ID = 1
-
     def test_filter_sources_by_source_type(
         self, gateway_url: str, authenticated_session: requests.Session
     ):
         """Verify sources can be filtered by source_type via gateway."""
-        # Filter sources by OCP type (ID 1)
+        # Get OCP source type ID (with fallback lookup)
+        ocp_source_type_id = get_ocp_source_type_id(gateway_url, authenticated_session)
+        
+        # Filter sources by OCP type
         response = authenticated_session.get(
             f"{gateway_url}/cost-management/v1/sources/",
-            params={"source_type_id": self.OCP_SOURCE_TYPE_ID},
+            params={"source_type_id": ocp_source_type_id},
             timeout=30,
         )
 
@@ -205,7 +267,7 @@ class TestSourcesExternalFiltering:
         data = response.json()
         # All returned sources should be OCP type
         for source in data.get("data", []):
-            assert str(source.get("source_type_id")) == str(self.OCP_SOURCE_TYPE_ID), (
+            assert str(source.get("source_type_id")) == str(ocp_source_type_id), (
                 f"Source type mismatch in filtered results: {source}"
             )
 

@@ -236,11 +236,13 @@ class PodAdapter(HTTPAdapter):
                 if key.lower() != "host":
                     cmd.extend(["-H", f"{key}: {value}"])
         
-        # Add request body
+        # Add request body to curl command
+        # The requests library may provide body as bytes or str. Since we're
+        # passing this through kubectl exec -> curl, we need it as a string.
+        # Writing to a temp file inside the pod would require additional exec
+        # calls, so we pass the body inline via --data-raw instead.
         if request.body:
             if isinstance(request.body, bytes):
-                # For binary data, write to a temp approach won't work in pod
-                # Use base64 encoding workaround
                 body_str = request.body.decode("utf-8", errors="replace")
             else:
                 body_str = request.body

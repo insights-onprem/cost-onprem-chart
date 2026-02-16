@@ -3,6 +3,8 @@ UI tests for Cost Management navigation.
 
 These tests validate that the main navigation pages load correctly
 and that users can navigate between different sections of the application.
+
+NOTE: Some tests are skipped we are syncing with Koku UI QE team to consume their existing tests to avoid redundant test coverage (if possible).
 """
 
 import re
@@ -208,6 +210,7 @@ class TestCostExplorerPage:
         main_content = authenticated_page.locator("main, [role='main'], .pf-v6-c-page__main")
         expect(main_content).to_be_visible()
 
+    @pytest.mark.skip(reason="Syncing with Koku UI QE to avoid redundant test coverage")
     def test_cost_explorer_has_perspective_selector(self, authenticated_page: Page, ui_url: str):
         """Verify Cost Explorer has perspective/view selector.
         
@@ -235,10 +238,12 @@ class TestCostExplorerPage:
                 found = True
                 break
         
-        if not found:
-            # Log but don't fail - UI structure may vary
-            print("  ⚠️ Perspective selector not found with expected selectors")
+        assert found, (
+            "Perspective selector not found. Tried selectors: "
+            f"{perspective_selectors}. UI structure may have changed."
+        )
 
+    @pytest.mark.skip(reason="Syncing with Koku UI QE to avoid redundant test coverage")
     def test_cost_explorer_has_date_range_selector(self, authenticated_page: Page, ui_url: str):
         """Verify Cost Explorer has date range selector.
         
@@ -263,9 +268,12 @@ class TestCostExplorerPage:
                 found = True
                 break
         
-        if not found:
-            print("  ⚠️ Date range selector not found with expected selectors")
+        assert found, (
+            "Date range selector not found. Tried selectors: "
+            f"{date_selectors}. UI structure may have changed."
+        )
 
+    @pytest.mark.skip(reason="Syncing with Koku UI QE to avoid redundant test coverage")
     def test_cost_explorer_has_group_by_selector(self, authenticated_page: Page, ui_url: str):
         """Verify Cost Explorer has group-by selector.
         
@@ -289,8 +297,10 @@ class TestCostExplorerPage:
                 found = True
                 break
         
-        if not found:
-            print("  ⚠️ Group-by selector not found with expected selectors")
+        assert found, (
+            "Group-by selector not found. Tried selectors: "
+            f"{group_by_selectors}. UI structure may have changed."
+        )
 
     def test_cost_explorer_displays_chart_or_table(self, authenticated_page: Page, ui_url: str):
         """Verify Cost Explorer displays data visualization.

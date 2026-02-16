@@ -82,8 +82,8 @@ class DatabaseConfig:
 
     pod_name: str
     namespace: str
-    database: str = "koku"
-    user: str = "koku"
+    database: str = "costonprem_koku"  # Chart default from values.yaml
+    user: str = "koku_user"  # Chart default from values.yaml
     password: Optional[str] = None
 
 
@@ -254,7 +254,7 @@ def database_config(cluster_config: ClusterConfig) -> DatabaseConfig:
     """Get database configuration for Koku.
     
     Detects the actual database name from the Koku deployment's DATABASE_NAME
-    environment variable, falling back to 'koku' if not found.
+    environment variable, falling back to 'costonprem_koku' if not found.
     """
     # Find database pod
     result = run_oc_command([
@@ -274,7 +274,7 @@ def database_config(cluster_config: ClusterConfig) -> DatabaseConfig:
     db_password = get_secret_value(cluster_config.namespace, secret_name, "koku-password")
     
     if not db_user:
-        db_user = "koku"
+        db_user = "koku_user"  # Chart default from values.yaml
     
     # Detect actual database name from Koku deployment (unified koku-api)
     db_name_result = run_oc_command([
@@ -285,7 +285,7 @@ def database_config(cluster_config: ClusterConfig) -> DatabaseConfig:
     
     db_name = db_name_result.stdout.strip() if db_name_result.returncode == 0 else ""
     if not db_name:
-        db_name = "koku"  # Default to 'koku' (current chart default)
+        db_name = "costonprem_koku"  # Chart default from values.yaml
     
     return DatabaseConfig(
         pod_name=db_pod,
@@ -388,6 +388,94 @@ def s3_config(cluster_config: ClusterConfig) -> Optional[S3Config]:
         access_key=access_key,
         secret_key=secret_key,
     )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def s3_bucket_preflight(cluster_config: ClusterConfig, s3_config: Optional[S3Config]) -> None:
+    """Pre-flight check: Ensure required S3 buckets exist before running tests.
+
+    This fixture runs automatically at the start of the test session and creates
+    any missing S3 buckets. This prevents test failures due to missing buckets
+    when the install script's bucket creation fails (e.g., network issues
+    downloading the MinIO client).
+
+    Required buckets (from values.yaml):
+    - koku-bucket: Main cost data storage
+    - ros-data: ROS processor data
+    - insights-upload-perma: Ingress upload storage
+    """
+    if s3_config is None:
+        # No S3 config available - skip bucket check
+        # Tests that need S3 will fail with appropriate errors
+        return
+
+    required_buckets = ["koku-bucket", "ros-data", "insights-upload-perma"]
+
+    # Execute bucket check/creation inside the koku-api pod which has boto3 and credentials
+    bucket_check_script = f'''
+import boto3
+import os
+import sys
+
+s3 = boto3.client('s3',
+    endpoint_url=os.environ.get('S3_ENDPOINT', '{s3_config.endpoint}'),
+    aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
+    aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
+    verify=False
+)
+
+required_buckets = {required_buckets!r}
+created = []
+existing = []
+failed = []
+
+for bucket in required_buckets:
+    try:
+        s3.head_bucket(Bucket=bucket)
+        existing.append(bucket)
+    except s3.exceptions.ClientError as e:
+        error_code = e.response.get('Error', {{}}).get('Code', '')
+        if error_code in ('404', 'NoSuchBucket'):
+            try:
+                s3.create_bucket(Bucket=bucket)
+                created.append(bucket)
+            except Exception as create_err:
+                failed.append((bucket, str(create_err)))
+        else:
+            failed.append((bucket, str(e)))
+    except Exception as e:
+        failed.append((bucket, str(e)))
+
+if existing:
+    print(f"Existing buckets: {{', '.join(existing)}}")
+if created:
+    print(f"Created buckets: {{', '.join(created)}}")
+if failed:
+    print(f"Failed buckets: {{failed}}", file=sys.stderr)
+    sys.exit(1)
+'''
+
+    # Run the script inside the koku-api pod
+    result = run_oc_command(
+        [
+            "exec", "-n", cluster_config.namespace,
+            "deployment/cost-onprem-koku-api", "--",
+            "python3", "-c", bucket_check_script
+        ],
+        check=False,
+    )
+
+    if result.returncode != 0:
+        # Log warning but don't fail - tests that need buckets will fail with clearer errors
+        import warnings
+        warnings.warn(
+            f"S3 bucket pre-flight check failed: {result.stderr}\n"
+            "Tests requiring S3 storage may fail. "
+            "Ensure S3 buckets exist: koku-bucket, ros-data, insights-upload-perma"
+        )
+    elif result.stdout.strip():
+        # Log bucket status for visibility
+        print(f"\n[S3 Pre-flight] {result.stdout.strip()}")
 
 
 @pytest.fixture(scope="session")

@@ -6,6 +6,8 @@ All sources endpoints are available via /api/cost-management/v1/
 using X-Rh-Identity header for authentication.
 
 Uses PodAdapter/pod_session for all HTTP calls to internal services.
+The test_runner_pod fixture from conftest.py provides the dedicated
+test-runner pod for executing internal API calls.
 """
 
 import base64
@@ -22,7 +24,6 @@ from utils import (
     create_identity_header_custom,
     create_pod_session,
     create_rh_identity_header,
-    get_pod_by_label,
 )
 
 
@@ -33,22 +34,6 @@ def koku_api_url(cluster_config) -> str:
 
 
 @pytest.fixture(scope="module")
-def ingress_pod(cluster_config) -> str:
-    """Get ingress pod name for executing API calls.
-    
-    The ingress pod has NetworkPolicy access to koku-api, so we use it
-    to make internal API calls.
-    """
-    pod = get_pod_by_label(
-        cluster_config.namespace,
-        "app.kubernetes.io/component=ingress"
-    )
-    if not pod:
-        pytest.skip("Ingress pod not found for API calls")
-    return pod
-
-
-@pytest.fixture(scope="module")
 def rh_identity_header(org_id) -> str:
     """Get X-Rh-Identity header value for the test org."""
     return create_rh_identity_header(org_id)
@@ -56,23 +41,20 @@ def rh_identity_header(org_id) -> str:
 
 @pytest.fixture(scope="module")
 def pod_session(
-    ingress_pod: str,
+    test_runner_pod: str,
     cluster_config,
     rh_identity_header: str,
 ) -> requests.Session:
-    """Pre-configured requests.Session that routes through the ingress pod.
+    """Pre-configured requests.Session that routes through the test-runner pod.
     
     This fixture provides a standard requests.Session API for making HTTP
     calls that execute inside the cluster via kubectl exec curl. It includes
     the X-Rh-Identity header required for internal service authentication.
-    
-    Uses the ingress pod because it's already allowed by NetworkPolicies
-    to communicate with internal services like koku-api.
     """
     session = create_pod_session(
         namespace=cluster_config.namespace,
-        pod=ingress_pod,
-        container="ingress",
+        pod=test_runner_pod,
+        container="runner",
         headers={
             "X-Rh-Identity": rh_identity_header,
             "Content-Type": "application/json",
@@ -84,7 +66,7 @@ def pod_session(
 
 @pytest.fixture(scope="module")
 def pod_session_no_auth(
-    ingress_pod: str,
+    test_runner_pod: str,
     cluster_config,
 ) -> requests.Session:
     """Pre-configured requests.Session without authentication headers.
@@ -94,8 +76,8 @@ def pod_session_no_auth(
     """
     session = create_pod_session(
         namespace=cluster_config.namespace,
-        pod=ingress_pod,
-        container="ingress",
+        pod=test_runner_pod,
+        container="runner",
         timeout=60,
     )
     return session

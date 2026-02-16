@@ -107,8 +107,8 @@ pytest -m "sources and smoke" -v        # Smoke tests only
 | Fixture | Scope | Description |
 |---------|-------|-------------|
 | `koku_api_url` | module | Koku API internal URL |
-| `ingress_pod` | module | Pod name for executing internal API calls |
-| `pod_session` | module | requests.Session routed through ingress pod |
+| `test_runner_pod` | session | Dedicated pod for executing internal API calls |
+| `pod_session` | module | requests.Session routed through test-runner pod |
 | `pod_session_no_auth` | module | Session without auth headers (for error tests) |
 | `rh_identity_header` | module | Valid X-Rh-Identity header for test org |
 | `invalid_identity_headers` | module | Dict of invalid headers for error testing |

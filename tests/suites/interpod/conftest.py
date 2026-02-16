@@ -2,10 +2,10 @@
 Fixtures for interpod (pod-to-pod) cluster tests.
 
 These fixtures provide helpers for executing commands inside the cluster
-via the ingress pod, testing internal service networking.
+via the test-runner pod, testing internal service networking.
 
-The ingress pod is used because it's already allowed by NetworkPolicies
-to communicate with internal services like koku-api.
+The test-runner pod is a dedicated UBI9 container created at session start
+that provides a consistent environment for all interpod tests.
 """
 
 import json
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from conftest import ClusterConfig
-from utils import run_oc_command, create_rh_identity_header, create_pod_session, get_pod_by_label
+from utils import run_oc_command, create_rh_identity_header, create_pod_session
 
 
 @dataclass
@@ -39,25 +39,12 @@ class CurlResult:
         return json.loads(self.stdout)
 
 
-@pytest.fixture(scope="module")
-def interpod_ingress_pod(cluster_config: ClusterConfig) -> str:
-    """Get the ingress pod name for interpod tests.
-    
-    Uses the ingress pod because it's already allowed by NetworkPolicies
-    to communicate with internal services.
-    """
-    pod = get_pod_by_label(cluster_config.namespace, "app.kubernetes.io/component=ingress")
-    if not pod:
-        pytest.skip("Ingress pod not found")
-    return pod
-
-
 @pytest.fixture
 def internal_curl(
-    interpod_ingress_pod: str,
+    test_runner_pod: str,
     cluster_config: ClusterConfig,
 ) -> Callable:
-    """Helper to execute curl commands from the ingress pod.
+    """Helper to execute curl commands from the test-runner pod.
     
     DEPRECATED: Use pod_session fixture instead for a standard requests API.
     
@@ -98,8 +85,8 @@ def internal_curl(
         
         cmd.append(url)
         
-        # Build full exec command - use ingress container
-        args = ["exec", "-n", cluster_config.namespace, interpod_ingress_pod, "-c", "ingress", "--"]
+        # Build full exec command - use runner container in test-runner pod
+        args = ["exec", "-n", cluster_config.namespace, test_runner_pod, "-c", "runner", "--"]
         args.extend(cmd)
         
         result = run_oc_command(args, check=False, timeout=60)
@@ -129,18 +116,15 @@ def internal_identity_header(cluster_config: ClusterConfig, org_id: str) -> str:
 
 @pytest.fixture
 def pod_session(
-    interpod_ingress_pod: str,
+    test_runner_pod: str,
     cluster_config: ClusterConfig,
     rh_identity_header: str,
 ) -> requests.Session:
-    """Pre-configured requests.Session that routes through the ingress pod.
+    """Pre-configured requests.Session that routes through the test-runner pod.
     
     This fixture provides a standard requests.Session API for making HTTP
     calls that execute inside the cluster via kubectl exec curl. It includes
     the X-Rh-Identity header required for internal service authentication.
-    
-    Uses the ingress pod because it's already allowed by NetworkPolicies
-    to communicate with internal services like koku-api.
     
     Usage:
         def test_something(pod_session, internal_api_url):
@@ -165,8 +149,8 @@ def pod_session(
     """
     session = create_pod_session(
         namespace=cluster_config.namespace,
-        pod=interpod_ingress_pod,
-        container="ingress",
+        pod=test_runner_pod,
+        container="runner",
         headers={
             "X-Rh-Identity": rh_identity_header,
             "Content-Type": "application/json",
@@ -178,7 +162,7 @@ def pod_session(
 
 @pytest.fixture
 def pod_session_no_auth(
-    interpod_ingress_pod: str,
+    test_runner_pod: str,
     cluster_config: ClusterConfig,
 ) -> requests.Session:
     """Pre-configured requests.Session without authentication headers.
@@ -188,8 +172,8 @@ def pod_session_no_auth(
     """
     session = create_pod_session(
         namespace=cluster_config.namespace,
-        pod=interpod_ingress_pod,
-        container="ingress",
+        pod=test_runner_pod,
+        container="runner",
         timeout=60,
     )
     return session

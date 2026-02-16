@@ -22,15 +22,12 @@ tests/
 ├── requirements.txt         # Python dependencies
 ├── reports/                 # JUnit XML reports (generated)
 └── suites/                  # Test suites organized by subject
-    ├── api/                 # External API tests via gateway → [README](suites/api/README.md)
-    ├── auth/                # JWT authentication
-    ├── cost_management/     # Koku pipeline validation → [README](suites/cost_management/README.md)
-    ├── e2e/                 # Complete end-to-end pipeline → [README](suites/e2e/README.md)
     ├── helm/                # Helm chart validation
+    ├── auth/                # JWT authentication
     ├── infrastructure/      # Infrastructure health (DB, S3, Kafka) → [README](suites/infrastructure/README.md)
-    ├── interpod/            # Pod-to-pod cluster tests → [README](suites/interpod/README.md)
+    ├── cost_management/     # Koku pipeline validation → [README](suites/cost_management/README.md)
     ├── ros/                 # ROS/Kruize component health
-    └── ui/                  # UI tests (Playwright) → [README](suites/ui/README.md)
+    └── e2e/                 # Complete end-to-end pipeline → [README](suites/e2e/README.md)
 ```
 
 ## Suite Documentation
@@ -39,26 +36,20 @@ Each suite has its own README with detailed test descriptions:
 
 | Suite | README | Highlights |
 |-------|--------|------------|
-| **api** | [suites/api/README.md](suites/api/README.md) | External API tests via gateway (reports, ingress, cost models, tagging) |
+| **infrastructure** | [suites/infrastructure/README.md](suites/infrastructure/README.md) | Kafka validation, S3/Storage preflight |
 | **cost_management** | [suites/cost_management/README.md](suites/cost_management/README.md) | Cost calculation validation, Processing state |
 | **e2e** | [suites/e2e/README.md](suites/e2e/README.md) | YAML-driven scenario tests |
-| **infrastructure** | [suites/infrastructure/README.md](suites/infrastructure/README.md) | Kafka validation, S3/Storage preflight |
-| **interpod** | [suites/interpod/README.md](suites/interpod/README.md) | Pod-to-pod cluster tests via test-runner pod |
-| **ui** | [suites/ui/README.md](suites/ui/README.md) | Playwright UI tests (navigation, login, optimizations) |
 
 ### Suite Responsibilities
 
 | Suite | Purpose | What It Tests |
 |-------|---------|---------------|
-| **api** | External API | Reports, ingress, cost models, tagging via gateway |
-| **auth** | Authentication | Keycloak, JWT ingress/backend auth |
-| **cost_management** | Koku health | Sources API, Listener, MASU health |
-| **e2e** | Complete pipeline | **Full flow: Data → Ingress → Koku → ROS** |
 | **helm** | Chart validation | Lint, template rendering, deployment health |
+| **auth** | Authentication | Keycloak, JWT ingress/backend auth |
 | **infrastructure** | Infrastructure health | Database, S3, Kafka connectivity |
-| **interpod** | Pod-to-pod tests | Internal service communication, X-Rh-Identity |
+| **cost_management** | Koku health | Sources API, Listener, MASU health |
 | **ros** | ROS health | Kruize, ROS Processor, API health |
-| **ui** | UI validation | Navigation, login, optimizations (Playwright) |
+| **e2e** | Complete pipeline | **Full flow: Data → Ingress → Koku → ROS** |
 
 ### Test Type Markers
 
@@ -182,11 +173,39 @@ pytest tests/suites/e2e/test_scenarios.py -v -m scenario  # YAML-driven scenario
 
 ### Using Pytest Directly
 
+> **Note:** Running `pytest` directly requires manual dependency setup. The `run-pytest.sh` 
+> script handles this automatically. If you prefer running pytest directly, follow the 
+> setup steps below.
+
+**Manual Setup (required before running pytest directly):**
+
 ```bash
 cd tests
 
-# All tests
+# Create and activate virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Install koku-nise for E2E data generation (optional)
+pip install koku-nise
+
+# Install Playwright browsers (required for UI tests)
+playwright install chromium --with-deps
+```
+
+**Running Tests:**
+
+```bash
+cd tests
+
+# All tests (includes UI - requires Playwright)
 pytest
+
+# Exclude UI tests (no Playwright required)
+pytest -m "not ui"
 
 # By marker
 pytest -m helm
@@ -211,20 +230,21 @@ pytest -v
 pytest -x
 ```
 
+> **UI Tests:** Running `pytest` without `-m "not ui"` will include UI tests, which require
+> Playwright and browser binaries. Use `pytest -m "not ui"` to skip them, or install 
+> Playwright first with `playwright install chromium --with-deps`.
+
 ## Test Markers
 
 ### Suite Markers
 | Marker | Description |
 |--------|-------------|
-| `api` | External API tests via gateway |
-| `auth` | JWT authentication tests |
-| `cost_management` | Koku component tests |
-| `e2e` | End-to-end pipeline tests |
 | `helm` | Helm chart validation tests |
+| `auth` | JWT authentication tests |
 | `infrastructure` | Infrastructure health tests |
-| `interpod` | Pod-to-pod cluster tests |
+| `cost_management` | Koku component tests |
 | `ros` | ROS/Kruize tests |
-| `ui` | UI tests (Playwright) |
+| `e2e` | End-to-end pipeline tests |
 
 ### Type Markers
 | Marker | Description |

@@ -6,6 +6,11 @@ These tests validate the entire pipeline:
 
 This is the canonical E2E test that covers the full production data flow.
 
+Internal API Access:
+  Uses PodAdapter via e2e_pod_session fixture for internal Koku API calls.
+  This provides a clean requests.Session interface while executing curl
+  commands inside the cluster via kubectl exec.
+
 Data Generation Options:
   - NISE (default): Uses koku-nise to generate proper OCP cost data format
   - Simple (fallback): Uses simplified CSV format (may not populate summary tables)
@@ -40,6 +45,7 @@ from utils import (
     wait_for_condition,
     run_oc_command,
 )
+# Note: exec_in_pod is no longer used - we use e2e_pod_session (PodAdapter) instead
 from cleanup import full_cleanup
 from e2e_helpers import install_nise
 
@@ -426,18 +432,17 @@ class TestCompleteDataFlow:
         e2e_cluster_id: str,
         s3_config,
         koku_api_url: str,
-        ingress_pod: str,
-        rh_identity_header: str,
+        e2e_pod_session: requests.Session,
     ):
         """Register a source for E2E testing with cleanup before and after.
+        
+        Uses PodAdapter via e2e_pod_session for cleaner HTTP calls.
         
         Cleanup includes:
           - S3 data files from previous runs
           - Database processing records
           - Optionally Valkey cache and listener restart (if E2E_RESTART_SERVICES=1)
         """
-        from utils import exec_in_pod, get_pod_by_label
-        
         # Check cleanup settings
         cleanup_before = os.environ.get("E2E_CLEANUP_BEFORE", "true").lower() == "true"
         cleanup_after = os.environ.get("E2E_CLEANUP_AFTER", "true").lower() == "true"
@@ -475,40 +480,15 @@ class TestCompleteDataFlow:
                 verbose=True,
             )
         
-        # Get source type ID from Koku (GET - use reads)
-        result = exec_in_pod(
-            cluster_config.namespace,
-            ingress_pod,
-            [
-                "curl", "-s", "-w", "\n__HTTP_CODE__:%{http_code}",
-                f"{koku_api_url}/source_types",
-                "-H", "Content-Type: application/json",
-                "-H", f"X-Rh-Identity: {rh_identity_header}",
-            ],
-            container="ingress",
-        )
-        
-        if not result:
+        # Get source type ID from Koku
+        response = e2e_pod_session.get(f"{koku_api_url}/source_types")
+        if not response.ok:
             pytest.fail(
-                f"Could not get source types - exec_in_pod returned None. "
-                f"ingress_pod={ingress_pod}, url={koku_api_url}/source_types"
+                f"Source types request failed with HTTP {response.status_code}. "
+                f"Response: {response.text[:500]}"
             )
         
-        # Parse response and status code
-        if "__HTTP_CODE__:" in result:
-            body, http_code = result.rsplit("__HTTP_CODE__:", 1)
-            result = body.strip()
-            http_code = http_code.strip()
-            if http_code != "200":
-                pytest.fail(
-                    f"Source types request failed with HTTP {http_code}. "
-                    f"Response: {result[:500]}"
-                )
-        
-        if not result:
-            pytest.fail("Source types returned empty response")
-        
-        source_types = json.loads(result)
+        source_types = response.json()
         ocp_type_id = None
         for st in source_types.get("data", []):
             if st.get("name") == "openshift":
@@ -518,19 +498,9 @@ class TestCompleteDataFlow:
         if not ocp_type_id:
             pytest.skip("OpenShift source type not found")
         
-        # Get application type ID from Koku (GET - use reads)
-        result = exec_in_pod(
-            cluster_config.namespace,
-            ingress_pod,
-            [
-                "curl", "-s", f"{koku_api_url}/application_types",
-                "-H", "Content-Type: application/json",
-                "-H", f"X-Rh-Identity: {rh_identity_header}",
-            ],
-            container="ingress",
-        )
-        
-        app_types = json.loads(result)
+        # Get application type ID from Koku
+        response = e2e_pod_session.get(f"{koku_api_url}/application_types")
+        app_types = response.json() if response.ok else {"data": []}
         cost_mgmt_app_id = None
         for at in app_types.get("data", []):
             if at.get("name") == "/insights/platform/cost-management":
@@ -542,36 +512,18 @@ class TestCompleteDataFlow:
         
         # Check for existing e2e sources and delete them
         print(f"  🔍 Checking for existing e2e sources...")
-        result = exec_in_pod(
-            cluster_config.namespace,
-            ingress_pod,
-            [
-                "curl", "-s", f"{koku_api_url}/sources",
-                "-H", "Content-Type: application/json",
-                "-H", f"X-Rh-Identity: {rh_identity_header}",
-            ],
-            container="ingress",
-        )
+        response = e2e_pod_session.get(f"{koku_api_url}/sources")
         
-        if result:
+        if response.ok:
             try:
-                existing_sources = json.loads(result)
+                existing_sources = response.json()
                 for existing in existing_sources.get("data", []):
                     existing_name = existing.get("name", "")
                     existing_id = existing.get("id")
-                    # Delete any e2e test sources (DELETE - use writes)
+                    # Delete any e2e test sources
                     if existing_id and existing_name.startswith("e2e-source-"):
                         print(f"     🗑️  Deleting existing source '{existing_name}' (id={existing_id})...")
-                        exec_in_pod(
-                            cluster_config.namespace,
-                            ingress_pod,
-                            [
-                                "curl", "-s", "-X", "DELETE",
-                                f"{koku_api_url}/sources/{existing_id}",
-                                "-H", f"X-Rh-Identity: {rh_identity_header}",
-                            ],
-                            container="ingress",
-                        )
+                        e2e_pod_session.delete(f"{koku_api_url}/sources/{existing_id}")
                         time.sleep(2)  # Brief pause for deletion to propagate
             except (json.JSONDecodeError, TypeError):
                 pass  # No existing sources or error in response
@@ -579,11 +531,11 @@ class TestCompleteDataFlow:
         # Create the new source with retry logic
         # On first run for a new org, the tenant schema creation can be slow
         # which may cause the first request to fail or timeout
-        payload = json.dumps({
+        payload = {
             "name": source_name,
             "source_type_id": ocp_type_id,
             "source_ref": e2e_cluster_id,
-        })
+        }
         
         print(f"  📝 Creating source: {source_name}")
         print(f"     Cluster ID: {e2e_cluster_id}")
@@ -602,96 +554,64 @@ class TestCompleteDataFlow:
                 time.sleep(retry_delay)
                 retry_delay = min(retry_delay * 2, 30)  # Exponential backoff, max 30s
             
-            # POST /sources - use writes
-            result = exec_in_pod(
-                cluster_config.namespace,
-                ingress_pod,
-                [
-                    "curl", "-s", "-w", "\n__HTTP_CODE__:%{http_code}", "-X", "POST",
-                    f"{koku_api_url}/sources",
-                    "-H", "Content-Type: application/json",
-                    "-H", f"X-Rh-Identity: {rh_identity_header}",
-                    "-d", payload,
-                ],
-                container="ingress",
-                timeout=120,  # Longer timeout for first request (schema creation)
-            )
-            
-            if not result:
-                last_error = "exec_in_pod returned None (curl failed or timed out)"
-                print(f"     ⚠️  Attempt {attempt + 1} failed: {last_error}")
-                continue
-            
-            # Parse response and status code
-            http_code = None
-            if "__HTTP_CODE__:" in result:
-                body, http_code = result.rsplit("__HTTP_CODE__:", 1)
-                result = body.strip()
-                http_code = http_code.strip()
-            
-            if http_code and http_code not in ("200", "201"):
-                last_error = f"HTTP {http_code}: {result[:200]}"
-                print(f"     ⚠️  Attempt {attempt + 1} failed: {last_error}")
-                # 5xx errors might be transient, retry
-                if http_code.startswith("5"):
-                    continue
-                # 4xx errors (except 409 conflict) are not retryable
-                if http_code != "409":
-                    break
-                # 409 might mean source already exists, try to get it
-                continue
-            
             try:
-                source_data = json.loads(result)
-                source_id = source_data.get("id")
-                if source_id:
-                    print(f"     ✅ Source created successfully (id={source_id})")
-                    break
-                else:
-                    last_error = f"No 'id' in response: {result[:200]}"
+                response = e2e_pod_session.post(
+                    f"{koku_api_url}/sources",
+                    json=payload,
+                )
+                
+                if response.status_code in (200, 201):
+                    source_data = response.json()
+                    source_id = source_data.get("id")
+                    if source_id:
+                        print(f"     ✅ Source created successfully (id={source_id})")
+                        break
+                    else:
+                        last_error = f"No 'id' in response: {response.text[:200]}"
+                        print(f"     ⚠️  Attempt {attempt + 1} failed: {last_error}")
+                elif response.status_code >= 500:
+                    # 5xx errors might be transient, retry
+                    last_error = f"HTTP {response.status_code}: {response.text[:200]}"
                     print(f"     ⚠️  Attempt {attempt + 1} failed: {last_error}")
-            except json.JSONDecodeError as e:
-                last_error = f"Invalid JSON: {result[:200]} - {e}"
+                    continue
+                elif response.status_code == 409:
+                    # 409 might mean source already exists, try to get it
+                    last_error = f"HTTP 409 Conflict: {response.text[:200]}"
+                    print(f"     ⚠️  Attempt {attempt + 1} failed: {last_error}")
+                    continue
+                else:
+                    # 4xx errors are not retryable
+                    last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+                    print(f"     ⚠️  Attempt {attempt + 1} failed: {last_error}")
+                    break
+            except requests.RequestException as e:
+                last_error = f"Request failed: {e}"
                 print(f"     ⚠️  Attempt {attempt + 1} failed: {last_error}")
+                continue
         
         if not source_id:
             # Get debug info before failing
-            error_result = exec_in_pod(
-                cluster_config.namespace,
-                ingress_pod,
-                [
-                    "curl", "-s", "-w", "\nHTTP_CODE:%{http_code}",
-                    f"{koku_api_url}/sources",
-                    "-H", "Content-Type: application/json",
-                    "-H", f"X-Rh-Identity: {rh_identity_header}",
-                ],
-                container="ingress",
-            )
+            try:
+                debug_response = e2e_pod_session.get(f"{koku_api_url}/sources")
+                debug_info = debug_response.text[:500]
+            except Exception as e:
+                debug_info = f"Could not get debug info: {e}"
+            
             pytest.fail(
                 f"Source creation failed after {max_retries} attempts. "
                 f"Last error: {last_error}. "
-                f"ingress_pod={ingress_pod}, url={koku_api_url}/sources, "
-                f"Debug info: {error_result}"
+                f"url={koku_api_url}/sources, "
+                f"Debug info: {debug_info}"
             )
         
-        # Create application via Koku API (POST - use writes)
+        # Create application via Koku API
         if cost_mgmt_app_id:
-            app_payload = json.dumps({
-                "source_id": source_id,
-                "application_type_id": cost_mgmt_app_id,
-            })
-            
-            exec_in_pod(
-                cluster_config.namespace,
-                ingress_pod,
-                [
-                    "curl", "-s", "-X", "POST",
-                    f"{koku_api_url}/applications",
-                    "-H", "Content-Type: application/json",
-                    "-H", f"X-Rh-Identity: {rh_identity_header}",
-                    "-d", app_payload,
-                ],
-                container="ingress",
+            e2e_pod_session.post(
+                f"{koku_api_url}/applications",
+                json={
+                    "source_id": source_id,
+                    "application_type_id": cost_mgmt_app_id,
+                },
             )
         
         yield {
@@ -699,9 +619,8 @@ class TestCompleteDataFlow:
             "source_name": source_name,
             "cluster_id": e2e_cluster_id,
             "org_id": org_id,
-            "ingress_pod": ingress_pod,
             "koku_api_url": koku_api_url,
-            "rh_identity_header": rh_identity_header,
+            "e2e_pod_session": e2e_pod_session,
             "db_pod": db_pod,
             "s3_config_dict": s3_config_dict,
         }
@@ -712,18 +631,9 @@ class TestCompleteDataFlow:
             print("POST-TEST CLEANUP")
             print("=" * 60)
             
-            # Delete the source via Koku API (DELETE - use writes)
+            # Delete the source via Koku API
             print("  🗑️  Deleting test source...")
-            exec_in_pod(
-                cluster_config.namespace,
-                ingress_pod,
-                [
-                    "curl", "-s", "-X", "DELETE",
-                    f"{koku_api_url}/sources/{source_id}",
-                    "-H", f"X-Rh-Identity: {rh_identity_header}",
-                ],
-                container="ingress",
-            )
+            e2e_pod_session.delete(f"{koku_api_url}/sources/{source_id}")
             print(f"     ✅ Deleted source {source_id}")
             
             # Full cleanup

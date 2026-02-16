@@ -173,14 +173,42 @@ class TestTagBasedFiltering:
         """Verify reports can use multiple tag filters.
         
         Tests:
-        - Multiple tag filters are accepted
+        - Multiple tag filters are accepted (when tags exist)
         - Response structure is valid
+        
+        Note: This test first queries available tags and uses those.
+        If fewer than 2 tags exist, the test is skipped.
+        
+        Currently skipped due to lack of tag data in test fixtures.
+        This is intentional until we align with Koku QE and IQE on
+        test data generation that includes tags.
         """
+        # First get available tags
+        tags_response = authenticated_session.get(
+            f"{gateway_url}/cost-management/v1/tags/openshift/",
+            timeout=30,
+        )
+        
+        if tags_response.status_code != 200:
+            pytest.skip(f"Tags endpoint returned {tags_response.status_code}")
+        
+        tags_data = tags_response.json()
+        available_tags = tags_data.get("data", [])
+        
+        if len(available_tags) < 2:
+            pytest.skip(
+                f"Need at least 2 tags to test multiple filters, found {len(available_tags)}"
+            )
+        
+        # Use the first two available tag keys
+        tag1 = available_tags[0].get("key") if isinstance(available_tags[0], dict) else available_tags[0]
+        tag2 = available_tags[1].get("key") if isinstance(available_tags[1], dict) else available_tags[1]
+        
         response = authenticated_session.get(
             f"{gateway_url}/cost-management/v1/reports/openshift/costs/",
             params={
-                "filter[tag:app]": "*",
-                "filter[tag:environment]": "*",
+                f"filter[tag:{tag1}]": "*",
+                f"filter[tag:{tag2}]": "*",
             },
             timeout=30,
         )
@@ -222,7 +250,6 @@ class TestTagValues:
         # If tags exist, the values should be included in the response
         # or accessible via a separate endpoint
         tag = data["data"][0]
-        print(f"Tag data structure: {tag}")
         
-        # Document what we find for future test refinement
-        assert True
+        # This is informational/temporary - we will be following up with the full setup to test this
+        pytest.skip(f"Informational only - Tag data structure: {tag}")
