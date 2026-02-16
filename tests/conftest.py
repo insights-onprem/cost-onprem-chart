@@ -466,12 +466,10 @@ if failed:
     )
 
     if result.returncode != 0:
-        # Log warning but don't fail - tests that need buckets will fail with clearer errors
-        import warnings
-        warnings.warn(
+        pytest.fail(
             f"S3 bucket pre-flight check failed: {result.stderr}\n"
-            "Tests requiring S3 storage may fail. "
-            "Ensure S3 buckets exist: koku-bucket, ros-data, insights-upload-perma"
+            "Required buckets could not be created: koku-bucket, ros-data, insights-upload-perma\n"
+            "Check S3/object storage configuration and connectivity."
         )
     elif result.stdout.strip():
         # Log bucket status for visibility
