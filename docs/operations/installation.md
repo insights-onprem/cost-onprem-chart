@@ -5,11 +5,8 @@ Complete installation methods, prerequisites, and upgrade procedures for the Cos
 ## Table of Contents
 - [Prerequisites](#prerequisites)
 - [Installation Methods](#installation-methods)
-  - [Method 1: Automated Installation (Recommended)](#method-1-automated-installation-recommended)
-  - [Method 2: GitHub Release Installation](#method-2-github-release-installation)
-  - [Method 3: Helm Repository (Future)](#method-3-helm-repository-future)
-  - [Method 4: Local Source Installation](#method-4-local-source-installation)
-  - [Method 5: Direct Helm Install (Without Install Script)](#method-5-direct-helm-install-without-install-script)
+  - [Method 1: Script-Based Installation (Recommended)](#method-1-script-based-installation-recommended)
+  - [Method 2: Direct Helm Installation](#method-2-direct-helm-installation)
 - [OpenShift Prerequisites](#openshift-prerequisites)
 - [Upgrade Procedures](#upgrade-procedures)
 - [Verification](#verification)
@@ -63,9 +60,9 @@ Ensure you have:
 
 ## Installation Methods
 
-### Method 1: Automated Installation (Recommended)
+### Method 1: Script-Based Installation (Recommended)
 
-The easiest way to install using the automation script:
+The easiest way to install using the automation script. Best for most users, CI/CD pipelines, and quick deployments.
 
 ```bash
 # Install latest release with default settings
@@ -117,82 +114,41 @@ The script deploys a unified chart containing all components:
 
 **Note**: JWT authentication is automatically enabled on OpenShift.
 
+> **Future Enhancement:** The script will support fetching charts from a Helm repository once available.
+
 ---
 
-### Method 2: GitHub Release Installation
+### Method 2: Direct Helm Installation
 
-For CI/CD systems that prefer direct control:
+For administrators who prefer full control over the deployment or cannot use the `install-helm-chart.sh` script (e.g., GitOps/ArgoCD workflows, air-gapped environments, custom CI pipelines), you can install the chart directly with `helm install`. You must supply the cluster-specific values that the install script would normally auto-detect.
 
+#### Chart Source Options
+
+| Source | Status | Use Case | Installation |
+|--------|--------|----------|--------------|
+| Helm Repository | Coming Soon | Production (preferred when available) | `helm repo add cost-onprem https://insights-onprem.github.io/cost-onprem-chart` |
+| GitHub Release | Available | Production (current) | Download `.tgz` from [releases](https://github.com/insights-onprem/cost-onprem-chart/releases) |
+| Local Source | Available | Development, testing, modifications | Clone repo and use `./cost-onprem` directory |
+
+**GitHub Release (current recommended source):**
 ```bash
-# Get latest release URL dynamically
+# Get latest release URL
 LATEST_URL=$(curl -s https://api.github.com/repos/insights-onprem/cost-onprem-chart/releases/latest | \
   jq -r '.assets[] | select(.name | endswith(".tgz")) | .browser_download_url')
 
-# Download and install
+# Download chart
 curl -L -o cost-onprem-latest.tgz "$LATEST_URL"
-helm install cost-onprem cost-onprem-latest.tgz \
-  --namespace cost-onprem \
-  --create-namespace
 
-# Verify installation
-helm status cost-onprem -n cost-onprem
+# Use cost-onprem-latest.tgz in the helm install commands below
 ```
 
-**With custom values:**
+**Local Source (for development):**
 ```bash
-helm install cost-onprem cost-onprem-latest.tgz \
-  --namespace cost-onprem \
-  --create-namespace \
-  --values my-values.yaml
-```
-
----
-
-### Method 3: Helm Repository (Future)
-
-```bash
-# Add Helm repository (once published)
-helm repo add cost-onprem https://insights-onprem.github.io/cost-onprem-chart
-helm repo update
-
-# Install from repository
-helm install cost-onprem cost-onprem/cost-onprem \
-  --namespace cost-onprem \
-  --create-namespace
-```
-
----
-
-### Method 4: Local Source Installation
-
-For development, testing, or custom modifications:
-
-```bash
-# Clone the repository
 git clone https://github.com/insights-onprem/cost-onprem-chart.git
 cd cost-onprem-chart
 
-# Method A: Using installation script
-export USE_LOCAL_CHART=true
-./scripts/install-helm-chart.sh
-
-# Method B: Direct Helm installation
-helm install cost-onprem ./cost-onprem \
-  --namespace cost-onprem \
-  --create-namespace
-
-# With custom values
-helm install cost-onprem ./cost-onprem \
-  --namespace cost-onprem \
-  --create-namespace \
-  --values custom-values.yaml
+# Use ./cost-onprem in the helm install commands below
 ```
-
----
-
-### Method 5: Direct Helm Install (Without Install Script)
-
-For administrators who prefer full control over the deployment or cannot use the `install-helm-chart.sh` script (e.g., GitOps/ArgoCD workflows, air-gapped environments, custom CI pipelines), you can install the chart directly with `helm install`. You must supply the cluster-specific values that the install script would normally auto-detect.
 
 #### Step 1: Gather Cluster-Specific Values
 
