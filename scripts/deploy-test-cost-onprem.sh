@@ -417,7 +417,7 @@ deploy_helm_chart() {
     export NAMESPACE="${NAMESPACE}"
     export JWT_AUTH_ENABLED="true"
     export USE_LOCAL_CHART="${USE_LOCAL_CHART}"
-    export SKIP_S3_SETUP="true"  # Skip S3 auto-detection in CI environments
+    export SKIP_S3_SETUP="${SKIP_S3_SETUP:-false}"  # Only skip if explicitly set by caller
 
     if [[ "${VERBOSE}" == "true" ]]; then
         export VERBOSE="true"
