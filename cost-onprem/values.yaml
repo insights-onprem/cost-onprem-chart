@@ -579,6 +579,15 @@ ingress:
 # - Credentials injected via secretKeyRef (never exposed in pod specs)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 database:
+  # Set to false to skip deploying the bundled PostgreSQL StatefulSet and Service.
+  # When false, you must:
+  #   1. Set database.server.host to your external database hostname
+  #   2. Pre-create the required databases: costonprem_ros, costonprem_kruize, costonprem_koku
+  #   3. Pre-create the required users with appropriate grants
+  #   4. Create a credentials secret (or set database.existingSecret)
+  # See docs/operations/configuration.md "External Infrastructure" for full setup guide.
+  deploy: true
+
   # Unified Database Server Configuration
   server:
     image:
@@ -641,22 +650,55 @@ kafka:
   # Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL)
   securityProtocol: "PLAINTEXT"
 
+  # SASL authentication (required for SASL_PLAINTEXT or SASL_SSL protocols)
+  # Enable when connecting to enterprise Kafka (AMQ Streams, MSK, Confluent)
+  sasl:
+    # SASL mechanism: PLAIN, SCRAM-SHA-256, or SCRAM-SHA-512
+    mechanism: ""
+    # Name of an existing Secret containing keys: 'username' and 'password'
+    # The secret must exist in the release namespace before Helm install.
+    existingSecret: ""
+
+  # TLS configuration (required for SSL or SASL_SSL protocols)
+  tls:
+    enabled: false
+    # Name of an existing Secret containing key: 'ca.crt'
+    # Used to verify the Kafka broker's TLS certificate.
+    caCertSecret: ""
+
 # -----------------------------------------------------------------------------
 # Shared Infrastructure - Cache (Valkey)
 # -----------------------------------------------------------------------------
 # Valkey is used as Celery broker/backend and for caching
+# Set deploy to false to use an external Redis/Valkey instance instead.
 valkey:
+  # Set to false to skip deploying the bundled Valkey Deployment, Service, and PVC.
+  # When false, you must:
+  #   1. Set valkey.host to your external Redis/Valkey hostname
+  #   2. Set valkey.port if not using the default 6379
+  #   3. Optionally configure valkey.auth for password-protected instances
+  # See docs/operations/configuration.md "External Infrastructure" for full setup guide.
+  deploy: true
   image:
     repository: registry.redhat.io/rhel10/valkey-8
     tag: "latest"
     pullPolicy: IfNotPresent
 
   # Connection settings
+  # When deploy is true, host is ignored (chart uses {release}-valkey internally).
+  # When deploy is false, set host to your external Redis/Valkey endpoint.
   host: "valkey"
   port: 6379
   bindAddress: "0.0.0.0"
   maxMemory: "512mb"
   maxMemoryPolicy: "allkeys-lru"
+
+  # Authentication for external Redis/Valkey (only used when deploy is false)
+  # For password-protected Redis instances (e.g., ElastiCache, Redis Enterprise)
+  auth:
+    enabled: false
+    # Name of an existing Secret containing key: 'redis-password'
+    existingSecret: ""
 
   # Persistence configuration for Celery chord callback reliability
   # IMPORTANT: Enable this for production to prevent data loss on pod restarts
