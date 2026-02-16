@@ -56,11 +56,9 @@ jobs:
               - name: cost-onprem
                 path: ./cost-onprem
         EOF
-        # Remove leading whitespace from heredoc (bash limitation)
-        sed -i 's/^        //' /tmp/imageset-config.yaml
 
         echo "=== Running oc-mirror --dry-run --v2 ==="
-        ./oc-mirror --config /tmp/imageset-config.yaml docker://localhost:5050 --dry-run --v2
+        ./oc-mirror --config /tmp/imageset-config.yaml --workspace file:///tmp/oc-mirror-workspace docker://localhost:5050 --dry-run --v2 --dest-tls-verify=false
 
         echo "✓ oc-mirror can discover and plan the mirror from the Helm chart"
 
