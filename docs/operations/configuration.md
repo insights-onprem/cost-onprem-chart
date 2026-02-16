@@ -8,6 +8,8 @@ Complete configuration reference for resource requirements, storage, and access 
 - [Access Points](#access-points)
 - [Configuration Values](#configuration-values)
 - [Platform-Specific Configuration](#platform-specific-configuration)
+- [External Infrastructure (BYOI)](#external-infrastructure-byoi)
+- [Security Configuration](#security-configuration)
 
 ## Resource Requirements
 
@@ -622,6 +624,235 @@ global:
 ```
 
 **See [Platform Guide](platform-guide.md) for detailed platform configuration**
+
+---
+
+## External Infrastructure (BYOI)
+
+The chart bundles PostgreSQL, Valkey, and deploys Kafka via Strimzi for development and testing. For production deployments, you can **bring your own infrastructure** (BYOI) by connecting to externally-managed services instead.
+
+| Service | Bundled Default | External Examples | Config Key |
+|---------|----------------|-------------------|------------|
+| **PostgreSQL** | Single-replica StatefulSet | RDS, Crunchy, EDB, Azure DB | `database.deploy: false` |
+| **Valkey/Redis** | Single-replica Deployment | ElastiCache, Redis Enterprise, Azure Cache | `valkey.deploy: false` |
+| **Kafka** | Strimzi (via install script) | AMQ Streams, MSK, Confluent | `kafka.bootstrapServers` + `kafka.sasl.*` |
+| **Keycloak** | RHBK (via deploy-rhbk.sh) | Customer-managed Keycloak | `jwtAuth.keycloak.url` |
+
+---
+
+### External PostgreSQL
+
+Use an existing enterprise PostgreSQL instance instead of the bundled StatefulSet.
+
+**Prerequisites:**
+
+1. A PostgreSQL 14+ server accessible from the OpenShift cluster
+2. Three databases created on the server:
+
+| Database | Default Name | Purpose |
+|----------|-------------|---------|
+| ROS | `costonprem_ros` | Resource Optimization Service |
+| Kruize | `costonprem_kruize` | Kruize optimization engine |
+| Koku | `costonprem_koku` | Cost Management (Koku) |
+
+3. Three dedicated users with ownership of their respective databases:
+
+```sql
+-- Create users
+CREATE USER ros_user WITH PASSWORD '<ros_password>';
+CREATE USER kruize_user WITH PASSWORD '<kruize_password>';
+CREATE USER koku_user WITH PASSWORD '<koku_password>';
+
+-- Create databases with owners
+CREATE DATABASE costonprem_ros OWNER ros_user;
+CREATE DATABASE costonprem_kruize OWNER kruize_user;
+CREATE DATABASE costonprem_koku OWNER koku_user;
+
+-- Grant privileges
+GRANT ALL PRIVILEGES ON DATABASE costonprem_ros TO ros_user;
+GRANT ALL PRIVILEGES ON DATABASE costonprem_kruize TO kruize_user;
+GRANT ALL PRIVILEGES ON DATABASE costonprem_koku TO koku_user;
+
+-- Koku requires superuser or CREATEDB for migrations
+ALTER USER koku_user CREATEDB;
+```
+
+4. A Kubernetes Secret with all credentials:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: my-external-db-credentials
+type: Opaque
+stringData:
+  postgres-user: "admin"
+  postgres-password: "<admin_password>"
+  ros-user: "ros_user"
+  ros-password: "<ros_password>"
+  kruize-user: "kruize_user"
+  kruize-password: "<kruize_password>"
+  koku-user: "koku_user"
+  koku-password: "<koku_password>"
+```
+
+**Configuration:**
+
+```yaml
+# values.yaml
+database:
+  deploy: false
+  server:
+    host: "my-postgres.example.com"
+    port: 5432
+    sslMode: require  # or verify-full for production
+  existingSecret: "my-external-db-credentials"
+  ros:
+    name: costonprem_ros
+  kruize:
+    name: costonprem_kruize
+  koku:
+    name: costonprem_koku
+```
+
+When `database.deploy: false`:
+- The chart skips the PostgreSQL StatefulSet, Service, and init ConfigMap
+- The install script skips database credential creation
+- Init containers (`waitForDb`) target the external host instead of the internal service
+- All application components connect to the external database via the configured host
+
+---
+
+### External Valkey/Redis
+
+Use an existing Redis-compatible cache instead of the bundled Valkey Deployment.
+
+**Prerequisites:**
+
+1. A Redis 7+ or Valkey 8+ instance accessible from the OpenShift cluster
+2. (Optional) Authentication credentials if the instance is password-protected
+
+**Configuration:**
+
+```yaml
+# values.yaml
+valkey:
+  deploy: false
+  host: "my-redis.example.com"
+  port: 6379
+  auth:
+    enabled: true
+    existingSecret: "my-redis-credentials"  # Secret with key: redis-password
+```
+
+When `valkey.deploy: false`:
+- The chart skips the Valkey Deployment, Service, and PVC
+- Koku and Celery components connect to the external Redis host
+- If `auth.enabled`, a `REDIS_PASSWORD` environment variable is injected into all consumers
+
+**Consumers:** Koku API, MASU, Kafka Listener, Migration Job, Celery Beat, and all Celery Workers. ROS components do not use Valkey.
+
+---
+
+### External Kafka
+
+Use an existing Kafka cluster instead of the Strimzi-managed Kafka deployed by the install script.
+
+**Prerequisites:**
+
+1. A Kafka 3.x+ cluster accessible from the OpenShift cluster
+2. The following topics must exist (or auto-creation must be enabled):
+
+| Topic | Purpose |
+|-------|---------|
+| `platform.upload.announce` | Upload announcements (Ingress -> Koku Listener) |
+| `hccm.ros.events` | ROS events (ROS Processor) |
+| `rosocp.kruize.recommendations` | Kruize recommendations (ROS Recommendation Poller) |
+
+3. (For SASL) A Kubernetes Secret with Kafka credentials:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: my-kafka-credentials
+type: Opaque
+stringData:
+  username: "<kafka_user>"
+  password: "<kafka_password>"
+```
+
+4. (For TLS) A Kubernetes Secret with the CA certificate:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: my-kafka-ca
+type: Opaque
+data:
+  ca.crt: <base64-encoded-CA-cert>
+```
+
+**Configuration:**
+
+```yaml
+# values.yaml
+kafka:
+  bootstrapServers: "my-kafka-broker1:9093,my-kafka-broker2:9093"
+  securityProtocol: "SASL_SSL"
+  sasl:
+    mechanism: "SCRAM-SHA-512"
+    existingSecret: "my-kafka-credentials"
+  tls:
+    enabled: true
+    caCertSecret: "my-kafka-ca"
+```
+
+**Install script behavior:** When running `install-helm-chart.sh`, set `KAFKA_BOOTSTRAP_SERVERS` to skip Strimzi verification:
+
+```bash
+KAFKA_BOOTSTRAP_SERVERS="my-kafka-broker1:9093" ./scripts/install-helm-chart.sh --namespace cost-onprem
+```
+
+**Consumers:** Ingress (producer), Koku Listener (consumer), ROS Processor (consumer), ROS Recommendation Poller (consumer), ROS Housekeeper, ROS API.
+
+---
+
+### External Keycloak
+
+Use a customer-managed Keycloak instance instead of the RHBK deployed by `deploy-rhbk.sh`.
+
+**Prerequisites:**
+
+1. Keycloak 22+ accessible from the OpenShift cluster
+2. A realm (default: `kubernetes`) with two clients configured:
+
+| Client ID | Type | Purpose |
+|-----------|------|---------|
+| `cost-management-operator` | Service account (client_credentials) | Cost Management Metrics Operator |
+| `cost-management-ui` | OAuth2 (authorization_code) | UI authentication via oauth2-proxy |
+
+3. Both clients must include `cost-management-operator` and `cost-management-ui` in their `aud` claim (audience mappers)
+4. Client secrets must be available as Kubernetes Secrets in the Keycloak namespace
+
+**Configuration:**
+
+```yaml
+# values.yaml
+jwtAuth:
+  keycloak:
+    url: "https://keycloak.example.com"
+    namespace: "my-keycloak-namespace"
+    realm: kubernetes
+    client:
+      id: cost-management-operator
+    audiences:
+      - cost-management-operator
+      - cost-management-ui
+```
+
+For detailed setup including realm import and client configuration, see the [External Keycloak Scenario](../architecture/external-keycloak-scenario.md) guide.
 
 ---
 
