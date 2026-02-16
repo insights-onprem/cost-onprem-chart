@@ -15,7 +15,7 @@
 global:
   # Cluster domain — detected by install script and passed via --set
   # When empty, the chart defaults to "apps.cluster.local" (safe for offline templating)
-  clusterDomain: ""  # Set by install script or --set global.clusterDomain=...
+  clusterDomain: "apps.cluster.local"  # Set by install script or --set global.clusterDomain=...
 
 # Storage class names — detected by install script from cluster default SC
 # Uncomment to override explicitly:
