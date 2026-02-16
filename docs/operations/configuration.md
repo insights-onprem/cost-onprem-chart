@@ -98,16 +98,16 @@ insights_cost_management_optimizations: "true"
 
 **Base Requirements:**
 - SNO cluster running OpenShift 4.18+
-- OpenShift Data Foundation (ODF) installed
-- 30GB+ block devices for ODF
+- S3-compatible object storage (ODF, MinIO, AWS S3, or any S3 provider)
+- Block storage for databases and Kafka (ODF or any RWO-capable storage class)
 
 **Additional Resources for Cost Management On-Premise:**
 - **Additional Memory**: 6GB+ RAM
 - **Additional CPU**: 2+ cores
 - **Total Node**: SNO minimum + ROS requirements
 
-**ODF Configuration:**
-- **Storage Class**: `ocs-storagecluster-ceph-rbd` (auto-detected)
+**Block Storage Configuration (for databases/Kafka):**
+- **Storage Class**: `ocs-storagecluster-ceph-rbd` (auto-detected on ODF) or any RWO storage class
 - **Volume Mode**: Filesystem
 - **Access Mode**: ReadWriteOnce (RWO)
 
@@ -115,21 +115,94 @@ insights_cost_management_optimizations: "true"
 
 ## Storage Configuration
 
-### ODF Storage Backend
+This chart requires S3-compatible object storage. Any backend that speaks the S3 API is supported. The chart does **not** require ODF — it is one option among several.
 
-The chart uses OpenShift Data Foundation (ODF) for object storage.
+There are two ways to configure storage:
 
-### ODF Configuration
+1. **Manual** (production): Set `objectStorage.*` in your values file and pre-create a credentials secret. The install script skips all S3 auto-detection.
+2. **Automated** (dev/CI): Leave `objectStorage.endpoint` empty and let the install script auto-detect from the cluster (OBC, MinIO, or NooBaa).
 
-**Prerequisites:**
-- ODF installed in `openshift-storage` namespace
-- **Direct Ceph RGW recommended** (strong consistency)
-- ObjectBucketClaim (OBC) provisioned OR S3 credentials secret created
+### Required Buckets
 
-**Recommended Setup (Direct Ceph RGW with OBC):**
+The following S3 buckets must exist before the chart is deployed. Bucket names are configurable in `values.yaml`:
+
+| Purpose | Values Key | Default Name |
+|---------|-----------|--------------|
+| Ingress uploads | `ingress.storage.bucket` | `insights-upload-perma` |
+| Koku cost data | `costManagement.storage.bucketName` | `koku-bucket` |
+| ROS data | `costManagement.storage.rosBucketName` | `ros-data` |
+
+### Credentials Secret Format
+
+All configuration paths require a Kubernetes Secret with these exact keys:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: <your-secret-name>
+type: Opaque
+stringData:
+  access-key: "<S3_ACCESS_KEY>"
+  secret-key: "<S3_SECRET_KEY>"
+```
+
+### Storage Backend Comparison
+
+| Backend | Consistency | Auto-Detected | Notes |
+|---------|-------------|---------------|-------|
+| **AWS S3** | Strong | No — manual config | For disconnected AWS deployments |
+| **Direct Ceph RGW** | Strong | Yes — via OBC | Recommended for ODF clusters |
+| **MinIO** | Strong | Yes — via `MINIO_ENDPOINT` | For development/testing |
+| **NooBaa** | Eventual | Yes — fallback | ⚠️ Not recommended (causes 403 errors) |
+
+---
+
+### Option A: AWS S3 (Manual Configuration)
+
+Use this when deploying on AWS (disconnected or otherwise) with native S3 storage. The install script does not auto-detect AWS S3, so all configuration is provided via `values.yaml`.
+
+**Prerequisites:** S3 buckets already created and IAM credentials available. The three required buckets are listed in the [Required Buckets](#required-buckets) table above.
+
+**Step 1: Create the credentials secret in the target namespace**
 
 ```bash
-# Create ObjectBucketClaim for Ceph RGW
+kubectl create secret generic aws-s3-credentials \
+  --namespace cost-onprem \
+  --from-literal=access-key="<YOUR_ACCESS_KEY>" \
+  --from-literal=secret-key="<YOUR_SECRET_KEY>"
+```
+
+**Step 2: Configure `values.yaml`**
+
+```yaml
+objectStorage:
+  endpoint: "s3.amazonaws.com"       # Or regional: s3.us-east-1.amazonaws.com
+  port: 443
+  useSSL: true
+  existingSecret: "aws-s3-credentials"
+  s3:
+    region: "us-east-1"             # Must match the bucket region
+```
+
+**Step 3: Run the install script**
+
+```bash
+VALUES_FILE=my-aws-values.yaml \
+  ./scripts/install-helm-chart.sh --namespace cost-onprem
+```
+
+The script detects that `objectStorage.endpoint` is already set and skips all S3 auto-detection, credential creation, and bucket creation.
+
+---
+
+### Option B: ODF with Direct Ceph RGW (OBC Auto-Detection)
+
+Use this on OpenShift clusters with ODF installed. Direct Ceph RGW is recommended over NooBaa because it provides strong read-after-write consistency.
+
+**Step 1: Create an ObjectBucketClaim**
+
+```bash
 cat <<EOF | oc apply -f -
 apiVersion: objectbucket.io/v1alpha1
 kind: ObjectBucketClaim
@@ -138,68 +211,59 @@ metadata:
   namespace: cost-onprem
 spec:
   generateBucketName: ros-data-ceph
-  storageClassName: ocs-storagecluster-ceph-rgw  # Direct Ceph RGW
+  storageClassName: ocs-storagecluster-ceph-rgw
 EOF
 
 # Wait for provisioning
 oc wait --for=condition=Ready obc/ros-data-ceph -n cost-onprem --timeout=5m
-
-# OBC auto-detection happens automatically during Helm installation
 ```
 
-**OBC Auto-Detection:**
+**Step 2: Run the install script**
 
-The installation script automatically:
-- Detects existing ObjectBucketClaims in the namespace
+```bash
+./scripts/install-helm-chart.sh --namespace cost-onprem
+```
+
+The script automatically:
+- Detects the OBC named `ros-data-ceph` in the namespace
 - Extracts bucket name, endpoint, port, and credentials
-- Creates storage credentials secret from OBC
-- Configures Helm deployment with correct values
+- Creates the storage credentials secret
+- Passes `objectStorage.endpoint`, `objectStorage.port`, etc. to Helm via `--set`
 
-**Configuration:**
-```yaml
-odf:
-  endpoint: ""  # Auto-detected from OBC or specify manually
-  port: 443
-  useSSL: true
-  bucket: "ros-data"  # Auto-detected from OBC
-  
-  # External ObjectBucketClaim configuration
-  useExternalOBC: false  # Set to true when using pre-created OBC
-```
+No `values.yaml` changes needed for this path.
 
-**Manual Configuration (if not using OBC auto-detection):**
+**Manual ODF configuration** (if not using OBC auto-detection):
+
 ```yaml
-odf:
+objectStorage:
   endpoint: "rook-ceph-rgw-ocs-storagecluster-cephobjectstore.openshift-storage.svc"
-  s3:
-    region: "onprem"  # Default for NooBaa/MinIO; use "us-east-1" for AWS S3
-  bucket: "ros-data-ceph-bfe1f304-xxx"  # From OBC ConfigMap
-  pathStyle: true
-  useSSL: true
   port: 443
-  credentials:
-    secretName: "cost-onprem-storage-credentials"  # Auto-created from OBC
+  useSSL: true
+  existingSecret: ""  # Let the install script create it from NooBaa credentials
+  s3:
+    region: "onprem"
 ```
 
-**Storage Class Comparison:**
+---
 
-| Storage Backend | StorageClass | Consistency | Status |
-|----------------|--------------|-------------|--------|
-| **Direct Ceph RGW** | `ocs-storagecluster-ceph-rgw` | Strong | ✅ **Recommended** |
-| **NooBaa** | `ocs-storagecluster-ceph-rbd` | Eventual | ⚠️ Not Recommended |
-| **MinIO** | Any | Strong | ✅ Supported |
-| **AWS S3** | N/A (external) | Strong | ✅ Supported |
+### Option C: MinIO (Development/Testing)
 
-**Why Direct Ceph RGW?**
-- Strong read-after-write consistency
-- No 403 errors on freshly uploaded files
-- Immediate availability of objects
-- Better performance for ROS processing
+Use this for local development or testing on OCP clusters without dedicated object storage.
 
-**Access:**
-- **Internal**: `rook-ceph-rgw-ocs-storagecluster-cephobjectstore.openshift-storage.svc`
-- **Port**: 443 (HTTPS)
-- **Credentials**: Auto-extracted from OBC or manually created secret
+See [MinIO Development Setup Guide](../development/ocp-dev-setup-minio.md) for full instructions.
+
+**Quick start:**
+
+```bash
+# Deploy MinIO
+./scripts/deploy-minio-test.sh cost-onprem
+
+# Install chart with MinIO
+MINIO_ENDPOINT="http://minio.cost-onprem.svc.cluster.local:80" \
+  ./scripts/install-helm-chart.sh --namespace cost-onprem
+```
+
+The script auto-detects the `MINIO_ENDPOINT`, creates storage credentials from the MinIO secret, creates buckets, and passes `objectStorage.endpoint`, `objectStorage.port=80`, `objectStorage.useSSL=false` to Helm.
 
 ### Storage Class Configuration
 
@@ -491,12 +555,12 @@ helm install cost-onprem ./cost-onprem -f values-production.yaml
 ### OpenShift Configuration
 
 ```yaml
-# Use ODF
-odf:
-  endpoint: "s3.openshift-storage.svc.cluster.local"
-  bucket: "ros-data"
-  credentials:
-    secretName: "cost-onprem-odf-credentials"
+# S3-compatible object storage (see Storage Configuration section for full options)
+objectStorage:
+  endpoint: ""  # Auto-detected by install script, or set manually
+  port: 443
+  useSSL: true
+  existingSecret: ""  # Set to use a pre-existing credentials secret
 
 # OpenShift Routes
 gatewayRoute:

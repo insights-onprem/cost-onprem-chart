@@ -101,38 +101,23 @@ https://cost-onprem-ui-cost-onprem.apps.cluster.com        # UI (web interface)
 
 ### Storage
 
-**ODF (OpenShift Data Foundation):**
-- Uses existing ODF installation
-- NooBaa S3 service
-- Enterprise-grade storage
-- Requires credentials secret
-
-**Prerequisites:**
-```bash
-# Verify ODF installation
-oc get noobaa -n openshift-storage
-oc get storagecluster -n openshift-storage
-
-# Create credentials secret
-oc create secret generic cost-onprem-odf-credentials \
-  --from-literal=access-key=<key> \
-  --from-literal=secret-key=<secret> \
-  -n cost-onprem
-```
+**S3-Compatible Object Storage:**
+- Any S3-compatible backend (ODF, AWS S3, MinIO, or other)
+- ODF is **not required** — it is one option among several
+- Requires credentials secret with `access-key` and `secret-key`
 
 **Configuration:**
 ```yaml
-odf:
-  endpoint: "s3.openshift-storage.svc.cluster.local"
-  s3:
-    region: "onprem"  # Default for NooBaa/MinIO; use "us-east-1" for AWS S3
-  bucket: "ros-data"
-  pathStyle: true
-  useSSL: true
+objectStorage:
+  endpoint: "s3.amazonaws.com"       # Or ODF: s3.openshift-storage.svc
   port: 443
-  credentials:
-    secretName: "cost-onprem-odf-credentials"
+  useSSL: true
+  existingSecret: "my-s3-credentials"
+  s3:
+    region: "us-east-1"              # Or "onprem" for non-AWS backends
 ```
+
+See [Storage Configuration](../operations/configuration.md#storage-configuration) for full details including AWS S3, ODF, and MinIO options.
 
 ### Security
 
@@ -232,11 +217,11 @@ gatewayRoute:
     termination: edge
     insecureEdgeTerminationPolicy: Redirect
 
-odf:
-  endpoint: "s3.openshift-storage.svc.cluster.local"
-  bucket: "ros-data"
-  credentials:
-    secretName: "cost-onprem-odf-credentials"
+objectStorage:
+  endpoint: ""  # Auto-detected by install script, or set manually
+  port: 443
+  useSSL: true
+  existingSecret: ""  # Set to use a pre-existing credentials secret
 
 global:
   platform:
@@ -267,18 +252,17 @@ oc rsh deployment/cost-onprem-gateway
 curl http://localhost:9080/ready
 ```
 
-**ODF issues:**
+**S3 storage issues:**
 ```bash
-# Check ODF status
-oc get noobaa -n openshift-storage
-oc get cephcluster -n openshift-storage
+# Check storage credentials secret
+oc get secret -n cost-onprem -l app.kubernetes.io/component=storage
 
-# Check credentials secret
-oc get secret cost-onprem-odf-credentials -n cost-onprem
-
-# Test S3 connectivity
+# Test S3 connectivity from ingress pod
 oc rsh deployment/cost-onprem-ingress
-aws --endpoint-url https://s3.openshift-storage... s3 ls
+aws --endpoint-url <S3_ENDPOINT> s3 ls
+
+# If using ODF, check NooBaa status
+oc get noobaa -n openshift-storage
 ```
 
 **Security Context Constraints:**

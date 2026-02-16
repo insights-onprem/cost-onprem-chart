@@ -2,7 +2,7 @@
 
 # Deploy MinIO for Testing in OpenShift Cluster
 # This script deploys a standalone MinIO instance for testing the cost-onprem chart
-# with MinIO instead of ODF. This simulates the CI environment in an OCP cluster.
+# with MinIO instead of cluster object storage. This simulates the CI environment in an OCP cluster.
 
 set -e  # Exit on any error
 

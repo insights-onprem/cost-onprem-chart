@@ -211,7 +211,7 @@ For resource-constrained environments, you can reduce the deployment footprint:
 | Component | Storage Class | Size | Notes |
 |-----------|---------------|------|-------|
 | PostgreSQL | Block (RWO) | 30 Gi | Main application database |
-| ODF/MinIO | Object Storage | 150+ Gi | Cost report storage |
+| S3 Object Storage | Object Storage | 150+ Gi | Cost report storage |
 | Kafka | Block (RWO) | 50 Gi x 3 | Message persistence |
 | ZooKeeper | Block (RWO) | 10 Gi x 3 | Coordination state |
 | Valkey | Block (RWO) | 5 Gi | Cache persistence |

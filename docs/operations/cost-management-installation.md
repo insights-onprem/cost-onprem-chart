@@ -66,29 +66,22 @@
 | **Total CPU Limit** | **~12 cores** | **14+ cores** |
 | **Total Memory Request** | **~12.3Gi** | **19+ Gi** |
 | **Total Memory Limit** | **~19.6Gi** | **30+ Gi** |
-| **Storage (ODF)** | **150 GB** | **300+ GB** |
+| **S3 Object Storage** | **150 GB** | **300+ GB** |
 
 **Note:** These totals exclude Kafka (Strimzi), which adds ~7 pods and ~3.2 cores / ~7Gi memory.
 
 ### Required OpenShift Components
 
-#### 1. OpenShift Data Foundation (ODF)
-```bash
-# Verify ODF is installed
-oc get csv -n openshift-storage | grep odf-operator
+#### 1. S3-Compatible Object Storage
 
-# Verify NooBaa (S3-compatible storage) is running
-oc get noobaa -n openshift-storage
+The chart requires S3-compatible object storage. ODF is **not required** — any S3 provider works (AWS S3, ODF with Direct Ceph RGW, MinIO, etc.).
 
-# Check available storage
-oc get pvc -n openshift-storage
-```
+See the [Storage Configuration](configuration.md#storage-configuration) section for full setup options.
 
-**Minimum ODF Requirements:**
-- **Storage Class:** `ocs-storagecluster-ceph-rbd` or equivalent
-- **Disk Space:** 150GB+ for development (300GB+ for production)
-- **S3 Endpoint:** NooBaa S3 service accessible
-- **Credentials:** Auto-discovered from `noobaa-admin` secret
+**Minimum Requirements:**
+- **S3-compatible endpoint** accessible from the cluster
+- **Credentials** with read/write access to the required buckets
+- **150GB+** for development (300GB+ for production)
 
 #### 2. Kafka / Strimzi
 
@@ -183,11 +176,11 @@ jq --version
                     └──────────────────────────────┘
 
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃  STORAGE LAYER (S3/ODF)                                              ┃
+┃  STORAGE LAYER (S3-Compatible Object Storage)                        ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
             ┌─────────────────────────┐
-            │   S3 Storage (NooBaa)   │
+            │   S3 Object Storage     │
             │  • Raw CSV uploads      │
             │  • Processed data       │
             │  • Monthly partitions   │
@@ -271,8 +264,8 @@ cd /path/to/cost-onprem-chart/scripts
 ```
 
 **What the script does:**
-1. ✅ Verifies pre-requirements (ODF, Kafka)
-2. ✅ Auto-discovers ODF S3 credentials
+1. ✅ Verifies pre-requirements (S3 storage, Kafka)
+2. ✅ Auto-discovers S3 credentials (OBC, NooBaa, MinIO)
 3. ✅ Creates namespace if needed
 4. ✅ Deploys unified chart (PostgreSQL, Valkey, Koku, ROS, Sources, Kruize)
 5. ✅ Runs database migrations automatically via init container
@@ -280,7 +273,7 @@ cd /path/to/cost-onprem-chart/scripts
 
 **Features:**
 - 🔐 Automatic secret creation (Django, S3)
-- 🔍 Auto-discovers S3 credentials from ODF
+- 🔍 Auto-discovers S3 credentials from cluster (OBC, NooBaa, MinIO)
 - ✅ Chart validation and linting before deployment
 - 🎯 Pod readiness checks and status reporting
 
@@ -359,7 +352,7 @@ oc exec -n $NAMESPACE cost-onprem-database-0 -- psql -U koku -d costonprem_koku 
 
 ### 3. Verify S3 Storage
 
-The installation automatically creates the following S3 buckets (for both MinIO and ODF):
+The installation automatically creates the following S3 buckets:
 
 | Bucket | Purpose |
 |--------|---------|
@@ -368,13 +361,12 @@ The installation automatically creates the following S3 buckets (for both MinIO 
 | `insights-upload-perma` | Ingress service for operator uploads |
 
 ```bash
-# Get S3 credentials from ODF
-S3_ENDPOINT=$(oc get route s3 -n openshift-storage -o jsonpath='{.spec.host}')
-S3_ACCESS_KEY=$(oc get secret noobaa-admin -n openshift-storage -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)
-S3_SECRET_KEY=$(oc get secret noobaa-admin -n openshift-storage -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d)
+# Get S3 credentials from the storage credentials secret
+S3_ACCESS_KEY=$(kubectl get secret cost-onprem-storage-credentials -n cost-onprem -o jsonpath='{.data.access-key}' | base64 -d)
+S3_SECRET_KEY=$(kubectl get secret cost-onprem-storage-credentials -n cost-onprem -o jsonpath='{.data.secret-key}' | base64 -d)
 
-echo "S3 Endpoint: https://$S3_ENDPOINT"
-echo "Access Key: $S3_ACCESS_KEY"
+# Get the S3 endpoint from Helm values
+S3_ENDPOINT=$(helm get values cost-onprem -n cost-onprem -o json | jq -r '.objectStorage.endpoint // empty')
 
 # Verify buckets were created
 aws s3 ls --endpoint-url https://$S3_ENDPOINT

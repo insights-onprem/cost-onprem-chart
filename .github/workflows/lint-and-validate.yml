@@ -36,9 +36,9 @@ jobs:
         # Provide minimal required values for validation
         echo "Running template validation..."
         helm template cost-onprem-test . --debug --dry-run \
-          --set odf.endpoint=s3.test.example.com \
-          --set odf.credentials.accessKey=test-access-key \
-          --set odf.credentials.secretKey=test-secret-key \
+          --set objectStorage.endpoint=s3.test.example.com \
+          --set objectStorage.credentials.accessKey=test-access-key \
+          --set objectStorage.credentials.secretKey=test-secret-key \
           --set global.clusterDomain=test.example.com \
           --set global.clusterName=test-cluster \
           --set jwtAuth.keycloak.url=https://keycloak.test.example.com > /tmp/rendered.yaml

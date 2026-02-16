@@ -4,7 +4,7 @@
 # This chart deploys the complete Cost Management on-premise solution:
 # - ROS (Resource Optimization Service)
 # - Cost Management Service (Koku and Sources API)
-# - Shared infrastructure (PostgreSQL, Kafka, Valkey, MinIO/ODF)
+# - Shared infrastructure (PostgreSQL, Kafka, Valkey, S3 object storage)
 #
 # Naming conventions:
 # - Use camelCase for all variable names
@@ -676,22 +676,47 @@ valkey:
     # fsGroup: 1000740000  # Example: CI environment value
 
 # -----------------------------------------------------------------------------
-# Shared Infrastructure - Object Storage (ODF)
+# Shared Infrastructure - S3-Compatible Object Storage
 # -----------------------------------------------------------------------------
-# This chart uses OpenShift Data Foundation (ODF) for object storage.
-# ODF provides S3-compatible storage via NooBaa.
-odf:
-  # ODF endpoint - auto-detected from NooBaa CRD if not specified
-  # endpoint: "s3.openshift-storage.svc.cluster.local"
-  # port: 443
-  # useSSL: true
+# This chart requires S3-compatible object storage. Supported backends:
+#   - ODF (OpenShift Data Foundation) with NooBaa or Direct Ceph RGW
+#   - MinIO (for development/testing)
+#   - AWS S3 (for disconnected AWS deployments)
+#   - Any S3-compatible storage provider
+#
+# Configuration options:
+#   1. Manual: Set endpoint/port/useSSL/existingSecret below and pre-create
+#      the credentials secret yourself. The install script will skip S3 setup.
+#   2. Automated: Leave endpoint empty and use install-helm-chart.sh which
+#      auto-detects ODF/MinIO/OBC and configures everything.
+#
+objectStorage:
+  # S3 endpoint hostname (without protocol or port)
+  # Examples:
+  #   - ODF NooBaa:    "s3.openshift-storage.svc.cluster.local"
+  #   - Direct Ceph:   "rook-ceph-rgw-ocs-storagecluster-cephobjectstore.openshift-storage.svc"
+  #   - MinIO:         "minio.minio-test.svc.cluster.local"
+  #   - AWS S3:        "s3.amazonaws.com"
+  # When empty, the install script auto-detects from the cluster environment.
+  endpoint: ""
 
-  # rootUser and rootPassword removed - stored in cost-onprem-storage-credentials secret
-  # Created by: scripts/install-helm-chart.sh
-  # Credentials: minioadmin / <random-32-char>
+  # S3 port (443 for HTTPS, 80 for HTTP)
+  port: 443
+
+  # Whether to use SSL/TLS for S3 connections
+  useSSL: true
+
+  # Name of a pre-existing Kubernetes Secret containing S3 credentials.
+  # The secret must have keys: 'access-key' and 'secret-key'.
+  # When set, the chart uses this secret and the install script skips
+  # credential creation entirely.
+  # When empty, the install script creates a secret named
+  # '<release-name>-storage-credentials' automatically.
+  existingSecret: ""
 
   # S3 region for signature generation (required for S3v4 signatures)
-  # NooBaa/MinIO don't use regions, but boto3 requires it for signature calculation
+  # Most S3-compatible backends (NooBaa, MinIO, Ceph) don't use regions,
+  # but boto3 requires it for signature calculation.
   # Default: "onprem" (for on-premise deployments)
   # Override to AWS region (e.g., "us-east-1") if deploying to AWS S3
   s3:

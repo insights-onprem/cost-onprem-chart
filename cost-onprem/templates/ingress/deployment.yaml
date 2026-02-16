@@ -67,12 +67,12 @@ spec:
             - name: INGRESS_MINIOACCESSKEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "cost-onprem.fullname" . }}-storage-credentials
+                  name: {{ include "cost-onprem.storage.secretName" . }}
                   key: access-key
             - name: INGRESS_MINIOSECRETKEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "cost-onprem.fullname" . }}-storage-credentials
+                  name: {{ include "cost-onprem.storage.secretName" . }}
                   key: secret-key
             # AWS SDK configuration for S3v4 signatures
             - name: AWS_CONFIG_FILE

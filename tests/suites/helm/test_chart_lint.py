@@ -13,10 +13,10 @@ from utils import helm_lint, helm_template
 OFFLINE_MOCK_VALUES = {
     # Provide mock cluster domain for route generation
     "global.clusterDomain": "apps.example.com",
-    # Provide mock ODF endpoint and credentials to avoid lookup failures
-    "odf.endpoint": "https://s3.example.com",
-    "odf.credentials.accessKey": "mock-access-key",
-    "odf.credentials.secretKey": "mock-secret-key",
+    # Provide mock S3 endpoint and credentials to avoid lookup failures
+    "objectStorage.endpoint": "https://s3.example.com",
+    "objectStorage.credentials.accessKey": "mock-access-key",
+    "objectStorage.credentials.secretKey": "mock-secret-key",
     # Provide mock Keycloak URL for JWT tests
     "jwtAuth.keycloak.url": "https://keycloak.example.com",
 }
