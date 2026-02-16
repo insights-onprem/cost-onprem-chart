@@ -50,16 +50,11 @@ data:
     END
     \$\$;
 
-    -- Koku User (requires CREATEROLE and CREATEDB for Django migrations)
-    -- CREATEROLE: needed for migrations that create roles like 'hive'
-    -- CREATEDB: needed for migrations that create the 'hive' database
+    -- Koku User
     DO \$\$
     BEGIN
       IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '$KOKU_USER') THEN
-        EXECUTE 'CREATE USER $KOKU_USER WITH PASSWORD ' || quote_literal('$KOKU_PASSWORD') || ' CREATEROLE CREATEDB';
-      ELSE
-        -- Ensure privileges are granted if user already exists
-        ALTER USER $KOKU_USER CREATEROLE CREATEDB;
+        EXECUTE 'CREATE USER $KOKU_USER WITH PASSWORD ' || quote_literal('$KOKU_PASSWORD');
       END IF;
     END
     \$\$;
@@ -95,27 +90,7 @@ data:
     GRANT ALL PRIVILEGES ON DATABASE {{ .Values.database.kruize.name }} TO $KRUIZE_USER;
     ALTER DATABASE {{ .Values.database.kruize.name }} OWNER TO $KRUIZE_USER;
 
-    -- ========================================
-    -- Koku Special Configuration
-    -- ========================================
-    -- Koku requires special setup for Trino/Hive integration
-
-    -- Create hive role (used by Trino for table operations)
-    DO \$\$
-    BEGIN
-      IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'hive') THEN
-        CREATE ROLE hive LOGIN;
-      END IF;
-    END
-    \$\$;
-
-    GRANT hive TO $KOKU_USER WITH ADMIN OPTION;
-
-    -- Hive Database (required by Koku migration 0039_create_hive_db)
-    SELECT 'CREATE DATABASE hive OWNER $KOKU_USER'
-    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'hive')
-    \gexec
-
+    -- Koku Database - owned by $KOKU_USER
     GRANT ALL PRIVILEGES ON DATABASE {{ .Values.database.koku.name }} TO $KOKU_USER;
     ALTER DATABASE {{ .Values.database.koku.name }} OWNER TO $KOKU_USER;
 
