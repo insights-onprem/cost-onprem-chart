@@ -49,17 +49,3 @@ gh pr create \
 This PR triggers the chart-releaser workflow on merge to main,
 which publishes the chart to the GitHub Pages Helm repository."
 ```
-
-### 5. Post-Merge
-
-After the PR is merged to main, the `release.yml` workflow automatically:
-1. Detects the new version in `Chart.yaml`
-2. Packages the chart and creates a GitHub Release
-3. Updates the `gh-pages` branch `index.yaml`
-
-Verify the release:
-
-```bash
-helm repo update cost-onprem
-helm search repo cost-onprem
-```
