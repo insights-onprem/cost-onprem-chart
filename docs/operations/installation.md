@@ -115,6 +115,7 @@ The script deploys a unified chart containing all components:
 
 **Note**: JWT authentication is automatically enabled on OpenShift.
 
+> **BYOI (Bring Your Own Infrastructure):** When `database.deploy: false` is set in your values file, the script skips PostgreSQL credential creation and expects you to have pre-created the database credentials secret. See [External Infrastructure (BYOI)](configuration.md#external-infrastructure-byoi) for details.
 ---
 
 ### Method 2: Direct Helm Installation
@@ -260,6 +261,8 @@ The table below lists every cluster-specific value, its chart default, and how t
 | `jwtAuth.keycloak.installed` | `true` | Whether Keycloak is deployed | `true` if RHBK is installed, `false` otherwise |
 | `jwtAuth.keycloak.url` | `""` | Keycloak external URL | `oc get route keycloak -n keycloak -o jsonpath='https://{.spec.host}'` |
 | `jwtAuth.keycloak.namespace` | `""` | Namespace where Keycloak runs | Usually `keycloak` |
+| `database.deploy` | `true` | Deploy bundled PostgreSQL StatefulSet | Set `false` to use an external database (see [BYOI](configuration.md#external-infrastructure-byoi)) |
+| `valkey.deploy` | `true` | Deploy bundled Valkey Deployment | Set `false` to use an external Redis/Valkey (see [BYOI](configuration.md#external-infrastructure-byoi)) |
 
 > **Important:** The chart defaults are designed for `oc-mirror` image discovery (offline templating). They produce syntactically valid manifests but point to placeholder hostnames. For a working deployment, you **must** override the values marked above with real cluster values.
 
@@ -282,6 +285,19 @@ oc get secret -n keycloak keycloak-tls -o jsonpath='{.data.ca\.crt}' | base64 -d
 kubectl create secret generic keycloak-ca-cert \
   --namespace=cost-onprem \
   --from-file=ca.crt=/tmp/keycloak-ca.crt
+
+# 4. Database credentials (required — created by install script normally, or pre-created for BYOI)
+# When using database.deploy: false (external database), you must create this secret manually:
+kubectl create secret generic cost-onprem-db-credentials \
+  --namespace=cost-onprem \
+  --from-literal=postgres-user="admin" \
+  --from-literal=postgres-password="<admin_password>" \
+  --from-literal=ros-user="ros_user" \
+  --from-literal=ros-password="<ros_password>" \
+  --from-literal=kruize-user="kruize_user" \
+  --from-literal=kruize-password="<kruize_password>" \
+  --from-literal=koku-user="koku_user" \
+  --from-literal=koku-password="<koku_password>"
 ```
 
 #### Step 5: Verify
@@ -318,6 +334,48 @@ objectStorage:
 valkey:
   securityContext:
     fsGroup: 1000740000  # From namespace supplemental-groups annotation
+
+jwtAuth:
+  keycloak:
+    installed: true
+    url: "https://keycloak-keycloak.apps.mycluster.example.com"
+    namespace: "keycloak"
+```
+
+#### Example: BYOI `my-values.yaml` (External PostgreSQL + Valkey)
+
+For deployments using external infrastructure:
+
+```yaml
+# my-byoi-values.yaml — external database and cache
+global:
+  clusterDomain: "apps.mycluster.example.com"
+  storageClass: "gp3-csi"
+
+database:
+  deploy: false
+  server:
+    host: "my-postgres.example.com"
+    port: 5432
+    sslMode: require
+  existingSecret: "cost-onprem-db-credentials"
+
+valkey:
+  deploy: false
+  host: "my-redis.example.com"
+  port: 6379
+
+kafka:
+  bootstrapServers: "my-kafka:9092"
+  securityProtocol: "PLAINTEXT"
+
+objectStorage:
+  endpoint: "s3.us-east-1.amazonaws.com"
+  port: 443
+  useSSL: true
+  existingSecret: "my-s3-credentials"
+  s3:
+    region: "us-east-1"
 
 jwtAuth:
   keycloak:
@@ -512,6 +570,8 @@ oc wait kafka/cost-onprem-kafka --for=condition=Ready --timeout=300s -n kafka
 
 **Required Kafka Topics:**
 - `platform.upload.announce` (created automatically by Koku on first message)
+
+> **Using an existing Kafka cluster:** If you already have a Kafka cluster (e.g., AMQ Streams, Confluent, MSK), you can skip the Strimzi deployment and configure `kafka.bootstrapServers` in your values file. Set `KAFKA_BOOTSTRAP_SERVERS` when running the install script to skip Strimzi verification. Only PLAINTEXT connections are currently supported. See [External Kafka](configuration.md#external-kafka) for details.
 
 ### 6. User Workload Monitoring (Required for ROS Metrics)
 

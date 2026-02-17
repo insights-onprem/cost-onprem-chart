@@ -673,9 +673,13 @@ GRANT ALL PRIVILEGES ON DATABASE costonprem_ros TO ros_user;
 GRANT ALL PRIVILEGES ON DATABASE costonprem_kruize TO kruize_user;
 GRANT ALL PRIVILEGES ON DATABASE costonprem_koku TO koku_user;
 
--- Koku requires superuser or CREATEDB for migrations
-ALTER USER koku_user CREATEDB;
+-- Koku requires CREATEDB and CREATEROLE for migrations
+-- CREATEDB: needed for Koku migration 0039 (creates 'hive' database)
+-- CREATEROLE: needed for Koku migration that creates 'hive' role
+ALTER USER koku_user CREATEDB CREATEROLE;
 ```
+
+> **Note:** Koku Django migrations will automatically create a `hive` role and `hive` database (used for Trino/Hive integration in SaaS, unused in on-prem mode). This requires `koku_user` to have `CREATEDB` and `CREATEROLE` privileges as shown above. No manual creation of the `hive` database is needed.
 
 4. A Kubernetes Secret with all credentials:
 
@@ -758,9 +762,11 @@ When `valkey.deploy: false`:
 
 Use an existing Kafka cluster instead of the Strimzi-managed Kafka deployed by the install script.
 
+> **Known Limitation:** Only **PLAINTEXT** Kafka connections are currently supported. The `kafka.sasl.*` and `kafka.tls.*` values in `values.yaml` are reserved for future use but are **not wired into templates**. Both Koku and ROS backends do not read SASL/TLS configuration from environment variables in on-prem (non-Clowder) mode. Upstream application changes are required before chart-level SASL/TLS support can be implemented.
+
 **Prerequisites:**
 
-1. A Kafka 3.x+ cluster accessible from the OpenShift cluster
+1. A Kafka 3.x+ cluster accessible from the OpenShift cluster with **PLAINTEXT** listeners
 2. The following topics must exist (or auto-creation must be enabled):
 
 | Topic | Purpose |
@@ -769,50 +775,19 @@ Use an existing Kafka cluster instead of the Strimzi-managed Kafka deployed by t
 | `hccm.ros.events` | ROS events (ROS Processor) |
 | `rosocp.kruize.recommendations` | Kruize recommendations (ROS Recommendation Poller) |
 
-3. (For SASL) A Kubernetes Secret with Kafka credentials:
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: my-kafka-credentials
-type: Opaque
-stringData:
-  username: "<kafka_user>"
-  password: "<kafka_password>"
-```
-
-4. (For TLS) A Kubernetes Secret with the CA certificate:
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: my-kafka-ca
-type: Opaque
-data:
-  ca.crt: <base64-encoded-CA-cert>
-```
-
 **Configuration:**
 
 ```yaml
 # values.yaml
 kafka:
-  bootstrapServers: "my-kafka-broker1:9093,my-kafka-broker2:9093"
-  securityProtocol: "SASL_SSL"
-  sasl:
-    mechanism: "SCRAM-SHA-512"
-    existingSecret: "my-kafka-credentials"
-  tls:
-    enabled: true
-    caCertSecret: "my-kafka-ca"
+  bootstrapServers: "my-kafka-broker1:9092,my-kafka-broker2:9092"
+  securityProtocol: "PLAINTEXT"
 ```
 
 **Install script behavior:** When running `install-helm-chart.sh`, set `KAFKA_BOOTSTRAP_SERVERS` to skip Strimzi verification:
 
 ```bash
-KAFKA_BOOTSTRAP_SERVERS="my-kafka-broker1:9093" ./scripts/install-helm-chart.sh --namespace cost-onprem
+KAFKA_BOOTSTRAP_SERVERS="my-kafka-broker1:9092" ./scripts/install-helm-chart.sh --namespace cost-onprem
 ```
 
 **Consumers:** Ingress (producer), Koku Listener (consumer), ROS Processor (consumer), ROS Recommendation Poller (consumer), ROS Housekeeper, ROS API.
