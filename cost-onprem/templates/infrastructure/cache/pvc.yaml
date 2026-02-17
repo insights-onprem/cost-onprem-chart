@@ -1,4 +1,4 @@
-{{- if .Values.valkey.persistence.enabled }}
+{{- if and .Values.valkey.deploy .Values.valkey.persistence.enabled }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
