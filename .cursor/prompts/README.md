@@ -14,6 +14,7 @@ In Cursor, type `@` followed by the prompt name to include it in your conversati
 - `@debug-e2e` - Debug E2E test failures
 - `@download-ci-artifacts` - Download CI artifacts for debugging
 - `@maintain-pr-summary` - Maintain a running PR summary document
+- `@release-chart` - Cut a new Helm chart release
 
 ## Available Prompts
 
@@ -27,6 +28,7 @@ In Cursor, type `@` followed by the prompt name to include it in your conversati
 | `debug-e2e.md` | Step-by-step debugging for each E2E test |
 | `download-ci-artifacts.md` | Download CI artifacts from OpenShift CI |
 | `maintain-pr-summary.md` | Maintain a running PR summary as work is developed |
+| `release-chart.md` | Bump chart version and create a release PR |
 
 ## Example Usage
 
