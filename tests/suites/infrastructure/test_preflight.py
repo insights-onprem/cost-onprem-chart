@@ -20,15 +20,19 @@ from utils import (
 class TestPodHealth:
     """Tests for pod health status."""
 
-    def test_database_pod_exists(self, cluster_config):
-        """Verify database pod exists."""
+    def test_database_pod_exists(self, cluster_config, database_deployed):
+        """Verify database pod exists (bundled deployments only)."""
+        if not database_deployed:
+            pytest.skip("Database not deployed by chart (BYOI mode)")
         assert check_pod_exists(
             cluster_config.namespace,
             "app.kubernetes.io/component=database"
         ), "Database pod not found"
 
-    def test_database_pod_ready(self, cluster_config):
-        """Verify database pod is ready."""
+    def test_database_pod_ready(self, cluster_config, database_deployed):
+        """Verify database pod is ready (bundled deployments only)."""
+        if not database_deployed:
+            pytest.skip("Database not deployed by chart (BYOI mode)")
         assert check_pod_ready(
             cluster_config.namespace,
             "app.kubernetes.io/component=database"
@@ -64,7 +68,7 @@ class TestDatabaseConnectivity:
     def test_database_accepts_connections(self, cluster_config, database_config):
         """Verify database accepts connections."""
         result = exec_in_pod(
-            cluster_config.namespace,
+            database_config.namespace,
             database_config.pod_name,
             ["pg_isready", "-U", database_config.user, "-d", database_config.database],
         )
@@ -84,7 +88,7 @@ class TestDatabaseConnectivity:
         if database_config.password:
             cmd = ["env", f"PGPASSWORD={database_config.password}"] + cmd
         
-        result = exec_in_pod(cluster_config.namespace, database_config.pod_name, cmd)
+        result = exec_in_pod(database_config.namespace, database_config.pod_name, cmd)
         
         assert result is not None and "1" in result, f"{db_name} database not found"
 
@@ -99,7 +103,7 @@ class TestDatabaseConnectivity:
         if kruize_database_config.password:
             cmd = ["env", f"PGPASSWORD={kruize_database_config.password}"] + cmd
         
-        result = exec_in_pod(cluster_config.namespace, kruize_database_config.pod_name, cmd)
+        result = exec_in_pod(kruize_database_config.namespace, kruize_database_config.pod_name, cmd)
         
         assert result is not None and "1" in result, f"{db_name} database not found"
 

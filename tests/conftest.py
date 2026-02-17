@@ -16,7 +16,15 @@ import pytest
 import requests
 import urllib3
 
-from utils import get_route_url, get_secret_value, run_oc_command
+from utils import (
+    check_pod_exists,
+    exec_in_pod,
+    get_pod_by_label,
+    get_route_url,
+    get_secret_value,
+    run_helm_command,
+    run_oc_command,
+)
 
 # Import shared fixtures from test suites
 # These fixtures are available to all test suites
@@ -249,47 +257,149 @@ def ingress_url(gateway_url: str) -> str:
     return f"{base}/api/ingress"
 
 
+# =============================================================================
+# Database Discovery Helpers
+# =============================================================================
+
+# Pod label -> env var name mapping for database host discovery.
+# ROS pods use DB_HOST; Koku pods use DATABASE_SERVICE_HOST.
+# Both resolve to the same Helm-templated value.
+_DB_HOST_LOOKUPS = [
+    ("app.kubernetes.io/component=ros-api", "DB_HOST"),
+    ("app.kubernetes.io/component=cost-management-api", "DATABASE_SERVICE_HOST"),
+    ("app.kubernetes.io/component=cost-processor", "DATABASE_SERVICE_HOST"),
+]
+
+
+def _get_db_host_from_app_pod(cluster_config: ClusterConfig) -> Optional[str]:
+    """Read the database host from a running app pod's environment.
+
+    The Helm templates resolve the database host (bundled or external) and inject
+    it as an environment variable into every app pod.  Reading it back gives us
+    the concrete hostname without needing to parse Helm values or sentinels.
+    """
+    for label, env_var in _DB_HOST_LOOKUPS:
+        pod = get_pod_by_label(cluster_config.namespace, label)
+        if pod:
+            result = exec_in_pod(
+                cluster_config.namespace, pod, ["printenv", env_var]
+            )
+            if result and result.strip():
+                return result.strip()
+    return None
+
+
+def _parse_k8s_service(hostname: str) -> tuple[Optional[str], Optional[str]]:
+    """Parse a Kubernetes service FQDN into (namespace, service_name).
+
+    Handles forms like:
+      postgresql.byoi-infra.svc.cluster.local  -> ("byoi-infra", "postgresql")
+      postgresql.byoi-infra.svc                -> ("byoi-infra", "postgresql")
+    Returns (None, None) for non-FQDN hostnames.
+    """
+    parts = hostname.split(".")
+    if len(parts) >= 3 and "svc" in parts:
+        svc_idx = parts.index("svc")
+        if svc_idx >= 2:
+            return parts[svc_idx - 1], parts[svc_idx - 2]
+    return None, None
+
+
+def _find_db_pod(namespace: str, service_name: str) -> Optional[str]:
+    """Find the database pod backing a Kubernetes service.
+
+    Tries service endpoints first, then falls back to common PostgreSQL labels.
+    """
+    # Try endpoints (most reliable – works for any service type)
+    result = run_oc_command([
+        "get", "endpoints", service_name, "-n", namespace,
+        "-o", "jsonpath={.subsets[0].addresses[0].targetRef.name}"
+    ], check=False)
+    if result.stdout.strip():
+        return result.stdout.strip()
+
+    # Fallback: common PostgreSQL label selectors
+    for label in [
+        "app.kubernetes.io/component=database",
+        "app=postgresql",
+        "app.kubernetes.io/name=postgresql",
+    ]:
+        pod = get_pod_by_label(namespace, label)
+        if pod:
+            return pod
+    return None
+
+
+@pytest.fixture(scope="session")
+def database_deployed(cluster_config: ClusterConfig) -> bool:
+    """Detect whether the chart deployed a bundled database pod.
+
+    Returns True for default (bundled) deployments, False for BYOI.
+    Used only by tests that verify chart-created resources (pod exists, service exists).
+    """
+    return check_pod_exists(
+        cluster_config.namespace, "app.kubernetes.io/component=database"
+    )
+
+
 @pytest.fixture(scope="session")
 def database_config(cluster_config: ClusterConfig) -> DatabaseConfig:
-    """Get database configuration for Koku.
-    
-    Detects the actual database name from the Koku deployment's DATABASE_NAME
-    environment variable, falling back to 'costonprem_koku' if not found.
+    """Discover the database pod and return Koku database configuration.
+
+    Single code path for both bundled and BYOI deployments:
+    1. Read the resolved DB_HOST from a running app pod
+    2. Parse the hostname to determine namespace and service
+    3. Find the actual database pod via service endpoints
+    4. Detect the actual database name from the Koku deployment
     """
-    # Find database pod
-    result = run_oc_command([
-        "get", "pods", "-n", cluster_config.namespace,
-        "-l", "app.kubernetes.io/component=database",
-        "-o", "jsonpath={.items[0].metadata.name}"
-    ], check=False)
-    
-    db_pod = result.stdout.strip()
+    # Step 1: Get the resolved DB host from any running app pod
+    db_host = _get_db_host_from_app_pod(cluster_config)
+    if not db_host:
+        pytest.skip(
+            "Cannot determine database host (no app pod with DB_HOST found)"
+        )
+
+    # Step 2: Resolve hostname to namespace + service name
+    if ".svc" in db_host:
+        # FQDN: "postgresql.byoi-infra.svc.cluster.local"
+        db_namespace, service_name = _parse_k8s_service(db_host)
+        if not db_namespace:
+            pytest.skip(f"Cannot parse k8s service from DB host: {db_host}")
+    else:
+        # Simple name: "cost-onprem-database" (same namespace)
+        db_namespace = cluster_config.namespace
+        service_name = db_host
+
+    # Step 3: Find the actual database pod
+    db_pod = _find_db_pod(db_namespace, service_name)
     if not db_pod:
-        # Try fallback pod name
-        db_pod = f"{cluster_config.helm_release_name}-database-0"
-    
-    # Get credentials from secret
+        pytest.skip(
+            f"Cannot locate database pod for host: {db_host} "
+            f"(namespace: {db_namespace})"
+        )
+
+    # Step 4: Get credentials from chart secret (always in chart namespace)
     secret_name = f"{cluster_config.helm_release_name}-db-credentials"
     db_user = get_secret_value(cluster_config.namespace, secret_name, "koku-user")
     db_password = get_secret_value(cluster_config.namespace, secret_name, "koku-password")
-    
+
     if not db_user:
         db_user = "koku_user"  # Chart default from values.yaml
-    
+
     # Detect actual database name from Koku deployment (unified koku-api)
     db_name_result = run_oc_command([
         "get", "deployment", f"{cluster_config.helm_release_name}-koku-api",
         "-n", cluster_config.namespace,
         "-o", "jsonpath={.spec.template.spec.containers[0].env[?(@.name=='DATABASE_NAME')].value}"
     ], check=False)
-    
+
     db_name = db_name_result.stdout.strip() if db_name_result.returncode == 0 else ""
     if not db_name:
         db_name = "costonprem_koku"  # Chart default from values.yaml
-    
+
     return DatabaseConfig(
         pod_name=db_pod,
-        namespace=cluster_config.namespace,
+        namespace=db_namespace,
         database=db_name,
         user=db_user,
         password=db_password,
@@ -297,45 +407,36 @@ def database_config(cluster_config: ClusterConfig) -> DatabaseConfig:
 
 
 @pytest.fixture(scope="session")
-def kruize_database_config(cluster_config: ClusterConfig) -> DatabaseConfig:
+def kruize_database_config(
+    cluster_config: ClusterConfig, database_config: DatabaseConfig
+) -> DatabaseConfig:
     """Get database configuration for Kruize.
-    
-    Detects the actual database name from the Kruize deployment's
-    database_name environment variable.
+
+    Reuses the database pod discovered by database_config (same unified server)
+    and detects the Kruize database name from the Kruize deployment.
     """
-    # Find database pod (same as Koku - unified database)
-    result = run_oc_command([
-        "get", "pods", "-n", cluster_config.namespace,
-        "-l", "app.kubernetes.io/component=database",
-        "-o", "jsonpath={.items[0].metadata.name}"
-    ], check=False)
-    
-    db_pod = result.stdout.strip()
-    if not db_pod:
-        db_pod = f"{cluster_config.helm_release_name}-database-0"
-    
-    # Get Kruize credentials from secret
+    # Get Kruize credentials from secret (always in chart namespace)
     secret_name = f"{cluster_config.helm_release_name}-db-credentials"
     db_user = get_secret_value(cluster_config.namespace, secret_name, "kruize-user")
     db_password = get_secret_value(cluster_config.namespace, secret_name, "kruize-password")
-    
+
     if not db_user:
         db_user = "kruize_user"
-    
+
     # Detect actual database name from Kruize deployment
     db_name_result = run_oc_command([
         "get", "deployment", f"{cluster_config.helm_release_name}-kruize",
         "-n", cluster_config.namespace,
         "-o", "jsonpath={.spec.template.spec.containers[0].env[?(@.name=='database_name')].value}"
     ], check=False)
-    
+
     db_name = db_name_result.stdout.strip() if db_name_result.returncode == 0 else ""
     if not db_name:
         db_name = "costonprem_kruize"  # Default from values.yaml
-    
+
     return DatabaseConfig(
-        pod_name=db_pod,
-        namespace=cluster_config.namespace,
+        pod_name=database_config.pod_name,
+        namespace=database_config.namespace,
         database=db_name,
         user=db_user,
         password=db_password,
