@@ -106,6 +106,23 @@ parse_minio_namespace() {
     parse_minio_host "$1" | cut -d. -f2
 }
 
+# Read a value from the user-supplied Helm values file using yq
+# Usage: get_helm_value "database.deploy" "true"
+# Returns the value from VALUES_FILE if set, otherwise returns the default
+get_helm_value() {
+    local key="$1"
+    local default="${2:-}"
+    if [ -n "$VALUES_FILE" ] && [ -f "$VALUES_FILE" ]; then
+        local val
+        val=$(yq e ".$key // \"\"" "$VALUES_FILE" 2>/dev/null)
+        if [ -n "$val" ] && [ "$val" != "null" ]; then
+            echo "$val"
+            return
+        fi
+    fi
+    echo "$default"
+}
+
 # Function to check if a command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1
@@ -1845,10 +1862,17 @@ main() {
     echo_info "════════════════════════════════════════════════════════════"
     echo ""
 
-    # Create database credentials secret (always required)
-    if ! create_database_credentials_secret; then
-        echo_error "Failed to create database credentials. Cannot proceed with installation."
-        exit 1
+    # Create database credentials secret (skip when using external database)
+    local database_deploy
+    database_deploy=$(get_helm_value "database.deploy" "true")
+    if [ "$database_deploy" = "false" ]; then
+        echo_info "Skipping database credentials creation (database.deploy=false, using external database)"
+        echo_info "Ensure the database credentials secret already exists in namespace '$NAMESPACE'"
+    else
+        if ! create_database_credentials_secret; then
+            echo_error "Failed to create database credentials. Cannot proceed with installation."
+            exit 1
+        fi
     fi
 
     # Create storage credentials secret
