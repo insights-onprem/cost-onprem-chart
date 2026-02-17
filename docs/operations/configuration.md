@@ -380,6 +380,52 @@ gatewayRoute:
 
 ---
 
+## Cluster-Specific Values (Required Overrides)
+
+The chart ships with safe defaults that allow offline templating (required for `oc-mirror` image discovery). However, these defaults point to placeholder hostnames and may not match your cluster. For a working deployment, you must override the cluster-specific values listed below.
+
+When using `install-helm-chart.sh`, these values are **auto-detected** and passed via `--set`. When installing directly with `helm install`, you must provide them yourself.
+
+### Values Reference
+
+| Value | Chart Default | Required? | Description |
+|-------|---------------|-----------|-------------|
+| `global.clusterDomain` | `apps.cluster.local` | Yes (OpenShift) | Wildcard domain for Route hostnames. Routes will not resolve without the real domain. |
+| `global.storageClass` | `ocs-storagecluster-ceph-rbd` | Recommended | Default StorageClass for all PVCs. Override if your cluster uses a different default. |
+| `global.volumeMode` | `Filesystem` | No | PVC volume mode. Change only if using raw block storage. |
+| `objectStorage.endpoint` | `s3.openshift-storage.svc.cluster.local` | Yes | S3-compatible endpoint hostname. Must point to your actual S3 provider. |
+| `objectStorage.port` | `443` | No | S3 endpoint port. |
+| `objectStorage.useSSL` | `true` | No | Use TLS for S3 connections. Set `false` for MinIO or other HTTP-only backends. |
+| `objectStorage.existingSecret` | `""` | Yes (direct install) | Name of a pre-created `Secret` containing `access-key` and `secret-key`. |
+| `valkey.securityContext.fsGroup` | *(unset)* | Yes (OpenShift) | GID for Valkey PVC file ownership. Without this, Valkey pods fail with PVC permission errors. |
+| `jwtAuth.keycloak.installed` | `true` | No | Set `false` if Keycloak is not deployed. |
+| `jwtAuth.keycloak.url` | `""` | Recommended | Keycloak external URL. Defaults to internal cluster URL `https://keycloak-service.keycloak.svc.cluster.local:8080` when empty. |
+| `jwtAuth.keycloak.namespace` | `""` | No | Keycloak namespace. Defaults to `keycloak` when empty. |
+
+### How to Detect Values
+
+```bash
+# Cluster domain
+oc get ingress.config.openshift.io cluster -o jsonpath='{.spec.domain}'
+
+# Default storage class
+kubectl get sc  # Look for the (default) annotation
+
+# Valkey fsGroup (from namespace supplemental-groups annotation)
+oc get ns cost-onprem -o jsonpath='{.metadata.annotations.openshift\.io/sa\.scc\.supplemental-groups}'
+# Returns "1000740000/10000" — use the first number: 1000740000
+
+# Keycloak URL
+oc get route keycloak -n keycloak -o jsonpath='{.spec.host}'
+# Prepend https:// to get the full URL
+```
+
+### Why Defaults Exist
+
+The chart must template successfully with zero `--set` flags so that `oc-mirror` can discover all container images for disconnected mirroring. The defaults produce valid YAML but point to placeholder hostnames (e.g., `apps.cluster.local`). The install script — or your own automation — must override these with real values before deployment.
+
+---
+
 ## Configuration Values
 
 ### Basic Configuration

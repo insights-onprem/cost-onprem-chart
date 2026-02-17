@@ -23,8 +23,14 @@ global:
   pullPolicy: IfNotPresent
   imagePullSecrets: []
 
-  # Storage class for persistent volumes (auto-detected if empty)
-  storageClass: ""
+  # Cluster domain for Route hostnames (detected by install script; default allows offline templating)
+  clusterDomain: "apps.cluster.local"
+
+  # Storage class for PVCs (detected by install script; default allows offline templating)
+  storageClass: "ocs-storagecluster-ceph-rbd"
+
+  # Volume mode for PVCs (Filesystem or Block)
+  volumeMode: "Filesystem"
 
   # Init container images (shared across all services)
   # Using alternative registries to avoid docker.io rate limits
@@ -687,8 +693,8 @@ valkey:
 # Configuration options:
 #   1. Manual: Set endpoint/port/useSSL/existingSecret below and pre-create
 #      the credentials secret yourself. The install script will skip S3 setup.
-#   2. Automated: Leave endpoint empty and use install-helm-chart.sh which
-#      auto-detects ODF/MinIO/OBC and configures everything.
+#   2. Automated: Use install-helm-chart.sh which auto-detects ODF/MinIO/OBC
+#      and overrides the default endpoint via --set.
 #
 objectStorage:
   # S3 endpoint hostname (without protocol or port)
@@ -697,8 +703,8 @@ objectStorage:
   #   - Direct Ceph:   "rook-ceph-rgw-ocs-storagecluster-cephobjectstore.openshift-storage.svc"
   #   - MinIO:         "minio.minio-test.svc.cluster.local"
   #   - AWS S3:        "s3.amazonaws.com"
-  # When empty, the install script auto-detects from the cluster environment.
-  endpoint: ""
+  # When empty, the install script auto-detects. Default allows offline templating (oc-mirror, helm template).
+  endpoint: "s3.openshift-storage.svc.cluster.local"
 
   # S3 port (443 for HTTPS, 80 for HTTP)
   port: 443
@@ -756,23 +762,15 @@ jwtAuth:
   # Keycloak configuration for JWT validation
   # Supported operator: Red Hat Build of Keycloak (RHBK) v22+ - k8s.keycloak.org/v2alpha1
   keycloak:
-    # Keycloak URL - leave empty for automatic runtime discovery
-    #
-    # Runtime Discovery (when url is empty):
-    #   1. Searches for Keycloak Route in common namespaces (keycloak, keycloak-system)
-    #   2. Falls back to Keycloak Service discovery (cluster-local)
-    #   3. Fails with helpful message if not found
-    #
-    # Override only if using custom/external Keycloak instance
+    # Keycloak URL (detected by install script; defaults to internal cluster URL for offline templating)
+    # Override for custom/external Keycloak instances
     url: ""  # e.g., "https://keycloak-keycloak.apps.example.com"
 
-    # Keycloak namespace - leave empty for automatic discovery
-    # Set this if Keycloak is deployed in a custom namespace that doesn't match
-    # the standard patterns (keycloak, keycloak-system)
+    # Keycloak namespace (defaults to "keycloak" when empty)
+    # Override if Keycloak is deployed in a non-standard namespace
     namespace: ""  # e.g., "my-auth-namespace"
 
-    # Keycloak service port for internal cluster-local discovery fallback
-    # Only used when discovering Keycloak via Service (not Route)
+    # Keycloak service port for internal cluster-local URL construction
     servicePort: 8080
 
     # Keycloak realm name

@@ -13,15 +13,12 @@
 #   --set resources.kruize.requests.memory=2Gi
 
 global:
-  # Cluster domain - auto-detected if empty, but providing it skips 4 API lookups
-  # CI script will set this dynamically: $(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')
-  clusterDomain: ""  # Set by CI or leave empty for auto-detection
+  # Cluster domain — detected by install script and passed via --set
+  # When empty, the chart defaults to "apps.cluster.local" (safe for offline templating)
+  clusterDomain: "apps.cluster.local"  # Set by install script or --set global.clusterDomain=...
 
-  # Cluster name - auto-detected if empty, but providing it skips 2 API lookups
-  clusterName: ""  # Set by CI or leave empty for auto-detection
-
-# Explicit storage class names to avoid API lookups (optional but recommended for CI)
-# When provided, skips StorageClass list/get API calls (saves 2-4 lookups)
+# Storage class names — detected by install script from cluster default SC
+# Uncomment to override explicitly:
 # storageClassNames:
 #   database: "odf-storagecluster-ceph-rbd"
 #   kafka: "odf-storagecluster-ceph-rbd"
@@ -86,15 +83,14 @@ objectStorage:
   useSSL: true
   existingSecret: ""  # Set to use a pre-existing credentials secret (skips secret creation)
 
-# JWT Authentication configuration (avoids Keycloak auto-discovery lookups)
-# Providing explicit Keycloak settings saves ~8 API lookups
-# CI script will set this dynamically: $(oc get route -n keycloak keycloak -o jsonpath='{.spec.host}')
+# JWT Authentication configuration
+# Install script detects Keycloak and passes values via --set
 jwtAuth:
   keycloak:
-    # url: ""  # Set by CI script, e.g., "https://keycloak.apps.example.com"
-    installed: true  # Tells chart Keycloak exists, skips CR lookup
-    # namespace: "keycloak"  # Optional: skip namespace discovery
-    # serviceName: "keycloak"  # Optional: skip service discovery
+    # url: ""  # Set by install script, e.g., "https://keycloak.apps.example.com"
+    installed: true  # Set to false if Keycloak is not deployed
+    # namespace: "keycloak"  # Defaults to "keycloak" when empty
+    # serviceName: "keycloak-service"  # Defaults to "keycloak-service" when empty
 
 # OpenShift Routes configuration
 # Override: longer timeout (300s vs 30s default) for large file uploads

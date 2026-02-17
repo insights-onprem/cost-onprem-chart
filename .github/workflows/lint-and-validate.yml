@@ -27,22 +27,58 @@ jobs:
         cd cost-onprem
         helm lint .
 
-    - name: Validate Helm templates
+    - name: Validate Helm templates (zero --set, oc-mirror parity)
       run: |
-        echo "=== Validating Helm templates ==="
+        echo "=== Validating Helm templates with defaults only (oc-mirror parity) ==="
         cd cost-onprem
+        helm template cost-onprem . > /tmp/rendered.yaml
+        echo "✓ helm template with ZERO --set flags succeeded"
 
-        # Template validation without cluster connection
-        # Provide minimal required values for validation
-        echo "Running template validation..."
+    - name: Verify oc-mirror compatibility
+      run: |
+        set -euo pipefail
+
+        echo "=== Starting local registry ==="
+        docker run -d --name registry -p 5050:5000 registry:2
+        sleep 2
+
+        echo "=== Downloading oc-mirror ==="
+        curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/oc-mirror.tar.gz | tar -xzf -
+        chmod +x oc-mirror
+
+        echo "=== Creating ImageSetConfiguration ==="
+        cat > /tmp/imageset-config.yaml << 'EOF'
+        apiVersion: mirror.openshift.io/v2alpha1
+        kind: ImageSetConfiguration
+        mirror:
+          helm:
+            local:
+              - name: cost-onprem
+                path: ./cost-onprem
+        EOF
+
+        echo "=== Running oc-mirror --dry-run --v2 ==="
+        ./oc-mirror --config /tmp/imageset-config.yaml --workspace file:///tmp/oc-mirror-workspace docker://localhost:5050 --dry-run --v2 --dest-tls-verify=false
+
+        echo "✓ oc-mirror can discover and plan the mirror from the Helm chart"
+
+    - name: Cleanup registry
+      if: always()
+      run: |
+        docker stop registry || true
+        docker rm registry || true
+
+    - name: Validate Helm templates (with overrides)
+      run: |
+        echo "=== Validating Helm templates with overrides ==="
+        cd cost-onprem
         helm template cost-onprem-test . --debug --dry-run \
           --set objectStorage.endpoint=s3.test.example.com \
           --set objectStorage.credentials.accessKey=test-access-key \
           --set objectStorage.credentials.secretKey=test-secret-key \
           --set global.clusterDomain=test.example.com \
-          --set global.clusterName=test-cluster \
-          --set jwtAuth.keycloak.url=https://keycloak.test.example.com > /tmp/rendered.yaml
-        echo "✓ Helm template validation completed successfully"
+          --set jwtAuth.keycloak.url=https://keycloak.test.example.com > /tmp/rendered-overrides.yaml
+        echo "✓ Helm template validation with overrides completed successfully"
 
     - name: Validate Label Standards
       run: |

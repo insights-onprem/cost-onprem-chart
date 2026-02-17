@@ -10,6 +10,13 @@
 #   LOG_LEVEL       - Control output verbosity (ERROR|WARN|INFO|DEBUG, default: WARN)
 #   USE_LOCAL_CHART - Use local chart instead of GitHub release (true|false, default: false)
 #   NAMESPACE       - Target namespace (default: cost-onprem)
+#   S3_ENDPOINT     - S3 endpoint hostname for generic S3 backends (e.g., "s3.example.com")
+#   S3_PORT         - S3 port (default: 443, used with S3_ENDPOINT)
+#   S3_USE_SSL      - Whether S3 uses TLS (default: true, used with S3_ENDPOINT)
+#   S3_ACCESS_KEY   - S3 access key (bypasses secret lookup in bucket creation)
+#   S3_SECRET_KEY   - S3 secret key (bypasses secret lookup in bucket creation)
+#   SKIP_S3_SETUP   - Skip S3 bucket creation entirely (default: false)
+#   MINIO_ENDPOINT  - MinIO endpoint for dev/test (e.g., "minio.minio-test.svc.cluster.local")
 #
 # Examples:
 #   # Default (clean output with successes/warnings/errors only)
@@ -20,6 +27,9 @@
 #
 #   # Quiet (errors only)
 #   LOG_LEVEL=ERROR ./install-helm-chart.sh
+#
+#   # Generic S3 backend (non-ODF, non-MinIO)
+#   S3_ENDPOINT=s3.openshift-storage.svc S3_PORT=443 ./install-helm-chart.sh
 
 set -e  # Exit on any error
 
@@ -524,15 +534,16 @@ create_storage_credentials_secret() {
         echo_error ""
         echo_info "Available options:"
         echo_info ""
-        echo_info "Option 1: Configure in values.yaml (production - recommended)"
-        echo_info "  - Set objectStorage.endpoint and objectStorage.existingSecret"
-        echo_info "  - Pre-create the secret with 'access-key' and 'secret-key' keys"
-        echo_info ""
-        echo_info "Option 2: Provide credentials manually"
+        echo_info "Option 1: Provide credentials manually (recommended for generic S3)"
         echo_info "  kubectl create secret generic $s3_creds_secret \\"
         echo_info "      --namespace=$NAMESPACE \\"
         echo_info "      --from-literal=access-key=<your-access-key> \\"
         echo_info "      --from-literal=secret-key=<your-secret-key>"
+        echo_info "  Then set S3_ENDPOINT=<hostname> when re-running this script."
+        echo_info ""
+        echo_info "Option 2: Configure in values.yaml (production)"
+        echo_info "  - Set objectStorage.endpoint and objectStorage.existingSecret"
+        echo_info "  - Pre-create the secret with 'access-key' and 'secret-key' keys"
         echo_info ""
         echo_info "Option 3: Deploy with MinIO (Testing/CI only)"
         echo_info "  - First deploy MinIO: ./scripts/deploy-minio-test.sh minio"
@@ -588,30 +599,65 @@ create_s3_buckets() {
     fi
 
     # Determine S3 endpoint and configuration
+    # Priority: MINIO_ENDPOINT > S3_ENDPOINT env var > NooBaa auto-detect > values.yaml fallback
     local s3_url mc_insecure
 
-    # PRIORITY: If MINIO_ENDPOINT is set, use MinIO (for testing/dev)
     if [ -n "$MINIO_ENDPOINT" ]; then
+        # PRIORITY 1: MinIO (testing/dev)
         local minio_host
         minio_host=$(parse_minio_host "$MINIO_ENDPOINT")
         s3_url="http://${minio_host}:80"
         mc_insecure=""
         echo_info "  ✓ Using MinIO: $s3_url"
+    elif [ -n "${S3_ENDPOINT:-}" ]; then
+        # PRIORITY 2: Explicit S3_ENDPOINT env var (generic S3 backend)
+        local s3_port="${S3_PORT:-443}"
+        local s3_ssl="${S3_USE_SSL:-true}"
+        if [ "$s3_ssl" = "true" ]; then
+            s3_url="https://${S3_ENDPOINT}:${s3_port}"
+            mc_insecure="--insecure"
+        else
+            s3_url="http://${S3_ENDPOINT}:${s3_port}"
+            mc_insecure=""
+        fi
+        echo_info "  ✓ Using S3_ENDPOINT: $s3_url"
     elif kubectl get crd noobaas.noobaa.io >/dev/null 2>&1 && \
        kubectl get noobaa -n openshift-storage >/dev/null 2>&1; then
-        # NooBaa detected (ODF S3 backend)
+        # PRIORITY 3: NooBaa auto-detection (ODF S3 backend)
         s3_url="https://s3.openshift-storage.svc:443"
         mc_insecure="--insecure"
         echo_info "  ✓ Detected: NooBaa S3 (via ODF)"
     else
-        echo_error "Could not detect S3 storage backend"
-        echo_error "Checked for: MINIO_ENDPOINT env var, NooBaa CRD in openshift-storage"
-        echo_error ""
-        echo_error "Solutions:"
-        echo_error "  1. Configure objectStorage.endpoint in values.yaml (recommended)"
-        echo_error "  2. Set MINIO_ENDPOINT environment variable"
-        echo_error "  3. Set SKIP_S3_SETUP=true to skip bucket creation"
-        exit 1
+        # PRIORITY 4: Read objectStorage settings from base values.yaml
+        local chart_dir="${CHART_DIR:-${SCRIPT_DIR}/../cost-onprem}"
+        local base_values="${chart_dir}/values.yaml"
+        local s3_ep="" s3_port="443" s3_ssl="true"
+        if [ -f "$base_values" ] && command_exists yq; then
+            s3_ep=$(yq '.objectStorage.endpoint // ""' "$base_values" 2>/dev/null)
+            s3_port=$(yq '.objectStorage.port // 443' "$base_values" 2>/dev/null)
+            s3_ssl=$(yq '.objectStorage.useSSL // true' "$base_values" 2>/dev/null)
+        fi
+        if [ -n "$s3_ep" ]; then
+            if [ "$s3_ssl" = "true" ]; then
+                s3_url="https://${s3_ep}:${s3_port}"
+                mc_insecure="--insecure"
+            else
+                s3_url="http://${s3_ep}:${s3_port}"
+                mc_insecure=""
+            fi
+            echo_info "  ✓ Using S3 from values.yaml: $s3_url"
+        else
+            echo_error "Could not detect S3 storage backend"
+            echo_error "Checked for: MINIO_ENDPOINT, S3_ENDPOINT env vars, NooBaa CRD, values.yaml objectStorage"
+            echo_error ""
+            echo_error "Solutions:"
+            echo_error "  1. Set S3_ENDPOINT=<hostname> (e.g., S3_ENDPOINT=s3.openshift-storage.svc)"
+            echo_error "     Optional: S3_PORT=443 S3_USE_SSL=true (defaults)"
+            echo_error "  2. Configure objectStorage.endpoint in values.yaml"
+            echo_error "  3. Set MINIO_ENDPOINT for MinIO backends"
+            echo_error "  4. Set SKIP_S3_SETUP=true to skip bucket creation"
+            exit 1
+        fi
     fi
 
     # Read bucket names from values.yaml (single source of truth)
@@ -637,7 +683,15 @@ create_s3_buckets() {
     # Use kubectl run --rm for one-shot bucket creation (auto-cleanup)
     # Using UBI9 minimal image (available on OpenShift without Docker Hub rate limits)
     # Real failures (connectivity, permissions) will cause non-zero exit
-    # Security context overrides required for OpenShift Pod Security Standards
+    #
+    # IMPORTANT: --overrides must NOT include a "containers" array.
+    # When --overrides contains "containers", kubectl's strategic merge patch
+    # clobbers the "args" generated from "-- sh -c ...", causing the pod to
+    # run the image default entrypoint (/bin/bash) which exits 0 immediately
+    # without executing any bucket creation commands.
+    # Pod-level securityContext is sufficient; OpenShift SCC (nonroot-v2)
+    # automatically applies container-level security constraints.
+    # HOME=/tmp lets mc write its config without a dedicated volume mount.
     local bucket_image="registry.access.redhat.com/ubi9/ubi-minimal:latest"
     local output
     if output=$(kubectl run bucket-setup --rm -i --restart=Never \
@@ -651,31 +705,12 @@ create_s3_buckets() {
                     "seccompProfile": {
                         "type": "RuntimeDefault"
                     }
-                },
-                "containers": [{
-                    "name": "bucket-setup",
-                    "image": "'"$bucket_image"'",
-                    "securityContext": {
-                        "allowPrivilegeEscalation": false,
-                        "capabilities": {
-                            "drop": ["ALL"]
-                        },
-                        "runAsNonRoot": true,
-                        "runAsUser": 1001
-                    },
-                    "volumeMounts": [{
-                        "name": "mc-config",
-                        "mountPath": "/.mc"
-                    }]
-                }],
-                "volumes": [{
-                    "name": "mc-config",
-                    "emptyDir": {}
-                }]
+                }
             }
         }' \
         -- sh -c "
             set -e
+            export HOME=/tmp
             curl -sSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /tmp/mc && chmod +x /tmp/mc
             export PATH=/tmp:\$PATH
             mc alias set s3 ${s3_url} '${access_key}' '${secret_key}' ${mc_insecure}
@@ -771,6 +806,55 @@ cleanup_downloaded_chart() {
 }
 
 
+# Pre-flight validation: warn about cluster-specific values that could not be
+# auto-detected. These were previously discovered at render time via lookup();
+# now the install script must supply them via --set.
+preflight_validate() {
+    local warnings=0
+
+    echo_info "Pre-flight validation..."
+
+    # Cluster domain (required for Route hostnames)
+    if [ "$PLATFORM" = "openshift" ]; then
+        local cluster_domain
+        cluster_domain=$(oc get ingress.config.openshift.io cluster -o jsonpath='{.spec.domain}' 2>/dev/null || true)
+        if [ -z "$cluster_domain" ]; then
+            echo_warning "Could not detect cluster domain (ingress.config.openshift.io/cluster)"
+            echo_info "  Routes will use default 'apps.cluster.local' — override with --set global.clusterDomain=..."
+            warnings=$((warnings + 1))
+        fi
+    fi
+
+    # S3 / Object Storage endpoint
+    if [ "$USER_S3_CONFIGURED" != "true" ] && [ "$USING_EXTERNAL_OBC" != "true" ] && \
+       [ -z "$MINIO_ENDPOINT" ] && [ -z "${S3_ENDPOINT:-}" ]; then
+        # NooBaa detection
+        if ! kubectl get crd noobaas.noobaa.io >/dev/null 2>&1 || \
+           ! kubectl get noobaa -n openshift-storage >/dev/null 2>&1; then
+            echo_warning "No S3 backend detected (OBC, MinIO, S3_ENDPOINT, or NooBaa)"
+            echo_info "  Chart will use default 's3.openshift-storage.svc.cluster.local'"
+            echo_info "  Override with S3_ENDPOINT=<hostname> or --set objectStorage.endpoint=..."
+            warnings=$((warnings + 1))
+        fi
+    fi
+
+    # Keycloak (required for JWT authentication)
+    if [ "$PLATFORM" = "openshift" ] && [ "$KEYCLOAK_FOUND" != "true" ]; then
+        echo_warning "RHBK (Keycloak) not detected — JWT authentication may not work"
+        echo_info "  Deploy RHBK first or override: --set jwtAuth.keycloak.url=..."
+        warnings=$((warnings + 1))
+    fi
+
+    if [ $warnings -gt 0 ]; then
+        echo_warning "Pre-flight: $warnings warning(s) — chart defaults will be used for missing values"
+    else
+        echo_success "Pre-flight validation passed"
+    fi
+
+    # Pre-flight is advisory; always return success
+    return 0
+}
+
 # Function to deploy Helm chart
 deploy_helm_chart() {
     echo_info "Deploying Cost Management On Premise Helm chart..."
@@ -825,16 +909,58 @@ deploy_helm_chart() {
         fi
     fi
 
-    # JWT authentication is auto-enabled on OpenShift via platform detection in Helm templates
-    # Keycloak URL is auto-detected by Helm chart at render time
+    # -------------------------------------------------------------------------
+    # Cluster-detected values (FLPATH-3181: chart no longer uses lookup())
+    # The install script is the single source of truth for cluster-specific
+    # values. All detection that previously happened at Helm render time via
+    # lookup() is now done here and passed via --set.
+    # -------------------------------------------------------------------------
+
+    # Cluster domain (for Route hostnames)
     if [ "$PLATFORM" = "openshift" ]; then
-        echo_info "JWT authentication will be auto-enabled on OpenShift"
-        echo_info "  Keycloak URL will be auto-detected by Helm chart"
-        if [ -n "$KEYCLOAK_URL" ]; then
-            echo_info "  Detected Keycloak: $KEYCLOAK_URL"
+        local cluster_domain
+        cluster_domain=$(oc get ingress.config.openshift.io cluster -o jsonpath='{.spec.domain}' 2>/dev/null || true)
+        if [ -n "$cluster_domain" ]; then
+            helm_cmd="$helm_cmd --set global.clusterDomain=\"$cluster_domain\""
+            echo_info "Cluster domain: $cluster_domain"
         fi
-    else
-        echo_info "JWT authentication disabled (non-OpenShift platform)"
+    fi
+
+    # Storage class (auto-detect default)
+    local detected_sc
+    detected_sc=$(kubectl get sc -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}' 2>/dev/null | awk '{print $1}' || true)
+    if [ -n "$detected_sc" ]; then
+        helm_cmd="$helm_cmd --set global.storageClass=\"$detected_sc\""
+        echo_info "Storage class: $detected_sc"
+    fi
+
+    # Valkey fsGroup (from namespace supplemental-groups annotation)
+    if [ "$PLATFORM" = "openshift" ]; then
+        local supp_groups
+        supp_groups=$(oc get ns "$NAMESPACE" -o jsonpath='{.metadata.annotations.openshift\.io/sa\.scc\.supplemental-groups}' 2>/dev/null || true)
+        if [ -n "$supp_groups" ]; then
+            # Extract first number from "1000740000/10000" format
+            local fs_group
+            fs_group=$(echo "$supp_groups" | cut -d'/' -f1)
+            if [ -n "$fs_group" ]; then
+                helm_cmd="$helm_cmd --set valkey.securityContext.fsGroup=$fs_group"
+                echo_info "Valkey fsGroup: $fs_group"
+            fi
+        fi
+    fi
+
+    # Keycloak values (chart no longer uses lookup() for Keycloak detection)
+    if [ "$PLATFORM" = "openshift" ] && [ "$KEYCLOAK_FOUND" = "true" ]; then
+        helm_cmd="$helm_cmd --set jwtAuth.keycloak.installed=true"
+        if [ -n "$KEYCLOAK_NAMESPACE" ]; then
+            helm_cmd="$helm_cmd --set jwtAuth.keycloak.namespace=\"$KEYCLOAK_NAMESPACE\""
+        fi
+        if [ -n "$KEYCLOAK_URL" ]; then
+            helm_cmd="$helm_cmd --set jwtAuth.keycloak.url=\"$KEYCLOAK_URL\""
+        fi
+        echo_info "Keycloak: installed=true namespace=$KEYCLOAK_NAMESPACE url=${KEYCLOAK_URL:-auto}"
+    elif [ "$PLATFORM" = "openshift" ]; then
+        echo_warning "RHBK not detected — Keycloak values will use chart defaults"
     fi
 
     # S3 endpoint configuration for Helm:
@@ -871,6 +997,15 @@ deploy_helm_chart() {
         helm_cmd="$helm_cmd --set objectStorage.port=80"
         helm_cmd="$helm_cmd --set objectStorage.useSSL=false"
         echo_success "✓ S3 endpoint configured: ${minio_host} (port 80, no SSL)"
+    elif [ -n "${S3_ENDPOINT:-}" ]; then
+        # Explicit S3_ENDPOINT env var (generic S3 backend)
+        local s3_port="${S3_PORT:-443}"
+        local s3_ssl="${S3_USE_SSL:-true}"
+        echo_info "Configuring S3 endpoint from S3_ENDPOINT env var"
+        helm_cmd="$helm_cmd --set objectStorage.endpoint=\"${S3_ENDPOINT}\""
+        helm_cmd="$helm_cmd --set objectStorage.port=${s3_port}"
+        helm_cmd="$helm_cmd --set objectStorage.useSSL=${s3_ssl}"
+        echo_success "✓ S3 endpoint configured: ${S3_ENDPOINT} (port ${s3_port}, SSL=${s3_ssl})"
     elif kubectl get crd noobaas.noobaa.io >/dev/null 2>&1 && \
          kubectl get noobaa -n openshift-storage >/dev/null 2>&1; then
         # NooBaa fallback (ODF S3 backend)
@@ -1592,11 +1727,7 @@ set_platform_config() {
             echo_info "Using OpenShift values file: $openshift_values"
         else
             echo_warning "OpenShift values file not found: $openshift_values"
-            echo_info "Using base values with minimal OpenShift overrides"
-            # Fallback to minimal inline configuration if openshift-values.yaml is missing
-            HELM_EXTRA_ARGS+=(
-                "--set" "global.storageClass=odf-storagecluster-ceph-rbd"
-            )
+            echo_info "Using base values — cluster-specific overrides will be auto-detected"
         fi
     else
         echo_info "Using custom values file: $VALUES_FILE"
@@ -1823,6 +1954,9 @@ main() {
         exit 1
     fi
 
+    # Pre-flight validation (advisory — warns about missing cluster-specific values)
+    preflight_validate
+
     # Deploy Helm chart
     if ! deploy_helm_chart; then
         exit 1
@@ -1936,16 +2070,21 @@ case "${1:-}" in
         echo "    objectStorage.existingSecret in your values file."
         echo "    The script skips all S3 auto-detection when objectStorage.endpoint is set."
         echo ""
-        echo "  Option 2 (Automated): Let the script auto-detect"
+        echo "  Option 2 (Generic S3): Explicit endpoint via environment variable"
+        echo "    S3_ENDPOINT           - S3 endpoint hostname (e.g., s3.openshift-storage.svc)"
+        echo "    S3_PORT               - S3 port (default: 443)"
+        echo "    S3_USE_SSL            - Whether to use TLS (default: true)"
+        echo ""
+        echo "  Option 3 (Automated): Let the script auto-detect"
         echo "    MINIO_ENDPOINT        - MinIO endpoint (for dev/test with MinIO in OCP)"
         echo "                            Example: http://minio.minio-test.svc.cluster.local:80"
         echo "    (OBC auto-detection)  - Detects ObjectBucketClaim 'ros-data-ceph' automatically"
         echo "    (NooBaa fallback)     - Falls back to NooBaa if available"
         echo ""
-        echo "  Option 3 (Legacy): Environment variable overrides"
+        echo "  Option 4: Environment variable overrides"
+        echo "    S3_ACCESS_KEY         - Manual S3 access key for credential/bucket creation"
+        echo "    S3_SECRET_KEY         - Manual S3 secret key for credential/bucket creation"
         echo "    SKIP_S3_SETUP         - Skip S3 bucket creation entirely (default: false)"
-        echo "    S3_ACCESS_KEY         - Manual S3 access key for credential creation"
-        echo "    S3_SECRET_KEY         - Manual S3 secret key for credential creation"
         echo ""
         echo "Chart Source Options:"
         echo "  - Default: Downloads latest release from GitHub (recommended)"

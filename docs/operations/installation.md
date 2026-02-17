@@ -5,6 +5,8 @@ Complete installation methods, prerequisites, and upgrade procedures for the Cos
 ## Table of Contents
 - [Prerequisites](#prerequisites)
 - [Installation Methods](#installation-methods)
+  - [Method 1: Script-Based Installation (Recommended)](#method-1-script-based-installation-recommended)
+  - [Method 2: Direct Helm Installation](#method-2-direct-helm-installation)
 - [OpenShift Prerequisites](#openshift-prerequisites)
 - [Upgrade Procedures](#upgrade-procedures)
 - [Verification](#verification)
@@ -58,9 +60,9 @@ Ensure you have:
 
 ## Installation Methods
 
-### Method 1: Automated Installation (Recommended)
+### Method 1: Script-Based Installation (Recommended)
 
-The easiest way to install using the automation script:
+The easiest way to install using the automation script. Best for most users, CI/CD pipelines, and quick deployments.
 
 ```bash
 # Install latest release with default settings
@@ -112,75 +114,188 @@ The script deploys a unified chart containing all components:
 
 **Note**: JWT authentication is automatically enabled on OpenShift.
 
+> **Future Enhancement:** The script will support fetching charts from a Helm repository once available.
+
 ---
 
-### Method 2: GitHub Release Installation
+### Method 2: Direct Helm Installation
 
-For CI/CD systems that prefer direct control:
+For administrators who prefer full control over the deployment or cannot use the `install-helm-chart.sh` script (e.g., GitOps/ArgoCD workflows, air-gapped environments, custom CI pipelines), you can install the chart directly with `helm install`. You must supply the cluster-specific values that the install script would normally auto-detect.
 
+#### Chart Source Options
+
+| Source | Status | Use Case | Installation |
+|--------|--------|----------|--------------|
+| Helm Repository | Coming Soon | Production (preferred when available) | `helm repo add cost-onprem https://insights-onprem.github.io/cost-onprem-chart` |
+| GitHub Release | Available | Production (current) | Download `.tgz` from [releases](https://github.com/insights-onprem/cost-onprem-chart/releases) |
+| Local Source | Available | Development, testing, modifications | Clone repo and use `./cost-onprem` directory |
+
+**GitHub Release (current recommended source):**
 ```bash
-# Get latest release URL dynamically
+# Get latest release URL
 LATEST_URL=$(curl -s https://api.github.com/repos/insights-onprem/cost-onprem-chart/releases/latest | \
   jq -r '.assets[] | select(.name | endswith(".tgz")) | .browser_download_url')
 
-# Download and install
+# Download chart
 curl -L -o cost-onprem-latest.tgz "$LATEST_URL"
-helm install cost-onprem cost-onprem-latest.tgz \
-  --namespace cost-onprem \
-  --create-namespace
 
-# Verify installation
-helm status cost-onprem -n cost-onprem
+# Use cost-onprem-latest.tgz in the helm install commands below
 ```
 
-**With custom values:**
+**Local Source (for development):**
 ```bash
-helm install cost-onprem cost-onprem-latest.tgz \
-  --namespace cost-onprem \
-  --create-namespace \
-  --values my-values.yaml
-```
-
----
-
-### Method 3: Helm Repository (Future)
-
-```bash
-# Add Helm repository (once published)
-helm repo add cost-onprem https://insights-onprem.github.io/cost-onprem-chart
-helm repo update
-
-# Install from repository
-helm install cost-onprem cost-onprem/cost-onprem \
-  --namespace cost-onprem \
-  --create-namespace
-```
-
----
-
-### Method 4: Local Source Installation
-
-For development, testing, or custom modifications:
-
-```bash
-# Clone the repository
 git clone https://github.com/insights-onprem/cost-onprem-chart.git
 cd cost-onprem-chart
 
-# Method A: Using installation script
-export USE_LOCAL_CHART=true
-./scripts/install-helm-chart.sh
+# Use ./cost-onprem in the helm install commands below
+```
 
-# Method B: Direct Helm installation
-helm install cost-onprem ./cost-onprem \
-  --namespace cost-onprem \
-  --create-namespace
+#### Step 1: Gather Cluster-Specific Values
 
-# With custom values
+The chart ships with safe defaults for offline templating (used by `oc-mirror`), but real deployments require actual cluster values. Gather these from your cluster:
+
+```bash
+# Cluster domain (for Route hostnames)
+CLUSTER_DOMAIN=$(oc get ingress.config.openshift.io cluster -o jsonpath='{.spec.domain}')
+
+# Default storage class
+STORAGE_CLASS=$(kubectl get sc -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}' | awk '{print $1}')
+
+# Valkey fsGroup (from namespace supplemental-groups)
+# First, create the namespace if it doesn't exist
+oc create namespace cost-onprem --dry-run=client -o yaml | oc apply -f -
+SUPP_GROUPS=$(oc get ns cost-onprem -o jsonpath='{.metadata.annotations.openshift\.io/sa\.scc\.supplemental-groups}')
+FS_GROUP=$(echo "$SUPP_GROUPS" | cut -d'/' -f1)
+
+# Keycloak URL (if using RHBK)
+KEYCLOAK_NAMESPACE=$(oc get keycloaks.k8s.keycloak.org -A -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null)
+KEYCLOAK_HOST=$(oc get keycloaks.k8s.keycloak.org -A -o jsonpath='{.items[0].status.hostname}' 2>/dev/null)
+KEYCLOAK_URL="https://${KEYCLOAK_HOST}"
+```
+
+#### Step 2: Prepare S3 Storage
+
+Create a credentials secret and note your S3 endpoint:
+
+```bash
+kubectl create secret generic my-s3-credentials \
+  --namespace=cost-onprem \
+  --from-literal=access-key="<YOUR_ACCESS_KEY>" \
+  --from-literal=secret-key="<YOUR_SECRET_KEY>"
+```
+
+#### Step 3: Install with `--set` Flags
+
+```bash
 helm install cost-onprem ./cost-onprem \
   --namespace cost-onprem \
   --create-namespace \
-  --values custom-values.yaml
+  -f openshift-values.yaml \
+  --set global.clusterDomain="$CLUSTER_DOMAIN" \
+  --set global.storageClass="$STORAGE_CLASS" \
+  --set valkey.securityContext.fsGroup="$FS_GROUP" \
+  --set objectStorage.endpoint="<YOUR_S3_ENDPOINT>" \
+  --set objectStorage.port=443 \
+  --set objectStorage.useSSL=true \
+  --set objectStorage.existingSecret="my-s3-credentials" \
+  --set jwtAuth.keycloak.installed=true \
+  --set jwtAuth.keycloak.namespace="$KEYCLOAK_NAMESPACE" \
+  --set jwtAuth.keycloak.url="$KEYCLOAK_URL" \
+  --wait
+```
+
+#### Complete Values Reference (Direct Install)
+
+The table below lists every cluster-specific value, its chart default, and how to determine the correct value for your environment.
+
+| Value | Chart Default | Description | How to Determine |
+|-------|---------------|-------------|------------------|
+| `global.clusterDomain` | `apps.cluster.local` | OpenShift wildcard domain for Routes | `oc get ingress.config.openshift.io cluster -o jsonpath='{.spec.domain}'` |
+| `global.storageClass` | `ocs-storagecluster-ceph-rbd` | Default StorageClass for PVCs | `kubectl get sc` (look for the `(default)` annotation) |
+| `global.volumeMode` | `Filesystem` | PVC volume mode | Usually `Filesystem`; change only for raw block storage |
+| `objectStorage.endpoint` | `s3.openshift-storage.svc.cluster.local` | S3-compatible endpoint hostname | Your S3 provider's endpoint (e.g., `s3.amazonaws.com`, MinIO hostname) |
+| `objectStorage.port` | `443` | S3 endpoint port | `443` for HTTPS, `80` for HTTP |
+| `objectStorage.useSSL` | `true` | Use TLS for S3 connections | `true` for production, `false` for MinIO/dev |
+| `objectStorage.existingSecret` | `""` | Pre-created credentials secret name | Name of the `Secret` you created in Step 2 |
+| `valkey.securityContext.fsGroup` | *(unset)* | GID for Valkey PVC access on OpenShift | `oc get ns <NS> -o jsonpath='{.metadata.annotations.openshift\.io/sa\.scc\.supplemental-groups}'` (first number) |
+| `jwtAuth.keycloak.installed` | `true` | Whether Keycloak is deployed | `true` if RHBK is installed, `false` otherwise |
+| `jwtAuth.keycloak.url` | `""` | Keycloak external URL | `oc get route keycloak -n keycloak -o jsonpath='https://{.spec.host}'` |
+| `jwtAuth.keycloak.namespace` | `""` | Namespace where Keycloak runs | Usually `keycloak` |
+
+> **Important:** The chart defaults are designed for `oc-mirror` image discovery (offline templating). They produce syntactically valid manifests but point to placeholder hostnames. For a working deployment, you **must** override the values marked above with real cluster values.
+
+#### Step 4: Create Required Secrets
+
+The install script normally creates several secrets automatically. When installing directly, you must create them yourself:
+
+```bash
+# 1. Django secret key (required by Koku)
+kubectl create secret generic cost-onprem-django \
+  --namespace=cost-onprem \
+  --from-literal=django-secret-key="$(openssl rand -base64 50 | tr -dc 'a-zA-Z0-9' | head -c 50)"
+
+# 2. S3 credentials (if not already created in Step 2)
+# See Step 2 above
+
+# 3. Keycloak CA certificate (for TLS trust between oauth2-proxy and Keycloak)
+# Extract the Keycloak CA certificate and create the secret:
+oc get secret -n keycloak keycloak-tls -o jsonpath='{.data.ca\.crt}' | base64 -d > /tmp/keycloak-ca.crt
+kubectl create secret generic keycloak-ca-cert \
+  --namespace=cost-onprem \
+  --from-file=ca.crt=/tmp/keycloak-ca.crt
+```
+
+#### Step 5: Verify
+
+```bash
+# Check all pods are running
+kubectl get pods -n cost-onprem -l app.kubernetes.io/instance=cost-onprem
+
+# Check PVCs are bound
+kubectl get pvc -n cost-onprem
+
+# Check routes are created with correct hostnames
+oc get routes -n cost-onprem
+```
+
+#### Example: Minimal `my-values.yaml` for Direct Install
+
+Instead of passing many `--set` flags, you can create a values file:
+
+```yaml
+# my-values.yaml — cluster-specific overrides for direct helm install
+global:
+  clusterDomain: "apps.mycluster.example.com"
+  storageClass: "gp3-csi"
+
+objectStorage:
+  endpoint: "s3.us-east-1.amazonaws.com"
+  port: 443
+  useSSL: true
+  existingSecret: "my-s3-credentials"
+  s3:
+    region: "us-east-1"
+
+valkey:
+  securityContext:
+    fsGroup: 1000740000  # From namespace supplemental-groups annotation
+
+jwtAuth:
+  keycloak:
+    installed: true
+    url: "https://keycloak-keycloak.apps.mycluster.example.com"
+    namespace: "keycloak"
+```
+
+Then install:
+
+```bash
+helm install cost-onprem ./cost-onprem \
+  --namespace cost-onprem \
+  --create-namespace \
+  -f openshift-values.yaml \
+  -f my-values.yaml \
+  --wait
 ```
 
 ---
