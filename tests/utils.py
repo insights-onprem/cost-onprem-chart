@@ -5,7 +5,11 @@ These are helper functions that can be imported by test modules across all suite
 """
 
 import base64
+import http.client
+import io
 import json
+import re
+import socket
 import subprocess
 import tarfile
 import tempfile
@@ -13,6 +17,26 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
+
+import requests
+from requests.adapters import HTTPAdapter
+from requests.structures import CaseInsensitiveDict
+from urllib3.response import HTTPResponse
+
+
+class _FakeSocket:
+    """Minimal socket-like object for http.client.HTTPResponse.
+    
+    Used by PodAdapter to parse raw HTTP response text from curl output.
+    http.client.HTTPResponse expects a socket with a makefile() method.
+    """
+    
+    def __init__(self, data: bytes) -> None:
+        self._file = io.BytesIO(data)
+    
+    def makefile(self, mode: str) -> io.BytesIO:
+        return self._file
 
 
 # =============================================================================
@@ -131,6 +155,249 @@ def exec_in_pod(
         return result.stdout if result.returncode == 0 else None
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return None
+
+
+def exec_in_pod_raw(
+    namespace: str,
+    pod_name: str,
+    command: list[str],
+    container: Optional[str] = None,
+    timeout: int = 60,
+) -> subprocess.CompletedProcess:
+    """Execute a command in a pod and return the full CompletedProcess.
+    
+    Unlike exec_in_pod(), this returns the full result including stderr
+    and returncode, useful for the PodAdapter.
+    """
+    args = ["exec", "-n", namespace, pod_name]
+    if container:
+        args.extend(["-c", container])
+    args.append("--")
+    args.extend(command)
+    
+    return run_oc_command(args, check=False, timeout=timeout)
+
+
+# =============================================================================
+# Pod HTTP Adapter - Route requests.Session through kubectl exec curl
+# =============================================================================
+
+
+class PodAdapter(HTTPAdapter):
+    """HTTP adapter that routes requests through curl inside a Kubernetes pod.
+    
+    This adapter allows using the standard requests.Session API for making
+    HTTP calls that execute inside a pod, useful for testing internal
+    cluster services that aren't exposed externally.
+    
+    Usage:
+        session = requests.Session()
+        adapter = PodAdapter(namespace="cost-onprem", pod="test-runner", container="runner")
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        
+        # Now use standard requests API
+        response = session.get("http://koku-api:8000/api/v1/status/")
+        assert response.status_code == 200
+        data = response.json()
+    """
+    
+    def __init__(
+        self,
+        namespace: str,
+        pod: str,
+        container: Optional[str] = None,
+        timeout: int = 60,
+        **kwargs,
+    ):
+        """Initialize the PodAdapter.
+        
+        Args:
+            namespace: Kubernetes namespace where the pod is running
+            pod: Name of the pod to execute curl in
+            container: Container name (if pod has multiple containers)
+            timeout: Timeout for curl commands in seconds
+        """
+        self.namespace = namespace
+        self.pod = pod
+        self.container = container
+        self.timeout = timeout
+        super().__init__(**kwargs)
+    
+    def send(
+        self,
+        request: requests.PreparedRequest,
+        stream: bool = False,
+        timeout: Any = None,
+        verify: bool = True,
+        cert: Any = None,
+        proxies: Any = None,
+    ) -> requests.Response:
+        """Send a PreparedRequest by executing curl inside the pod.
+        
+        This method builds a curl command from the PreparedRequest,
+        executes it inside the pod, and parses the raw HTTP response
+        into a requests.Response object.
+        """
+        # Build curl command with -i to include headers in output
+        cmd = ["curl", "-i", "-s", "-S"]
+        
+        # Add method
+        cmd.extend(["-X", request.method])
+        
+        # Add headers
+        if request.headers:
+            for key, value in request.headers.items():
+                # Skip host header as curl sets it automatically
+                if key.lower() != "host":
+                    cmd.extend(["-H", f"{key}: {value}"])
+        
+        # Add request body to curl command
+        # The requests library may provide body as bytes or str. Since we're
+        # passing this through kubectl exec -> curl, we need it as a string.
+        # Writing to a temp file inside the pod would require additional exec
+        # calls, so we pass the body inline via --data-raw instead.
+        if request.body:
+            if isinstance(request.body, bytes):
+                body_str = request.body.decode("utf-8", errors="replace")
+            else:
+                body_str = request.body
+            cmd.extend(["--data-raw", body_str])
+        
+        # Add URL
+        cmd.append(request.url)
+        
+        # Add timeout
+        effective_timeout = timeout if timeout else self.timeout
+        if isinstance(effective_timeout, tuple):
+            effective_timeout = effective_timeout[1]  # Use read timeout
+        cmd.extend(["--max-time", str(effective_timeout)])
+        
+        # For self-signed certs, add -k flag
+        if not verify:
+            cmd.append("-k")
+        
+        # Execute curl in pod
+        result = exec_in_pod_raw(
+            self.namespace,
+            self.pod,
+            cmd,
+            container=self.container,
+            timeout=effective_timeout + 10,  # Add buffer for kubectl overhead
+        )
+        
+        # Parse the raw HTTP response
+        return self._parse_curl_response(result, request)
+    
+    def _parse_curl_response(
+        self,
+        result: subprocess.CompletedProcess,
+        request: requests.PreparedRequest,
+    ) -> requests.Response:
+        """Parse curl -i output into a requests.Response object.
+        
+        Uses http.client to parse the raw HTTP response and HTTPAdapter.build_response()
+        to construct the Response properly.
+        """
+        # Handle curl errors
+        if result.returncode != 0:
+            raise requests.exceptions.ConnectionError(
+                f"curl failed (exit {result.returncode}): {result.stderr or 'Connection failed'}"
+            )
+        
+        raw_output = result.stdout
+        if not raw_output:
+            raise requests.exceptions.ConnectionError("curl returned empty response")
+        
+        # Normalize line endings to \r\n for HTTP parsing
+        # HTTP spec requires \r\n, but curl output may have \n depending on server/platform
+        # Use regex to normalize only \n that aren't already part of \r\n
+        raw_output = re.sub(r'(?<!\r)\n', '\r\n', raw_output)
+        
+        # Handle HTTP/1.1 100 Continue - skip to the real response
+        while raw_output.startswith("HTTP/") and " 100 " in raw_output.split("\r\n")[0]:
+            # Find the end of the 100 Continue response and skip it
+            parts = raw_output.split("\r\n\r\n", 1)
+            if len(parts) > 1:
+                raw_output = parts[1]
+            else:
+                break
+        
+        try:
+            # Parse using http.client.HTTPResponse with a fake socket
+            raw_bytes = raw_output.encode("utf-8")
+            sock = _FakeSocket(raw_bytes)
+            http_response = http.client.HTTPResponse(sock)
+            http_response.begin()
+            
+            # Read the body
+            body = http_response.read()
+            
+            # Build urllib3 HTTPResponse for build_response()
+            # Setting preload_content=True ensures body is read into response
+            urllib3_response = HTTPResponse(
+                body=io.BytesIO(body),
+                headers=dict(http_response.getheaders()),
+                status=http_response.status,
+                reason=http_response.reason,
+                preload_content=True,
+            )
+            
+            # Use HTTPAdapter's build_response to construct Response properly
+            response = self.build_response(request, urllib3_response)
+            
+            # build_response with preload_content=True should set _content,
+            # but ensure it's set for consistency
+            if not response._content_consumed:
+                response._content = body
+            
+            return response
+            
+        except Exception as e:
+            raise requests.exceptions.ConnectionError(
+                f"Failed to parse HTTP response: {e}"
+            ) from e
+
+
+def create_pod_session(
+    namespace: str,
+    pod: str,
+    container: Optional[str] = None,
+    headers: Optional[dict] = None,
+    timeout: int = 60,
+) -> requests.Session:
+    """Create a requests.Session that routes through a pod.
+    
+    This is a convenience function to create a pre-configured session
+    with the PodAdapter mounted for both http:// and https:// URLs.
+    
+    Args:
+        namespace: Kubernetes namespace where the pod is running
+        pod: Name of the pod to execute curl in
+        container: Container name (if pod has multiple containers)
+        headers: Default headers to include in all requests
+        timeout: Default timeout for requests
+    
+    Returns:
+        A requests.Session configured to route through the pod
+    
+    Example:
+        session = create_pod_session("cost-onprem", "test-runner", container="runner")
+        session.headers["X-Rh-Identity"] = identity_header
+        
+        response = session.get("http://koku-api:8000/api/v1/status/")
+        assert response.ok
+        data = response.json()
+    """
+    session = requests.Session()
+    adapter = PodAdapter(namespace, pod, container=container, timeout=timeout)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    
+    if headers:
+        session.headers.update(headers)
+    
+    return session
 
 
 # =============================================================================

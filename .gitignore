@@ -16,6 +16,9 @@ PR*-TRIAGE-*.md
 PR*-QUICK-SUMMARY.md
 PR*-COMMENTS-*.md
 
+# PR summary documents (maintained during development)
+PR-SUMMARY-*.md
+
 # Test logs
 test-logs/
 *.log

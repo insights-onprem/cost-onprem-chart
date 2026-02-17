@@ -133,32 +133,32 @@ class TestKruizeDatabase:
         return {"user": user, "password": password}
 
     def test_kruize_experiments_table_exists(
-        self, cluster_config, database_config, kruize_credentials
+        self, cluster_config, kruize_database_config
     ):
         """Verify kruize_experiments table exists."""
         result = execute_db_query(
             cluster_config.namespace,
-            database_config.pod_name,
-            "costonprem_kruize",
-            kruize_credentials["user"],
+            kruize_database_config.pod_name,
+            kruize_database_config.database,
+            kruize_database_config.user,
             "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'kruize_experiments')",
-            password=kruize_credentials["password"],
+            password=kruize_database_config.password,
         )
         
         assert result is not None, "Query failed"
         assert result[0][0] in ["t", "True", True, "1"], "kruize_experiments table not found"
 
     def test_kruize_recommendations_table_exists(
-        self, cluster_config, database_config, kruize_credentials
+        self, cluster_config, kruize_database_config
     ):
         """Verify kruize_recommendations table exists."""
         result = execute_db_query(
             cluster_config.namespace,
-            database_config.pod_name,
-            "costonprem_kruize",
-            kruize_credentials["user"],
+            kruize_database_config.pod_name,
+            kruize_database_config.database,
+            kruize_database_config.user,
             "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'kruize_recommendations')",
-            password=kruize_credentials["password"],
+            password=kruize_database_config.password,
         )
         
         assert result is not None, "Query failed"

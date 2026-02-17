@@ -1,0 +1,69 @@
+---
+description: Helm chart deployment rules and commands
+globs: ["cost-onprem/**", "scripts/deploy-*.sh", "openshift-values.yaml"]
+---
+
+# Deployment Rules
+
+## When User Asks to Deploy the Chart
+
+**ALWAYS use the deployment script with proper flags:**
+
+```bash
+./scripts/deploy-test-cost-onprem.sh --namespace cost-onprem --verbose
+```
+
+**DO NOT** use raw `helm install` or `helm upgrade` commands unless:
+1. User explicitly asks for manual Helm installation
+2. You need to skip specific steps (use `--skip-*` flags instead and extend the script(s) as needed)
+
+## Common Deployment Scenarios
+
+| User Request | Command |
+|--------------|---------|
+| "Deploy the chart" | `./scripts/deploy-test-cost-onprem.sh --namespace cost-onprem --verbose` |
+| "Redeploy" | `helm uninstall cost-onprem -n cost-onprem && ./scripts/deploy-test-cost-onprem.sh --namespace cost-onprem --verbose` |
+| "Just reinstall helm chart" | `./scripts/deploy-test-cost-onprem.sh --skip-rhbk --skip-strimzi --namespace cost-onprem --verbose` |
+| "Run tests only" | `./scripts/deploy-test-cost-onprem.sh --tests-only` |
+| "Deploy without tests" | `./scripts/deploy-test-cost-onprem.sh --skip-test --namespace cost-onprem --verbose` |
+
+## Skip Flags
+
+- `--skip-rhbk` - Skip Keycloak deployment
+- `--skip-strimzi` - Skip Kafka deployment  
+- `--skip-helm` - Skip Helm chart installation
+- `--skip-tls` - Skip TLS configuration
+- `--skip-test` - Skip running tests
+
+## S3 Bucket Creation
+
+The `deploy-test-cost-onprem.sh` script creates buckets automatically via `install-helm-chart.sh` (bucket creation is idempotent).
+
+**To skip bucket creation** (e.g., CI where S3 is managed externally):
+
+```bash
+SKIP_S3_SETUP=true ./scripts/install-helm-chart.sh --namespace cost-onprem
+```
+
+**To create buckets manually using mc (MinIO client):**
+
+```bash
+# Set up mc alias for your S3 endpoint
+mc alias set s3 https://<your-s3-endpoint>:443 $ACCESS_KEY $SECRET_KEY --insecure
+
+# Create required buckets
+mc mb s3/koku-bucket --ignore-existing
+mc mb s3/ros-data --ignore-existing
+mc mb s3/insights-upload-perma --ignore-existing
+```
+
+**Required buckets** (from `values.yaml` - `objectStorage.*` config):
+- `koku-bucket` - Main cost data bucket (`objectStorage.bucketName`)
+- `ros-data` - ROS data bucket (`objectStorage.rosBucketName`)
+- `insights-upload-perma` - Ingress upload bucket (`ingress.storage.bucket`)
+
+## NEVER Do These
+
+1. **NEVER tail logs** - Use `kubectl logs --tail=50` instead of `--follow`
+2. **NEVER run background deployment** - Deployments should complete before proceeding
+3. **NEVER skip `--wait`** - Always wait for pods to be ready

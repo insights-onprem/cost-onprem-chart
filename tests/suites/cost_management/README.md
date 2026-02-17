@@ -81,6 +81,6 @@ E2E_COST_TOLERANCE=0.10 pytest -m cost_validation -v
 ## Related Files
 
 - `test_processing.py` - Koku listener and MASU worker health tests
-- `test_sources_api.py` - Sources API health and configuration tests
 - `conftest.py` - Suite fixtures including `cost_validation_data` for self-contained E2E setup
 - `../../e2e_helpers.py` - Centralized E2E helpers (NISE config, source registration, upload utilities)
+- `../sources/test_sources_api.py` - Sources API tests (CRUD, auth, filtering)

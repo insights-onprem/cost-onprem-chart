@@ -4,6 +4,10 @@ Sources API suite fixtures.
 Fixtures for testing the Sources API endpoints now served by Koku.
 All sources endpoints are available via /api/cost-management/v1/
 using X-Rh-Identity header for authentication.
+
+Uses PodAdapter/pod_session for all HTTP calls to internal services.
+The test_runner_pod fixture from conftest.py provides the dedicated
+test-runner pod for executing internal API calls.
 """
 
 import base64
@@ -13,13 +17,13 @@ import uuid
 from typing import Any, Dict, Generator, Optional
 
 import pytest
+import requests
 
-from e2e_helpers import get_koku_api_url, get_source_type_id
+from e2e_helpers import get_koku_api_url
 from utils import (
     create_identity_header_custom,
+    create_pod_session,
     create_rh_identity_header,
-    exec_in_pod,
-    get_pod_by_label,
 )
 
 
@@ -30,25 +34,53 @@ def koku_api_url(cluster_config) -> str:
 
 
 @pytest.fixture(scope="module")
-def ingress_pod(cluster_config) -> str:
-    """Get ingress pod name for executing API calls.
-    
-    The ingress pod has NetworkPolicy access to koku-api, so we use it
-    to make internal API calls.
-    """
-    pod = get_pod_by_label(
-        cluster_config.namespace,
-        "app.kubernetes.io/component=ingress"
-    )
-    if not pod:
-        pytest.skip("Ingress pod not found for API calls")
-    return pod
-
-
-@pytest.fixture(scope="module")
 def rh_identity_header(org_id) -> str:
     """Get X-Rh-Identity header value for the test org."""
     return create_rh_identity_header(org_id)
+
+
+@pytest.fixture(scope="module")
+def pod_session(
+    test_runner_pod: str,
+    cluster_config,
+    rh_identity_header: str,
+) -> requests.Session:
+    """Pre-configured requests.Session that routes through the test-runner pod.
+    
+    This fixture provides a standard requests.Session API for making HTTP
+    calls that execute inside the cluster via kubectl exec curl. It includes
+    the X-Rh-Identity header required for internal service authentication.
+    """
+    session = create_pod_session(
+        namespace=cluster_config.namespace,
+        pod=test_runner_pod,
+        container="runner",
+        headers={
+            "X-Rh-Identity": rh_identity_header,
+            "Content-Type": "application/json",
+        },
+        timeout=60,
+    )
+    return session
+
+
+@pytest.fixture(scope="module")
+def pod_session_no_auth(
+    test_runner_pod: str,
+    cluster_config,
+) -> requests.Session:
+    """Pre-configured requests.Session without authentication headers.
+    
+    Use this fixture when testing endpoints that don't require authentication
+    or when you want to explicitly test authentication failures with custom headers.
+    """
+    session = create_pod_session(
+        namespace=cluster_config.namespace,
+        pod=test_runner_pod,
+        container="runner",
+        timeout=60,
+    )
+    return session
 
 
 @pytest.fixture(scope="module")
@@ -91,11 +123,8 @@ def invalid_identity_headers(org_id: str) -> Dict[str, str]:
 
 @pytest.fixture(scope="function")
 def test_source(
-    cluster_config: Any,
-    ingress_pod: str,
+    pod_session: requests.Session,
     koku_api_url: str,
-    rh_identity_header: str,
-    org_id: str,
 ) -> Generator[Dict[str, Any], None, None]:
     """Create a test source with automatic cleanup.
 
@@ -108,13 +137,16 @@ def test_source(
     # Get source type ID with retry
     source_type_id = None
     for attempt in range(3):
-        source_type_id = get_source_type_id(
-            cluster_config.namespace,
-            ingress_pod,
-            koku_api_url,
-            rh_identity_header,
-            container="ingress",
-        )
+        try:
+            response = pod_session.get(f"{koku_api_url}/source_types")
+            if response.ok:
+                data = response.json()
+                for st in data.get("data", []):
+                    if st.get("name") == "openshift":
+                        source_type_id = str(st.get("id"))
+                        break
+        except Exception:
+            pass
         if source_type_id:
             break
         time.sleep(2)
@@ -123,65 +155,49 @@ def test_source(
         pytest.fail("Could not get OpenShift source type ID - this indicates a deployment issue")
 
     # Create source with retry logic for transient CI failures
-    result: Optional[str] = None
     last_error: Optional[str] = None
     max_attempts: int = 5
-    status_code: Optional[str] = None
+    source_data: Optional[Dict] = None
 
     test_cluster_id = f"test-source-{uuid.uuid4().hex[:8]}"
     source_name = f"test-source-{uuid.uuid4().hex[:8]}"
 
     for attempt in range(max_attempts):
-        source_payload = json.dumps({
-            "name": source_name,
-            "source_type_id": source_type_id,
-            "source_ref": test_cluster_id,
-        })
-
-        raw_result = exec_in_pod(
-            cluster_config.namespace,
-            ingress_pod,
-            [
-                "curl", "-s", "-w", "\n%{http_code}", "-X", "POST",
+        try:
+            response = pod_session.post(
                 f"{koku_api_url}/sources",
-                "-H", "Content-Type: application/json",
-                "-H", f"X-Rh-Identity: {rh_identity_header}",
-                "-d", source_payload,
-            ],
-            container="ingress",
-        )
+                json={
+                    "name": source_name,
+                    "source_type_id": source_type_id,
+                    "source_ref": test_cluster_id,
+                },
+            )
 
-        if not raw_result:
-            last_error = f"Attempt {attempt + 1}: No response from source creation"
+            # Retry on 5xx server errors only
+            if response.status_code >= 500:
+                last_error = f"Attempt {attempt + 1}: Server error {response.status_code}"
+                time.sleep(3)
+                continue
+
+            # Success or client error - exit loop
+            if response.status_code == 201:
+                source_data = response.json()
+                break
+            else:
+                last_error = f"Attempt {attempt + 1}: {response.status_code} - {response.text[:200]}"
+                break
+
+        except Exception as e:
+            last_error = f"Attempt {attempt + 1}: {e}"
             time.sleep(3)
             continue
 
-        # Parse response and status code
-        lines = raw_result.strip().split('\n')
-        status_code = lines[-1] if lines else ""
-        body = '\n'.join(lines[:-1]) if len(lines) > 1 else ""
-
-        # Retry on 5xx server errors only
-        if status_code.startswith('5'):
-            last_error = f"Attempt {attempt + 1}: Server error {status_code}"
-            time.sleep(3)
-            continue
-
-        # Success or client error - exit loop
-        result = body
-        break
-
-    if not result:
+    if not source_data:
         pytest.fail(f"Source creation failed after {max_attempts} attempts. Last error: {last_error}")
-
-    try:
-        source_data = json.loads(result)
-    except json.JSONDecodeError:
-        pytest.fail(f"Source creation returned invalid JSON (status {status_code}): {result}")
 
     source_id = source_data.get("id")
     if not source_id:
-        pytest.fail(f"Source creation failed (status {status_code}): {result}")
+        pytest.fail(f"Source creation failed - no ID in response: {source_data}")
 
     yield {
         "source_id": source_id,
@@ -191,20 +207,9 @@ def test_source(
     }
 
     # Cleanup: Delete the source
-    delete_result = exec_in_pod(
-        cluster_config.namespace,
-        ingress_pod,
-        [
-            "curl", "-s", "-w", "\n%{http_code}", "-X", "DELETE",
-            f"{koku_api_url}/sources/{source_id}",
-            "-H", f"X-Rh-Identity: {rh_identity_header}",
-        ],
-        container="ingress",
-    )
-
-    # Verify deletion succeeded
-    if delete_result:
-        lines = delete_result.strip().split('\n')
-        status = lines[-1] if lines else ""
-        if status not in ["204", "404"]:
-            print(f"Warning: Failed to delete test source {source_id}, status: {status}")
+    try:
+        response = pod_session.delete(f"{koku_api_url}/sources/{source_id}")
+        if response.status_code not in [204, 404]:
+            print(f"Warning: Failed to delete test source {source_id}, status: {response.status_code}")
+    except Exception as e:
+        print(f"Warning: Failed to delete test source {source_id}: {e}")

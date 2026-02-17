@@ -173,11 +173,39 @@ pytest tests/suites/e2e/test_scenarios.py -v -m scenario  # YAML-driven scenario
 
 ### Using Pytest Directly
 
+> **Note:** Running `pytest` directly requires manual dependency setup. The `run-pytest.sh` 
+> script handles this automatically. If you prefer running pytest directly, follow the 
+> setup steps below.
+
+**Manual Setup (required before running pytest directly):**
+
 ```bash
 cd tests
 
-# All tests
+# Create and activate virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Install koku-nise for E2E data generation (optional)
+pip install koku-nise
+
+# Install Playwright browsers (required for UI tests)
+playwright install chromium --with-deps
+```
+
+**Running Tests:**
+
+```bash
+cd tests
+
+# All tests (includes UI - requires Playwright)
 pytest
+
+# Exclude UI tests (no Playwright required)
+pytest -m "not ui"
 
 # By marker
 pytest -m helm
@@ -201,6 +229,10 @@ pytest -v
 # Stop on first failure
 pytest -x
 ```
+
+> **UI Tests:** Running `pytest` without `-m "not ui"` will include UI tests, which require
+> Playwright and browser binaries. Use `pytest -m "not ui"` to skip them, or install 
+> Playwright first with `playwright install chromium --with-deps`.
 
 ## Test Markers
 

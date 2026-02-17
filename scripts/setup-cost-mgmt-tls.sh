@@ -930,7 +930,7 @@ show_completion_summary() {
     echo -e "${BLUE}Troubleshooting:${NC}"
     echo -e "• Documentation: docs/cost-management-operator-tls-setup.md"
     echo -e "• CA bundle functionality: integrated in this script (setup-cost-mgmt-tls.sh)"
-    echo -e "• Test script: scripts/test-ocp-dataflow-cost-management.sh"
+    echo -e "• Test script: NAMESPACE=cost-onprem ./scripts/run-pytest.sh"
     echo ""
     echo -e "${GREEN}Your Cost Management Operator is now ready to work with self-signed certificates!${NC}"
     echo ""

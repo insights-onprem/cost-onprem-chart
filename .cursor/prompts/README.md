@@ -13,6 +13,7 @@ In Cursor, type `@` followed by the prompt name to include it in your conversati
 - `@check-logs` - View component logs
 - `@debug-e2e` - Debug E2E test failures
 - `@download-ci-artifacts` - Download CI artifacts for debugging
+- `@maintain-pr-summary` - Maintain a running PR summary document
 
 ## Available Prompts
 
@@ -25,6 +26,7 @@ In Cursor, type `@` followed by the prompt name to include it in your conversati
 | `check-logs.md` | View logs for all cost-onprem components |
 | `debug-e2e.md` | Step-by-step debugging for each E2E test |
 | `download-ci-artifacts.md` | Download CI artifacts from OpenShift CI |
+| `maintain-pr-summary.md` | Maintain a running PR summary as work is developed |
 
 ## Example Usage
 
@@ -32,6 +34,7 @@ In Cursor, type `@` followed by the prompt name to include it in your conversati
 2. **Troubleshoot**: Type `@troubleshoot-tests` then paste your error
 3. **Connect**: Type `@connect-cluster` then provide your credentials
 4. **Download CI logs**: Type `@download-ci-artifacts` then provide the PR number and build ID
+5. **PR Summary**: Type `@maintain-pr-summary` then ask "Update the PR summary with recent changes"
 
 ## For Claude Code / claude.ai
 
