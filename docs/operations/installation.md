@@ -22,10 +22,9 @@ The installation scripts require the following tools:
 
 ```bash
 # Required
-curl    # For downloading releases from GitHub
-jq      # For parsing JSON responses
 helm    # For installing Helm charts (v3+)
 kubectl # For Kubernetes cluster access
+jq      # For JSON processing
 
 # Required for E2E Testing
 python3      # Python 3 interpreter (for NISE data generation)
@@ -37,13 +36,13 @@ python3-venv # Virtual environment module (for NISE isolation)
 ```bash
 # Ubuntu/Debian
 sudo apt-get update
-sudo apt-get install curl jq python3 python3-venv
+sudo apt-get install jq python3 python3-venv
 
 # RHEL/CentOS/Fedora
-sudo dnf install curl jq python3 python3-venv
+sudo dnf install jq python3 python3-venv
 
 # macOS
-brew install curl jq
+brew install jq
 
 # Install Helm (all platforms)
 curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
@@ -99,22 +98,22 @@ The script deploys a unified chart containing all components:
 **Features:**
 - ✅ Two-phase deployment (infrastructure first, then application)
 - ✅ Automatic secret creation (Django, Sources, S3 credentials)
+- ✅ Installs from the Helm chart repository (GitHub Pages)
 - ✅ Auto-discovers S3 credentials (OBC, NooBaa, MinIO)
 - ✅ OpenShift platform verification
 - ✅ Automatic upgrade detection
 - ✅ Perfect for CI/CD pipelines
-- ✅ Automatic fallback to local chart if GitHub unavailable
+- ✅ Version pinning support via `CHART_VERSION`
 
 **Environment Variables:**
 - `HELM_RELEASE_NAME`: Helm release name (default: `cost-onprem`)
 - `NAMESPACE`: Target namespace (default: `cost-onprem`)
 - `VALUES_FILE`: Path to custom values file
-- `USE_LOCAL_CHART`: Use local chart instead of GitHub release (default: `false`)
+- `CHART_VERSION`: Pin a specific chart version (default: latest)
+- `USE_LOCAL_CHART`: Use local chart instead of Helm repository (default: `false`)
 - `LOCAL_CHART_PATH`: Path to local chart directory (default: `../cost-onprem`)
 
 **Note**: JWT authentication is automatically enabled on OpenShift.
-
-> **Future Enhancement:** The script will support fetching charts from a Helm repository once available.
 
 ---
 
@@ -124,26 +123,37 @@ For administrators who prefer full control over the deployment or cannot use the
 
 #### Chart Source Options
 
-| Source | Status | Use Case | Installation |
-|--------|--------|----------|--------------|
-| Helm Repository | Coming Soon | Production (preferred when available) | `helm repo add cost-onprem https://insights-onprem.github.io/cost-onprem-chart` |
-| GitHub Release | Available | Production (current) | Download `.tgz` from [releases](https://github.com/insights-onprem/cost-onprem-chart/releases) |
-| Local Source | Available | Development, testing, modifications | Clone repo and use `./cost-onprem` directory |
+| Source | Use Case | Installation |
+|--------|----------|--------------|
+| Helm Repository | Production (recommended) | `helm repo add cost-onprem https://insights-onprem.github.io/cost-onprem-chart` |
+| Local Source | Development, testing, modifications | Clone repo and use `./cost-onprem` directory |
 
-**GitHub Release (current recommended source):**
+**Helm Repository (recommended):**
 ```bash
-# Get latest release URL
-LATEST_URL=$(curl -s https://api.github.com/repos/insights-onprem/cost-onprem-chart/releases/latest | \
-  jq -r '.assets[] | select(.name | endswith(".tgz")) | .browser_download_url')
+# Add Helm repository
+helm repo add cost-onprem https://insights-onprem.github.io/cost-onprem-chart
+helm repo update
 
-# Download chart
-curl -L -o cost-onprem-latest.tgz "$LATEST_URL"
+# Install latest version
+helm install cost-onprem cost-onprem/cost-onprem \
+  --namespace cost-onprem \
+  --create-namespace
 
-# Use cost-onprem-latest.tgz in the helm install commands below
+# Install a specific version
+helm install cost-onprem cost-onprem/cost-onprem \
+  --namespace cost-onprem \
+  --create-namespace \
+  --version 0.2.9
+```
+
+**Verify available versions:**
+```bash
+helm search repo cost-onprem
 ```
 
 **Local Source (for development):**
 ```bash
+# Clone the repository
 git clone https://github.com/insights-onprem/cost-onprem-chart.git
 cd cost-onprem-chart
 
@@ -524,24 +534,23 @@ oc get pods -n openshift-user-workload-monitoring -w
 ./scripts/install-helm-chart.sh
 
 # The script detects existing installations and performs upgrades
-# Uses GitHub releases by default
+# Installs from the Helm chart repository by default
 ```
 
 ### Manual Helm Upgrade
 
-#### From GitHub Release
+#### From Helm Repository
 
 ```bash
-# Get latest release
-LATEST_URL=$(curl -s https://api.github.com/repos/insights-onprem/cost-onprem-chart/releases/latest | \
-  jq -r '.assets[] | select(.name | endswith(".tgz")) | .browser_download_url')
+# Update repo index and upgrade to latest
+helm repo update cost-onprem
+helm upgrade cost-onprem cost-onprem/cost-onprem -n cost-onprem
 
-# Download and upgrade
-curl -L -o cost-onprem-latest.tgz "$LATEST_URL"
-helm upgrade cost-onprem cost-onprem-latest.tgz -n cost-onprem
+# Upgrade to a specific version
+helm upgrade cost-onprem cost-onprem/cost-onprem -n cost-onprem --version 0.2.9
 
 # With custom values
-helm upgrade cost-onprem cost-onprem-latest.tgz -n cost-onprem --values my-values.yaml
+helm upgrade cost-onprem cost-onprem/cost-onprem -n cost-onprem --values my-values.yaml
 ```
 
 #### From Local Source
@@ -807,21 +816,11 @@ LIMIT 5;
 **Missing prerequisites:**
 ```bash
 # Check required tools
-which curl jq helm kubectl
+which jq helm kubectl
 
 # Install missing tools
-sudo apt-get install curl jq  # Ubuntu/Debian
-brew install curl jq           # macOS
-```
-
-**GitHub API rate limiting:**
-```bash
-# Check rate limit
-curl -s https://api.github.com/rate_limit
-
-# Use authentication token
-export GITHUB_TOKEN="your_personal_access_token"
-./scripts/install-helm-chart.sh
+sudo apt-get install jq        # Ubuntu/Debian
+brew install jq                # macOS
 ```
 
 **Script permissions:**
@@ -836,16 +835,13 @@ bash scripts/install-helm-chart.sh
 ### Network Issues
 
 ```bash
-# Test GitHub connectivity
-curl -s https://api.github.com/repos/insights-onprem/cost-onprem-chart/releases/latest
+# Test Helm repository connectivity
+helm repo add cost-onprem https://insights-onprem.github.io/cost-onprem-chart
+helm repo update cost-onprem
+helm search repo cost-onprem
 
-# Verbose debugging
-curl -v https://api.github.com/repos/insights-onprem/cost-onprem-chart/releases/latest
-
-# Manual download
-LATEST_URL=$(curl -s https://api.github.com/repos/insights-onprem/cost-onprem-chart/releases/latest | \
-  jq -r '.assets[] | select(.name | endswith(".tgz")) | .browser_download_url')
-curl -L -o cost-onprem-latest.tgz "$LATEST_URL"
+# If the repo add fails, verify the URL is reachable
+curl -sI https://insights-onprem.github.io/cost-onprem-chart/index.yaml
 ```
 
 ### Resource Issues

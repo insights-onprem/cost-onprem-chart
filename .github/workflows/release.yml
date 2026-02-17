@@ -1,87 +1,37 @@
-name: Create Release
+name: Release Cost-Onprem Charts
 
 on:
+  workflow_dispatch:
   push:
-    tags:
-      - 'v*'  # Triggers on version tags like v0.1.0, v1.2.3, etc.
+    branches:
+      - main
+    paths:
+      - 'cost-onprem/**'
 
 jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Required for creating releases
+      contents: write
 
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
 
       - name: Set up Helm
         uses: azure/setup-helm@v4
+
+      - name: Run chart-releaser
+        uses: helm/chart-releaser-action@v1.6.0
         with:
-          version: 'latest'
-
-      - name: Extract version from tag
-        id: version
-        run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-
-      - name: Update Chart.yaml version
-        run: |
-          sed -i "s/^version:.*/version: ${{ steps.version.outputs.version }}/" cost-onprem/Chart.yaml
-
-      - name: Package Helm chart
-        run: |
-          helm package cost-onprem
-
-      - name: Create latest symlink
-        run: |
-          # Create a copy with 'latest' in the name for convenience
-          cp cost-onprem-${{ steps.version.outputs.version }}.tgz cost-onprem-latest.tgz
-
-      - name: Generate changelog
-        id: changelog
-        run: |
-          # Simple changelog generation - you can enhance this
-          echo "changelog<<EOF" >> $GITHUB_OUTPUT
-          echo "## Changes in ${{ steps.version.outputs.tag }}" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "### Helm Chart Updates" >> $GITHUB_OUTPUT
-          echo "- Chart version: ${{ steps.version.outputs.version }}" >> $GITHUB_OUTPUT
-          echo "- Package: cost-onprem-${{ steps.version.outputs.version }}.tgz" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "### Installation" >> $GITHUB_OUTPUT
-          echo "\`\`\`bash" >> $GITHUB_OUTPUT
-          echo "# Download and install" >> $GITHUB_OUTPUT
-          echo "curl -L -o cost-onprem-${{ steps.version.outputs.version }}.tgz https://github.com/insights-onprem/cost-onprem-chart/releases/download/${{ steps.version.outputs.tag }}/cost-onprem-${{ steps.version.outputs.version }}.tgz" >> $GITHUB_OUTPUT
-          echo "helm install cost-onprem cost-onprem-${{ steps.version.outputs.version }}.tgz --namespace cost-onprem --create-namespace" >> $GITHUB_OUTPUT
-          echo "\`\`\`" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "### Latest Release (Always Current)" >> $GITHUB_OUTPUT
-          echo "\`\`\`bash" >> $GITHUB_OUTPUT
-          echo "# Always get the latest release" >> $GITHUB_OUTPUT
-          echo "curl -L -o cost-onprem-latest.tgz https://github.com/insights-onprem/cost-onprem-chart/releases/download/${{ steps.version.outputs.tag }}/cost-onprem-latest.tgz" >> $GITHUB_OUTPUT
-          echo "helm install cost-onprem cost-onprem-latest.tgz --namespace cost-onprem --create-namespace" >> $GITHUB_OUTPUT
-          echo "\`\`\`" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Release ${{ steps.version.outputs.tag }}
-          body: ${{ steps.changelog.outputs.changelog }}
-          files: |
-            cost-onprem-${{ steps.version.outputs.version }}.tgz
-            cost-onprem-latest.tgz
-          draft: false
-          prerelease: false
+          charts_dir: .
+          config: .github/cr.yaml
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Update latest release
-        run: |
-          echo "Release ${{ steps.version.outputs.tag }} created successfully!"
-          echo "Versioned download: https://github.com/insights-onprem/cost-onprem-chart/releases/download/${{ steps.version.outputs.tag }}/cost-onprem-${{ steps.version.outputs.version }}.tgz"
-          echo "Latest download: https://github.com/insights-onprem/cost-onprem-chart/releases/download/${{ steps.version.outputs.tag }}/cost-onprem-latest.tgz"
+          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"

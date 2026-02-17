@@ -39,17 +39,18 @@ OpenShift Helm chart for deploying the Resource Optimization Service (ROS) with 
 ### OpenShift Deployment
 
 ```bash
-# Install latest release from GitHub
+# Automated installation from Helm repository (recommended)
 ./scripts/install-helm-chart.sh
+
+# Or install a specific chart version
+CHART_VERSION=0.2.9 ./scripts/install-helm-chart.sh
 
 # Or use local chart for development
 USE_LOCAL_CHART=true LOCAL_CHART_PATH=../cost-onprem ./scripts/install-helm-chart.sh
 
-# Or specify custom namespace and release name
-NAMESPACE=my-namespace HELM_RELEASE_NAME=my-release ./scripts/install-helm-chart.sh
-
 # Or use Helm directly
 helm repo add cost-onprem https://insights-onprem.github.io/cost-onprem-chart
+helm repo update
 helm install cost-onprem cost-onprem/cost-onprem --namespace cost-onprem --create-namespace
 ```
 
@@ -201,7 +202,7 @@ Key requirements:
 
 ### Deployment
 ```bash
-# Install/upgrade to latest release
+# Install/upgrade from Helm repository
 ./scripts/install-helm-chart.sh
 
 # Check deployment status
@@ -248,8 +249,9 @@ Key requirements:
 
 ### CI/CD Automation
 - **Lint & Validate**: Chart validation on every PR
-- **Automated Releases**: Version-tagged releases with packaged charts
+- **Automated Releases**: Chart-releaser publishes to [Helm repository](https://insights-onprem.github.io/cost-onprem-chart) on version bump
 - **Version Tracking**: `--save-versions` flag generates `version_info.json` for traceability
+- **Disconnected Support**: `oc-mirror` compatible (see [Disconnected Deployment Guide](docs/operations/disconnected-deployment.md))
 
 ## 🚨 Troubleshooting
 

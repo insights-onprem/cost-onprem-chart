@@ -2,13 +2,14 @@
 
 # Cost Management On Premise Helm Chart Installation Script
 # This script deploys the Cost Management On Premise Helm chart to an OpenShift cluster
-# By default, it downloads and uses the latest release from GitHub
+# By default, it installs from the Helm chart repository (GitHub Pages)
 # Set USE_LOCAL_CHART=true to use local chart source instead
-# Requires: kubectl/oc configured with target cluster context, helm installed, curl, jq
+# Requires: kubectl/oc configured with target cluster context, helm installed, jq
 #
 # Environment Variables:
 #   LOG_LEVEL       - Control output verbosity (ERROR|WARN|INFO|DEBUG, default: WARN)
-#   USE_LOCAL_CHART - Use local chart instead of GitHub release (true|false, default: false)
+#   USE_LOCAL_CHART - Use local chart instead of Helm repository (true|false, default: false)
+#   CHART_VERSION   - Pin a specific chart version from the Helm repository (default: latest)
 #   NAMESPACE       - Target namespace (default: cost-onprem)
 #   S3_ENDPOINT     - S3 endpoint hostname for generic S3 backends (e.g., "s3.example.com")
 #   S3_PORT         - S3 port (default: 443, used with S3_ENDPOINT)
@@ -33,9 +34,6 @@
 
 set -e  # Exit on any error
 
-# Trap to cleanup downloaded charts on script exit
-trap 'cleanup_downloaded_chart' EXIT INT TERM
-
 # Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -56,9 +54,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELM_RELEASE_NAME=${HELM_RELEASE_NAME:-cost-onprem}
 NAMESPACE=${NAMESPACE:-cost-onprem}
 VALUES_FILE=${VALUES_FILE:-}
-REPO_OWNER="insights-onprem"
-REPO_NAME="cost-onprem-chart"
-USE_LOCAL_CHART=${USE_LOCAL_CHART:-false}  # Set to true to use local chart instead of GitHub release
+HELM_REPO_NAME="cost-onprem"
+HELM_REPO_URL="https://insights-onprem.github.io/cost-onprem-chart"
+CHART_VERSION=${CHART_VERSION:-}  # Empty = latest; set to pin a version (e.g., "0.2.9")
+USE_LOCAL_CHART=${USE_LOCAL_CHART:-false}  # Set to true to use local chart instead of Helm repository
 LOCAL_CHART_PATH=${LOCAL_CHART_PATH:-../cost-onprem}  # Path to local chart directory
 STRIMZI_NAMESPACE=${STRIMZI_NAMESPACE:-}  # If set, use existing Strimzi operator in this namespace
 KAFKA_NAMESPACE=${KAFKA_NAMESPACE:-}  # If set, use existing Kafka cluster in this namespace
@@ -737,72 +736,40 @@ create_s3_buckets() {
     fi
 }
 
-# Function to download latest chart from GitHub
-download_latest_chart() {
-    echo_info "Downloading latest Helm chart from GitHub..."
+# Function to set up the Helm chart repository
+setup_helm_repo() {
+    echo_info "Setting up Helm chart repository..."
 
-    # Create temporary directory for chart download
-    local temp_dir=$(mktemp -d)
-    local chart_path=""
+    # Add or update the Helm repo
+    if helm repo list 2>/dev/null | grep -q "^${HELM_REPO_NAME}"; then
+        echo_info "Updating existing Helm repo '${HELM_REPO_NAME}'..."
+        helm repo update "${HELM_REPO_NAME}"
+    else
+        echo_info "Adding Helm repo '${HELM_REPO_NAME}' from ${HELM_REPO_URL}..."
+        if ! helm repo add "${HELM_REPO_NAME}" "${HELM_REPO_URL}"; then
+            echo_error "Failed to add Helm repository"
+            echo_info "Verify the repository URL is accessible: ${HELM_REPO_URL}"
+            return 1
+        fi
+        helm repo update "${HELM_REPO_NAME}"
+    fi
 
-    # Get the latest release info from GitHub API
-    echo_info "Fetching latest release information from GitHub..."
-    local latest_release
-    if ! latest_release=$(curl -s "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest"); then
-        echo_error "Failed to fetch release information from GitHub API"
-        rm -rf "$temp_dir"
+    # Verify chart is available
+    local search_output
+    if ! search_output=$(helm search repo "${HELM_REPO_NAME}/cost-onprem" --output json 2>/dev/null); then
+        echo_error "Chart 'cost-onprem' not found in repository"
         return 1
     fi
 
-    # Extract the tag name and download URL for the .tgz file
-    local tag_name=$(echo "$latest_release" | jq -r '.tag_name')
-    local download_url=$(echo "$latest_release" | jq -r '.assets[] | select(.name | contains("latest")) | .browser_download_url')
-    local filename=$(echo "$latest_release" | jq -r '.assets[] | select(.name | contains("latest")) | .name')
-
-    if [ -z "$download_url" ] || [ "$download_url" = "null" ]; then
-        echo_error "No .tgz file found in the latest release ($tag_name)"
-        echo_info "Available assets:"
-        echo "$latest_release" | jq -r '.assets[].name' | sed 's/^/  - /'
-        rm -rf "$temp_dir"
+    local available_version
+    available_version=$(echo "$search_output" | jq -r '.[0].version // empty')
+    if [ -z "$available_version" ]; then
+        echo_error "No versions of chart 'cost-onprem' found in repository"
         return 1
     fi
-
-    echo_info "Latest release: $tag_name"
-    echo_info "Downloading: $filename"
-    echo_info "From: $download_url"
-
-    # Download the chart
-    if ! curl -L -o "$temp_dir/$filename" "$download_url"; then
-        echo_error "Failed to download chart from GitHub"
-        rm -rf "$temp_dir"
-        return 1
-    fi
-
-    # Verify the download
-    if [ ! -f "$temp_dir/$filename" ]; then
-        echo_error "Downloaded chart file not found: $temp_dir/$filename"
-        rm -rf "$temp_dir"
-        return 1
-    fi
-
-    local file_size=$(stat -c%s "$temp_dir/$filename" 2>/dev/null || stat -f%z "$temp_dir/$filename" 2>/dev/null)
-    echo_success "Downloaded chart: $filename (${file_size} bytes)"
-
-    # Export the chart path for use by deploy_helm_chart function
-    export DOWNLOADED_CHART_PATH="$temp_dir/$filename"
-    export CHART_TEMP_DIR="$temp_dir"
+    echo_success "Helm repo configured. Latest available chart version: ${available_version}"
 
     return 0
-}
-
-# Function to cleanup downloaded chart
-cleanup_downloaded_chart() {
-    if [ -n "$CHART_TEMP_DIR" ] && [ -d "$CHART_TEMP_DIR" ]; then
-        echo_info "Cleaning up downloaded chart..."
-        rm -rf "$CHART_TEMP_DIR"
-        unset DOWNLOADED_CHART_PATH
-        unset CHART_TEMP_DIR
-    fi
 }
 
 
@@ -869,26 +836,23 @@ deploy_helm_chart() {
         # Check if Helm chart directory exists
         if [ ! -d "$LOCAL_CHART_PATH" ]; then
             echo_error "Local Helm chart directory not found: $LOCAL_CHART_PATH"
-            echo_info "Set USE_LOCAL_CHART=false to use GitHub releases, or set LOCAL_CHART_PATH to the correct chart location (default: ./cost-onprem)"
+            echo_info "Set USE_LOCAL_CHART=false to use the Helm repository, or set LOCAL_CHART_PATH to the correct chart location (default: ./cost-onprem)"
             return 1
         fi
 
         chart_source="$LOCAL_CHART_PATH"
         echo_info "Using local chart: $chart_source"
     else
-        echo_info "Using GitHub release (USE_LOCAL_CHART=false)"
+        echo_info "Using Helm repository (USE_LOCAL_CHART=false)"
 
-        # Download latest chart if not already downloaded
-        if [ -z "$DOWNLOADED_CHART_PATH" ]; then
-            if ! download_latest_chart; then
-                echo_error "Failed to download latest chart from GitHub"
-                echo_info "Fallback: Set USE_LOCAL_CHART=true to use local chart"
-                return 1
-            fi
+        if ! setup_helm_repo; then
+            echo_error "Failed to set up Helm repository"
+            echo_info "Fallback: Set USE_LOCAL_CHART=true to use local chart"
+            return 1
         fi
 
-        chart_source="$DOWNLOADED_CHART_PATH"
-        echo_info "Using downloaded chart: $chart_source"
+        chart_source="${HELM_REPO_NAME}/cost-onprem"
+        echo_info "Using Helm repository chart: $chart_source"
     fi
 
     # Build Helm command
@@ -897,6 +861,12 @@ deploy_helm_chart() {
     helm_cmd="$helm_cmd --create-namespace"
     helm_cmd="$helm_cmd --timeout=${HELM_TIMEOUT:-600s}"
     helm_cmd="$helm_cmd --wait"
+
+    # Pin chart version if specified (only for Helm repo, not local chart)
+    if [ -n "$CHART_VERSION" ] && [ "$USE_LOCAL_CHART" != "true" ]; then
+        helm_cmd="$helm_cmd --version \"$CHART_VERSION\""
+        echo_info "Pinning chart version: $CHART_VERSION"
+    fi
 
     # Add values file if specified
     if [ -n "$VALUES_FILE" ]; then
@@ -1344,9 +1314,6 @@ cleanup() {
     fi
 
     echo_success "Cleanup completed"
-
-    # Cleanup any downloaded charts
-    cleanup_downloaded_chart
 }
 
 # Function to detect RHBK (Red Hat Build of Keycloak) - OpenShift only
@@ -1991,11 +1958,6 @@ main() {
     echo_success "Cost Management On Prem Helm chart installation completed!"
     echo_info "The services are now running in namespace '$NAMESPACE'"
     echo_info "Next: Run NAMESPACE=$NAMESPACE ./run-pytest.sh to test the deployment"
-
-    # Cleanup downloaded chart if we used GitHub release
-    if [ "$USE_LOCAL_CHART" != "true" ]; then
-        cleanup_downloaded_chart
-    fi
 }
 
 # Handle script arguments
@@ -2059,8 +2021,9 @@ case "${1:-}" in
         echo "  HELM_RELEASE_NAME       - Name of Helm release (default: cost-onprem)"
         echo "  NAMESPACE               - Kubernetes namespace (default: cost-onprem)"
         echo "  VALUES_FILE             - Path to custom values file (optional)"
-        echo "  USE_LOCAL_CHART         - Use local chart instead of GitHub release (default: false)"
+        echo "  USE_LOCAL_CHART         - Use local chart instead of Helm repository (default: false)"
         echo "  LOCAL_CHART_PATH        - Path to local chart directory (default: ../cost-onprem)"
+        echo "  CHART_VERSION           - Pin a specific chart version (default: latest)"
         echo "  KAFKA_BOOTSTRAP_SERVERS - Bootstrap servers for existing Kafka (skips verification)"
         echo "                            Example: my-kafka-bootstrap.kafka:9092"
         echo ""
@@ -2087,21 +2050,23 @@ case "${1:-}" in
         echo "    SKIP_S3_SETUP         - Skip S3 bucket creation entirely (default: false)"
         echo ""
         echo "Chart Source Options:"
-        echo "  - Default: Downloads latest release from GitHub (recommended)"
+        echo "  - Default: Installs from Helm chart repository (recommended)"
+        echo "  - Pinned: Set CHART_VERSION={VERSION} to pin a specific chart version"
         echo "  - Local: Set USE_LOCAL_CHART=true to use local chart directory"
         echo "  - Chart Path: Set LOCAL_CHART_PATH to specify custom chart location"
         echo "  - Examples:"
+        echo "    $0                                                     # Install latest from Helm repo"
+        echo "    CHART_VERSION=0.2.9 $0                                 # Install specific version"
         echo "    USE_LOCAL_CHART=true LOCAL_CHART_PATH=../cost-onprem $0"
-        echo "    USE_LOCAL_CHART=true LOCAL_CHART_PATH=../cost-onprem-chart/cost-onprem $0"
         echo ""
         echo "Examples:"
         echo "  # Complete fresh installation"
         echo "  ./deploy-strimzi.sh                           # Install Strimzi and Kafka first"
         echo "  USE_LOCAL_CHART=true LOCAL_CHART_PATH=../cost-onprem $0  # Then install Cost Management On Premise"
         echo ""
-        echo "  # Install from GitHub release (with Strimzi already deployed)"
+        echo "  # Install from Helm repository (with Strimzi already deployed)"
         echo "  ./deploy-strimzi.sh                           # Install prerequisites"
-        echo "  $0                                            # Install Cost Management On Premise from latest release"
+        echo "  $0                                            # Install Cost Management On Premise from Helm repo"
         echo ""
         echo "  # Custom namespace and release name"
         echo "  NAMESPACE=my-namespace HELM_RELEASE_NAME=my-release \\"
@@ -2114,7 +2079,7 @@ case "${1:-}" in
         echo "  USE_LOCAL_CHART=true LOCAL_CHART_PATH=../cost-onprem $0 \\"
         echo "    --set database.ros.storage.size=200Gi"
         echo ""
-        echo "  # Install latest release from GitHub"
+        echo "  # Install latest from Helm repository"
         echo "  $0"
         echo ""
         echo "  # Cleanup and reinstall"
