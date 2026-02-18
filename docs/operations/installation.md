@@ -344,7 +344,7 @@ jwtAuth:
 
 #### Example: BYOI `my-values.yaml` (External PostgreSQL + Valkey)
 
-For deployments using external infrastructure:
+For deployments using external infrastructure (see also [docs/examples/byoi-values.yaml](../examples/byoi-values.yaml) for a minimal overlay):
 
 ```yaml
 # my-byoi-values.yaml — external database and cache

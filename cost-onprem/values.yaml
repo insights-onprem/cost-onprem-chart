@@ -647,24 +647,9 @@ kafka:
   # This is auto-configured by the install script based on the Kafka cluster it creates
   bootstrapServers: "cost-onprem-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
 
-  # Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL)
+  # Security protocol — only PLAINTEXT is currently supported.
+  # SASL/TLS support requires upstream application changes (see docs/operations/configuration.md).
   securityProtocol: "PLAINTEXT"
-
-  # SASL authentication (required for SASL_PLAINTEXT or SASL_SSL protocols)
-  # Enable when connecting to enterprise Kafka (AMQ Streams, MSK, Confluent)
-  sasl:
-    # SASL mechanism: PLAIN, SCRAM-SHA-256, or SCRAM-SHA-512
-    mechanism: ""
-    # Name of an existing Secret containing keys: 'username' and 'password'
-    # The secret must exist in the release namespace before Helm install.
-    existingSecret: ""
-
-  # TLS configuration (required for SSL or SASL_SSL protocols)
-  tls:
-    enabled: false
-    # Name of an existing Secret containing key: 'ca.crt'
-    # Used to verify the Kafka broker's TLS certificate.
-    caCertSecret: ""
 
 # -----------------------------------------------------------------------------
 # Shared Infrastructure - Cache (Valkey)
@@ -687,7 +672,7 @@ valkey:
   # Connection settings
   # When deploy is true, host is ignored (chart uses {release}-valkey internally).
   # When deploy is false, set host to your external Redis/Valkey endpoint.
-  host: "valkey"
+  host: ""
   port: 6379
   bindAddress: "0.0.0.0"
   maxMemory: "512mb"

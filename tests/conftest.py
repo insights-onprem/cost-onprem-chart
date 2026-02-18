@@ -22,7 +22,6 @@ from utils import (
     get_pod_by_label,
     get_route_url,
     get_secret_value,
-    run_helm_command,
     run_oc_command,
 )
 

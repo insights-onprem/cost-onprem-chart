@@ -635,7 +635,7 @@ The chart bundles PostgreSQL, Valkey, and deploys Kafka via Strimzi for developm
 |---------|----------------|-------------------|------------|
 | **PostgreSQL** | Single-replica StatefulSet | RDS, Crunchy, EDB, Azure DB | `database.deploy: false` |
 | **Valkey/Redis** | Single-replica Deployment | ElastiCache, Redis Enterprise, Azure Cache | `valkey.deploy: false` |
-| **Kafka** | Strimzi (via install script) | AMQ Streams, MSK, Confluent | `kafka.bootstrapServers` + `kafka.sasl.*` |
+| **Kafka** | Strimzi (via install script) | AMQ Streams, MSK, Confluent | `kafka.bootstrapServers` |
 | **Keycloak** | RHBK (via deploy-rhbk.sh) | Customer-managed Keycloak | `jwtAuth.keycloak.url` |
 
 ---
@@ -725,6 +725,15 @@ When `database.deploy: false`:
 - Init containers (`waitForDb`) target the external host instead of the internal service
 - All application components connect to the external database via the configured host
 
+> **Testing note (BYOI):** The E2E test suite discovers the external database pod by reading
+> the resolved hostname from application pod environment variables, then resolving the backing
+> pod via Kubernetes service endpoints. If the external database runs in a different namespace,
+> the test runner (user or CI service account) needs `pods/exec` permission in that namespace.
+> On OpenShift, grant the service account `edit` (or a custom role with `pods/exec`) in the
+> external database namespace.
+
+See [docs/examples/byoi-values.yaml](../examples/byoi-values.yaml) for a complete BYOI values overlay example.
+
 ---
 
 ### External Valkey/Redis
@@ -762,7 +771,7 @@ When `valkey.deploy: false`:
 
 Use an existing Kafka cluster instead of the Strimzi-managed Kafka deployed by the install script.
 
-> **Known Limitation:** Only **PLAINTEXT** Kafka connections are currently supported. The `kafka.sasl.*` and `kafka.tls.*` values in `values.yaml` are reserved for future use but are **not wired into templates**. Both Koku and ROS backends do not read SASL/TLS configuration from environment variables in on-prem (non-Clowder) mode. Upstream application changes are required before chart-level SASL/TLS support can be implemented.
+> **Known Limitation:** Only **PLAINTEXT** Kafka connections are currently supported. Both Koku and ROS backends do not read SASL/TLS configuration from environment variables in on-prem (non-Clowder) mode. Upstream application changes are required before chart-level SASL/TLS support can be added.
 
 **Prerequisites:**
 
@@ -957,6 +966,9 @@ kruize:
 ```bash
 # Test configuration rendering
 helm template cost-onprem ./cost-onprem --values my-values.yaml | kubectl apply --dry-run=client -f -
+
+# Test BYOI configuration rendering (external database + cache)
+helm template cost-onprem ./cost-onprem --values docs/examples/byoi-values.yaml | kubectl apply --dry-run=client -f -
 
 # Check computed values
 helm get values cost-onprem -n cost-onprem
