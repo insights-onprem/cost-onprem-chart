@@ -932,7 +932,10 @@ deploy_helm_chart() {
     fi
 
     # Valkey fsGroup (from namespace supplemental-groups annotation)
-    if [ "$PLATFORM" = "openshift" ]; then
+    # Only relevant when the chart deploys bundled Valkey
+    local valkey_deploy
+    valkey_deploy=$(get_helm_value "valkey.deploy" "true")
+    if [ "$valkey_deploy" != "false" ] && [ "$PLATFORM" = "openshift" ]; then
         local supp_groups
         supp_groups=$(oc get ns "$NAMESPACE" -o jsonpath='{.metadata.annotations.openshift\.io/sa\.scc\.supplemental-groups}' 2>/dev/null || true)
         if [ -n "$supp_groups" ]; then
