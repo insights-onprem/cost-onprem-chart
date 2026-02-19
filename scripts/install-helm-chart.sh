@@ -114,7 +114,7 @@ get_helm_value() {
     local default="${2:-}"
     if [ -n "$VALUES_FILE" ] && [ -f "$VALUES_FILE" ]; then
         local val
-        val=$(yq e ".$key // \"\"" "$VALUES_FILE" 2>/dev/null)
+        val=$(yq e ".$key" "$VALUES_FILE" 2>/dev/null)
         if [ -n "$val" ] && [ "$val" != "null" ]; then
             echo "$val"
             return
