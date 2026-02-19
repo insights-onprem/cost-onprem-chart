@@ -260,13 +260,18 @@ def ingress_url(gateway_url: str) -> str:
 # Database Discovery Helpers
 # =============================================================================
 
-# Pod label -> env var name mapping for database host discovery.
-# ROS pods use DB_HOST; Koku pods use DATABASE_SERVICE_HOST.
-# Both resolve to the same Helm-templated value.
+@dataclass
+class DbHostLookup:
+    """Maps a Kubernetes pod label to the environment variable that holds the resolved DB host."""
+
+    label: str
+    env_var: str
+
+
 _DB_HOST_LOOKUPS = [
-    ("app.kubernetes.io/component=ros-api", "DB_HOST"),
-    ("app.kubernetes.io/component=cost-management-api", "DATABASE_SERVICE_HOST"),
-    ("app.kubernetes.io/component=cost-processor", "DATABASE_SERVICE_HOST"),
+    DbHostLookup(label="app.kubernetes.io/component=ros-api", env_var="DB_HOST"),
+    DbHostLookup(label="app.kubernetes.io/component=cost-management-api", env_var="DATABASE_SERVICE_HOST"),
+    DbHostLookup(label="app.kubernetes.io/component=cost-processor", env_var="DATABASE_SERVICE_HOST"),
 ]
 
 
@@ -277,11 +282,11 @@ def _get_db_host_from_app_pod(cluster_config: ClusterConfig) -> Optional[str]:
     it as an environment variable into every app pod.  Reading it back gives us
     the concrete hostname without needing to parse Helm values or sentinels.
     """
-    for label, env_var in _DB_HOST_LOOKUPS:
-        pod = get_pod_by_label(cluster_config.namespace, label)
+    for lookup in _DB_HOST_LOOKUPS:
+        pod = get_pod_by_label(cluster_config.namespace, lookup.label)
         if pod:
             result = exec_in_pod(
-                cluster_config.namespace, pod, ["printenv", env_var]
+                cluster_config.namespace, pod, ["printenv", lookup.env_var]
             )
             if result and result.strip():
                 return result.strip()

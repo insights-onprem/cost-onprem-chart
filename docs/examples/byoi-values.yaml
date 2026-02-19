@@ -15,7 +15,3 @@ valkey:
   deploy: false
   host: "valkey.byoi-infra.svc.cluster.local"
   port: 6379
-
-kafka:
-  bootstrapServers: "cost-onprem-kafka-kafka-bootstrap.kafka.svc:9092"
-  securityProtocol: "PLAINTEXT"

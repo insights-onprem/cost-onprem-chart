@@ -646,7 +646,7 @@ Use an existing enterprise PostgreSQL instance instead of the bundled StatefulSe
 
 **Prerequisites:**
 
-1. A PostgreSQL 14+ server accessible from the OpenShift cluster
+1. A PostgreSQL 16+ server accessible from the OpenShift cluster
 2. Three databases created on the server:
 
 | Database | Default Name | Purpose |
@@ -679,7 +679,7 @@ GRANT ALL PRIVILEGES ON DATABASE costonprem_koku TO koku_user;
 ALTER USER koku_user CREATEDB CREATEROLE;
 ```
 
-> **Note:** Koku Django migrations will automatically create a `hive` role and `hive` database (used for Trino/Hive integration in SaaS, unused in on-prem mode). This requires `koku_user` to have `CREATEDB` and `CREATEROLE` privileges as shown above. No manual creation of the `hive` database is needed.
+> **Note:** Koku Django migrations will automatically create a `hive` role and `hive` database (used for Trino/Hive integration in SaaS, unused in on-prem mode). This requires `koku_user` to have `CREATEDB` and `CREATEROLE` privileges as shown above. No manual creation of the `hive` database is needed. This requirement will be removed once [project-koku/koku#5900](https://github.com/project-koku/koku/pull/5900) lands in a new Koku image (tracked in PR #96).
 
 4. A Kubernetes Secret with all credentials:
 
