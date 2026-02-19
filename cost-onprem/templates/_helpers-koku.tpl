@@ -309,10 +309,13 @@ Common environment variables for Koku API and Celery
 - name: REDIS_PORT
   value: {{ include "cost-onprem.koku.valkey.port" . | quote }}
 {{- if .Values.valkey.auth.enabled }}
+{{- if not .Values.valkey.auth.secretName }}
+  {{- fail "valkey.auth.enabled is true but valkey.auth.secretName is empty. Provide the name of a Secret containing key 'redis-password'." -}}
+{{- end }}
 - name: REDIS_PASSWORD
   valueFrom:
     secretKeyRef:
-      name: {{ .Values.valkey.auth.existingSecret }}
+      name: {{ .Values.valkey.auth.secretName }}
       key: redis-password
 {{- end }}
 - name: CELERY_RESULT_EXPIRES

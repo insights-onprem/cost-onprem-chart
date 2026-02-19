@@ -682,8 +682,9 @@ valkey:
   # For password-protected Redis instances (e.g., ElastiCache, Redis Enterprise)
   auth:
     enabled: false
-    # Name of an existing Secret containing key: 'redis-password'
-    existingSecret: ""
+    # Name of the Secret containing key: 'redis-password'
+    # Required when auth.enabled is true.
+    secretName: ""
 
   # Persistence configuration for Celery chord callback reliability
   # Persistent storage is always enabled when deploying bundled Valkey.

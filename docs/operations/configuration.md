@@ -755,13 +755,13 @@ valkey:
   port: 6379
   auth:
     enabled: true
-    existingSecret: "my-redis-credentials"  # Secret with key: redis-password
+    secretName: "my-redis-credentials"  # Secret with key: redis-password
 ```
 
 When `valkey.deploy: false`:
 - The chart skips the Valkey Deployment, Service, and PVC
 - Koku and Celery components connect to the external Redis host
-- If `auth.enabled`, a `REDIS_PASSWORD` environment variable is injected into all consumers
+- If `auth.enabled`, a `REDIS_PASSWORD` environment variable is injected into all consumers (requires `auth.secretName`)
 
 **Consumers:** Koku API, MASU, Kafka Listener, Migration Job, Celery Beat, and all Celery Workers. ROS components do not use Valkey.
 
