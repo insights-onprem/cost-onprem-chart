@@ -63,7 +63,7 @@ database:
 # ----------------------------
 # This chart requires S3-compatible storage. Options:
 #
-#   1. Manual (production): Set objectStorage.endpoint/port/useSSL/existingSecret
+#   1. Manual (production): Set objectStorage.endpoint/port/useSSL/secretName
 #      and pre-create your credentials secret. The install script will skip
 #      all S3 auto-detection.
 #
@@ -81,7 +81,7 @@ objectStorage:
   endpoint: ""  # Set manually, or auto-detected by install script
   port: 443
   useSSL: true
-  existingSecret: ""  # Set to use a pre-existing credentials secret (skips secret creation)
+  secretName: ""  # Set to use a pre-existing credentials secret (skips secret creation)
 
 # JWT Authentication configuration
 # Install script detects Keycloak and passes values via --set

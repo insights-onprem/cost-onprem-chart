@@ -19,8 +19,8 @@ Parameters:
   command: ['bash', '-c']
   args:
     - |
-      echo "Waiting for unified database server at {{ include "cost-onprem.fullname" $root }}-database:{{ $root.Values.database.server.port }}..."
-      until timeout 3 bash -c "echo > /dev/tcp/{{ include "cost-onprem.fullname" $root }}-database/{{ $root.Values.database.server.port }}" 2>/dev/null; do
+      echo "Waiting for unified database server at {{ include "cost-onprem.database.host" $root }}:{{ $root.Values.database.server.port }}..."
+      until timeout 3 bash -c "echo > /dev/tcp/{{ include "cost-onprem.database.host" $root }}/{{ $root.Values.database.server.port }}" 2>/dev/null; do
         echo "Database server not ready yet, retrying in 5 seconds..."
         sleep 5
       done

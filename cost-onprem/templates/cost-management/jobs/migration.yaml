@@ -41,8 +41,7 @@ spec:
             echo "Namespace: {{ .Release.Namespace }}"
 
             # Wait for database to be ready
-            # Use hardcoded service name since environment variables may not be set yet during pre-install
-            DB_HOST="{{ include "cost-onprem.fullname" . }}-database.{{ .Release.Namespace }}.svc.cluster.local"
+            DB_HOST="{{ include "cost-onprem.database.host" . }}"
             DB_PORT="{{ .Values.database.server.port }}"
             MAX_WAIT=600  # 10 minutes timeout
             ELAPSED=0

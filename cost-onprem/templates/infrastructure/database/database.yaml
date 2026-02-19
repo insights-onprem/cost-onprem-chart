@@ -1,3 +1,4 @@
+{{- if .Values.database.deploy }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -123,3 +124,4 @@ spec:
         resources:
           requests:
             storage: {{ .Values.database.server.storage.size }}
+{{- end }}

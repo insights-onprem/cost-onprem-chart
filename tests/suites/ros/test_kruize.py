@@ -45,7 +45,7 @@ class TestKruizeDatabase:
     ):
         """Verify Kruize can connect to its database."""
         result = execute_db_query(
-            cluster_config.namespace,
+            database_config.namespace,
             database_config.pod_name,
             kruize_credentials["database"],
             kruize_credentials["user"],
@@ -60,7 +60,7 @@ class TestKruizeDatabase:
     ):
         """Verify Kruize tables exist in database."""
         result = execute_db_query(
-            cluster_config.namespace,
+            database_config.namespace,
             database_config.pod_name,
             kruize_credentials["database"],
             kruize_credentials["user"],

@@ -17,7 +17,7 @@ class TestDatabaseSchema:
     def test_api_provider_table_exists(self, cluster_config, database_config):
         """Verify api_provider table exists (core Koku table)."""
         result = execute_db_query(
-            cluster_config.namespace,
+            database_config.namespace,
             database_config.pod_name,
             database_config.database,
             database_config.user,
@@ -31,7 +31,7 @@ class TestDatabaseSchema:
     def test_api_customer_table_exists(self, cluster_config, database_config):
         """Verify api_customer table exists."""
         result = execute_db_query(
-            cluster_config.namespace,
+            database_config.namespace,
             database_config.pod_name,
             database_config.database,
             database_config.user,
@@ -45,7 +45,7 @@ class TestDatabaseSchema:
     def test_manifest_table_exists(self, cluster_config, database_config):
         """Verify cost usage report manifest table exists."""
         result = execute_db_query(
-            cluster_config.namespace,
+            database_config.namespace,
             database_config.pod_name,
             database_config.database,
             database_config.user,
@@ -65,7 +65,7 @@ class TestDatabaseMigrations:
     def test_django_migrations_table_exists(self, cluster_config, database_config):
         """Verify Django migrations table exists."""
         result = execute_db_query(
-            cluster_config.namespace,
+            database_config.namespace,
             database_config.pod_name,
             database_config.database,
             database_config.user,
@@ -79,7 +79,7 @@ class TestDatabaseMigrations:
     def test_migrations_applied(self, cluster_config, database_config):
         """Verify migrations have been applied."""
         result = execute_db_query(
-            cluster_config.namespace,
+            database_config.namespace,
             database_config.pod_name,
             database_config.database,
             database_config.user,
@@ -96,7 +96,7 @@ class TestDatabaseMigrations:
         # This is informational - we just check that the app tables exist
         # which indicates migrations have run
         result = execute_db_query(
-            cluster_config.namespace,
+            database_config.namespace,
             database_config.pod_name,
             database_config.database,
             database_config.user,
@@ -137,7 +137,7 @@ class TestKruizeDatabase:
     ):
         """Verify kruize_experiments table exists."""
         result = execute_db_query(
-            cluster_config.namespace,
+            kruize_database_config.namespace,
             kruize_database_config.pod_name,
             kruize_database_config.database,
             kruize_database_config.user,
@@ -153,7 +153,7 @@ class TestKruizeDatabase:
     ):
         """Verify kruize_recommendations table exists."""
         result = execute_db_query(
-            cluster_config.namespace,
+            kruize_database_config.namespace,
             kruize_database_config.pod_name,
             kruize_database_config.database,
             kruize_database_config.user,

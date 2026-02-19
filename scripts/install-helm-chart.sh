@@ -106,6 +106,23 @@ parse_minio_namespace() {
     parse_minio_host "$1" | cut -d. -f2
 }
 
+# Read a value from the user-supplied Helm values file using yq
+# Usage: get_helm_value "database.deploy" "true"
+# Returns the value from VALUES_FILE if set, otherwise returns the default
+get_helm_value() {
+    local key="$1"
+    local default="${2:-}"
+    if [ -n "$VALUES_FILE" ] && [ -f "$VALUES_FILE" ]; then
+        local val
+        val=$(yq e ".$key" "$VALUES_FILE" 2>/dev/null)
+        if [ -n "$val" ] && [ "$val" != "null" ]; then
+            echo "$val"
+            return
+        fi
+    fi
+    echo "$default"
+}
+
 # Function to check if a command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1
@@ -223,10 +240,18 @@ create_namespace() {
 verify_strimzi_and_kafka() {
     echo_info "Verifying Strimzi operator and Kafka cluster prerequisites..."
 
-    # If user provided external Kafka bootstrap servers, skip verification
+    # If user provided external Kafka bootstrap servers (env var or values file), skip verification
     if [ -n "$KAFKA_BOOTSTRAP_SERVERS" ]; then
         echo_info "Using provided Kafka bootstrap servers: $KAFKA_BOOTSTRAP_SERVERS"
         HELM_EXTRA_ARGS+=("--set" "kafka.bootstrapServers=$KAFKA_BOOTSTRAP_SERVERS")
+        echo_success "Kafka configuration verified"
+        return 0
+    fi
+
+    local values_kafka_bootstrap
+    values_kafka_bootstrap=$(get_helm_value "kafka.bootstrapServers" "")
+    if [ -n "$values_kafka_bootstrap" ]; then
+        echo_info "Using Kafka bootstrap servers from values file: $values_kafka_bootstrap"
         echo_success "Kafka configuration verified"
         return 0
     fi
@@ -252,9 +277,11 @@ verify_strimzi_and_kafka() {
         echo_info "  cd $SCRIPT_DIR"
         echo_info "  ./deploy-strimzi.sh"
         echo_info ""
-        echo_info "Or set KAFKA_BOOTSTRAP_SERVERS to use an existing Kafka cluster:"
+        echo_info "Or point to an existing Kafka cluster via env var or values file:"
         echo_info "  export KAFKA_BOOTSTRAP_SERVERS=my-kafka-bootstrap.my-namespace:9092"
         echo_info "  $0"
+        echo_info ""
+        echo_info "  # Or set kafka.bootstrapServers in your values file"
         echo_info ""
         return 1
     fi
@@ -541,7 +568,7 @@ create_storage_credentials_secret() {
         echo_info "  Then set S3_ENDPOINT=<hostname> when re-running this script."
         echo_info ""
         echo_info "Option 2: Configure in values.yaml (production)"
-        echo_info "  - Set objectStorage.endpoint and objectStorage.existingSecret"
+        echo_info "  - Set objectStorage.endpoint and objectStorage.secretName"
         echo_info "  - Pre-create the secret with 'access-key' and 'secret-key' keys"
         echo_info ""
         echo_info "Option 3: Deploy with MinIO (Testing/CI only)"
@@ -905,7 +932,10 @@ deploy_helm_chart() {
     fi
 
     # Valkey fsGroup (from namespace supplemental-groups annotation)
-    if [ "$PLATFORM" = "openshift" ]; then
+    # Only relevant when the chart deploys bundled Valkey
+    local valkey_deploy
+    valkey_deploy=$(get_helm_value "valkey.deploy" "true")
+    if [ "$valkey_deploy" != "false" ] && [ "$PLATFORM" = "openshift" ]; then
         local supp_groups
         supp_groups=$(oc get ns "$NAMESPACE" -o jsonpath='{.metadata.annotations.openshift\.io/sa\.scc\.supplemental-groups}' 2>/dev/null || true)
         if [ -n "$supp_groups" ]; then
@@ -989,7 +1019,7 @@ deploy_helm_chart() {
     # Tell Helm about the script-managed storage credentials secret so it
     # skips rendering the placeholder secret template (avoids ownership conflict).
     if [ -n "$STORAGE_CREDENTIALS_SECRET" ]; then
-        helm_cmd="$helm_cmd --set objectStorage.existingSecret=\"$STORAGE_CREDENTIALS_SECRET\""
+        helm_cmd="$helm_cmd --set objectStorage.secretName=\"$STORAGE_CREDENTIALS_SECRET\""
         echo_info "Storage credentials secret: $STORAGE_CREDENTIALS_SECRET (script-managed)"
     fi
 
@@ -1787,19 +1817,19 @@ main() {
     # infrastructure and the script skips all S3 auto-detection, credential
     # creation, and bucket creation.
     export USER_S3_CONFIGURED="false"
-    export USER_S3_EXISTING_SECRET=""
+    export USER_S3_SECRET_NAME=""
     if [ -n "$VALUES_FILE" ] && [ -f "$VALUES_FILE" ] && command_exists yq; then
         local user_endpoint
         user_endpoint=$(yq '.objectStorage.endpoint // ""' "$VALUES_FILE" 2>/dev/null)
         if [ -n "$user_endpoint" ]; then
             USER_S3_CONFIGURED="true"
-            USER_S3_EXISTING_SECRET=$(yq '.objectStorage.existingSecret // ""' "$VALUES_FILE" 2>/dev/null)
+            USER_S3_SECRET_NAME=$(yq '.objectStorage.secretName // ""' "$VALUES_FILE" 2>/dev/null)
             echo_info "S3 storage pre-configured in values file:"
             echo_info "  Endpoint: $user_endpoint"
             echo_info "  Port: $(yq '.objectStorage.port // 443' "$VALUES_FILE" 2>/dev/null)"
             echo_info "  SSL: $(yq '.objectStorage.useSSL // true' "$VALUES_FILE" 2>/dev/null)"
-            if [ -n "$USER_S3_EXISTING_SECRET" ]; then
-                echo_info "  Credentials Secret: $USER_S3_EXISTING_SECRET (user-managed)"
+            if [ -n "$USER_S3_SECRET_NAME" ]; then
+                echo_info "  Credentials Secret: $USER_S3_SECRET_NAME (user-managed)"
             else
                 echo_info "  Credentials Secret: will be created by install script"
             fi
@@ -1820,17 +1850,17 @@ main() {
     fi
 
     # Determine whether to skip storage credential and bucket creation:
-    #   - USER_S3_CONFIGURED=true + existingSecret set → skip credentials + buckets
-    #   - USER_S3_CONFIGURED=true + no existingSecret  → create credentials, skip buckets
-    #   - USING_EXTERNAL_OBC=true                      → skip credentials + buckets (OBC provides both)
-    #   - Otherwise                                    → auto-detect and create both
+    #   - USER_S3_CONFIGURED=true + secretName set → skip credentials + buckets
+    #   - USER_S3_CONFIGURED=true + no secretName  → create credentials, skip buckets
+    #   - USING_EXTERNAL_OBC=true                  → skip credentials + buckets (OBC provides both)
+    #   - Otherwise                                → auto-detect and create both
     local skip_storage_credentials="false"
     local skip_bucket_creation="false"
 
     if [ "$USER_S3_CONFIGURED" = "true" ]; then
         # User manages their S3 — always skip bucket creation
         skip_bucket_creation="true"
-        if [ -n "$USER_S3_EXISTING_SECRET" ]; then
+        if [ -n "$USER_S3_SECRET_NAME" ]; then
             # User also manages their own credentials secret
             skip_storage_credentials="true"
         fi
@@ -1845,14 +1875,21 @@ main() {
     echo_info "════════════════════════════════════════════════════════════"
     echo ""
 
-    # Create database credentials secret (always required)
-    if ! create_database_credentials_secret; then
-        echo_error "Failed to create database credentials. Cannot proceed with installation."
-        exit 1
+    # Create database credentials secret (skip when using external database)
+    local database_deploy
+    database_deploy=$(get_helm_value "database.deploy" "true")
+    if [ "$database_deploy" = "false" ]; then
+        echo_info "Skipping database credentials creation (database.deploy=false, using external database)"
+        echo_info "Ensure the database credentials secret already exists in namespace '$NAMESPACE'"
+    else
+        if ! create_database_credentials_secret; then
+            echo_error "Failed to create database credentials. Cannot proceed with installation."
+            exit 1
+        fi
     fi
 
     # Create storage credentials secret
-    # Track the secret name so we can tell Helm about it via --set objectStorage.existingSecret
+    # Track the secret name so we can tell Helm about it via --set objectStorage.secretName
     # This prevents Helm from trying to create a conflicting placeholder secret.
     export STORAGE_CREDENTIALS_SECRET=""
     if [ "$skip_storage_credentials" = "false" ]; then
@@ -1870,8 +1907,8 @@ main() {
         fi
         STORAGE_CREDENTIALS_SECRET="${fullname}-storage-credentials"
     else
-        if [ -n "$USER_S3_EXISTING_SECRET" ]; then
-            echo_info "Skipping storage credentials creation (using existing secret: $USER_S3_EXISTING_SECRET)"
+        if [ -n "$USER_S3_SECRET_NAME" ]; then
+            echo_info "Skipping storage credentials creation (using secret: $USER_S3_SECRET_NAME)"
         else
             echo_info "Skipping storage credentials creation (using OBC credentials)"
         fi
@@ -2030,7 +2067,7 @@ case "${1:-}" in
         echo "S3 Storage Configuration:"
         echo "  Option 1 (Recommended for production): Configure in values.yaml"
         echo "    Set objectStorage.endpoint, objectStorage.port, objectStorage.useSSL,"
-        echo "    objectStorage.existingSecret in your values file."
+        echo "    objectStorage.secretName in your values file."
         echo "    The script skips all S3 auto-detection when objectStorage.endpoint is set."
         echo ""
         echo "  Option 2 (Generic S3): Explicit endpoint via environment variable"
