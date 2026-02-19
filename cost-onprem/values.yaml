@@ -686,9 +686,8 @@ valkey:
     existingSecret: ""
 
   # Persistence configuration for Celery chord callback reliability
-  # IMPORTANT: Enable this for production to prevent data loss on pod restarts
+  # Persistent storage is always enabled when deploying bundled Valkey.
   persistence:
-    enabled: true
     size: 5Gi
     storageClassName: ""  # Use default storage class
 
