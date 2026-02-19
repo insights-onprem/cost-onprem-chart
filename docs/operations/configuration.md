@@ -182,7 +182,7 @@ objectStorage:
   endpoint: "s3.amazonaws.com"       # Or regional: s3.us-east-1.amazonaws.com
   port: 443
   useSSL: true
-  existingSecret: "aws-s3-credentials"
+  secretName: "aws-s3-credentials"
   s3:
     region: "us-east-1"             # Must match the bucket region
 ```
@@ -241,7 +241,7 @@ objectStorage:
   endpoint: "rook-ceph-rgw-ocs-storagecluster-cephobjectstore.openshift-storage.svc"
   port: 443
   useSSL: true
-  existingSecret: ""  # Let the install script create it from NooBaa credentials
+  secretName: ""  # Let the install script create it from NooBaa credentials
   s3:
     region: "onprem"
 ```
@@ -398,7 +398,7 @@ When using `install-helm-chart.sh`, these values are **auto-detected** and passe
 | `objectStorage.endpoint` | `s3.openshift-storage.svc.cluster.local` | Yes | S3-compatible endpoint hostname. Must point to your actual S3 provider. |
 | `objectStorage.port` | `443` | No | S3 endpoint port. |
 | `objectStorage.useSSL` | `true` | No | Use TLS for S3 connections. Set `false` for MinIO or other HTTP-only backends. |
-| `objectStorage.existingSecret` | `""` | Yes (direct install) | Name of a pre-created `Secret` containing `access-key` and `secret-key`. |
+| `objectStorage.secretName` | `""` | Yes (direct install) | Name of a pre-created `Secret` containing `access-key` and `secret-key`. |
 | `valkey.securityContext.fsGroup` | *(unset)* | Yes (OpenShift) | GID for Valkey PVC file ownership. Without this, Valkey pods fail with PVC permission errors. |
 | `jwtAuth.keycloak.installed` | `true` | No | Set `false` if Keycloak is not deployed. |
 | `jwtAuth.keycloak.url` | `""` | Recommended | Keycloak external URL. Defaults to internal cluster URL `https://keycloak-service.keycloak.svc.cluster.local:8080` when empty. |
@@ -608,7 +608,7 @@ objectStorage:
   endpoint: ""  # Auto-detected by install script, or set manually
   port: 443
   useSSL: true
-  existingSecret: ""  # Set to use a pre-existing credentials secret
+  secretName: ""  # Set to use a pre-existing credentials secret
 
 # OpenShift Routes
 gatewayRoute:
@@ -710,7 +710,7 @@ database:
     host: "my-postgres.example.com"
     port: 5432
     sslMode: require  # or verify-full for production
-  existingSecret: "my-external-db-credentials"
+  secretName: "my-external-db-credentials"
   ros:
     name: costonprem_ros
   kruize:

@@ -9,7 +9,7 @@ database:
     host: "postgresql.byoi-infra.svc.cluster.local"
     port: 5432
     sslMode: disable
-  existingSecret: "cost-onprem-db-credentials"
+  secretName: "cost-onprem-db-credentials"
 
 valkey:
   deploy: false

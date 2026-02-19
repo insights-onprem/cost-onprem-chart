@@ -112,7 +112,7 @@ objectStorage:
   endpoint: "s3.amazonaws.com"       # Or ODF: s3.openshift-storage.svc
   port: 443
   useSSL: true
-  existingSecret: "my-s3-credentials"
+  secretName: "my-s3-credentials"
   s3:
     region: "us-east-1"              # Or "onprem" for non-AWS backends
 ```
@@ -221,7 +221,7 @@ objectStorage:
   endpoint: ""  # Auto-detected by install script, or set manually
   port: 443
   useSSL: true
-  existingSecret: ""  # Set to use a pre-existing credentials secret
+  secretName: ""  # Set to use a pre-existing credentials secret
 
 global:
   platform:

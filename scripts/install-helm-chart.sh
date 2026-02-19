@@ -558,7 +558,7 @@ create_storage_credentials_secret() {
         echo_info "  Then set S3_ENDPOINT=<hostname> when re-running this script."
         echo_info ""
         echo_info "Option 2: Configure in values.yaml (production)"
-        echo_info "  - Set objectStorage.endpoint and objectStorage.existingSecret"
+        echo_info "  - Set objectStorage.endpoint and objectStorage.secretName"
         echo_info "  - Pre-create the secret with 'access-key' and 'secret-key' keys"
         echo_info ""
         echo_info "Option 3: Deploy with MinIO (Testing/CI only)"
@@ -1006,7 +1006,7 @@ deploy_helm_chart() {
     # Tell Helm about the script-managed storage credentials secret so it
     # skips rendering the placeholder secret template (avoids ownership conflict).
     if [ -n "$STORAGE_CREDENTIALS_SECRET" ]; then
-        helm_cmd="$helm_cmd --set objectStorage.existingSecret=\"$STORAGE_CREDENTIALS_SECRET\""
+        helm_cmd="$helm_cmd --set objectStorage.secretName=\"$STORAGE_CREDENTIALS_SECRET\""
         echo_info "Storage credentials secret: $STORAGE_CREDENTIALS_SECRET (script-managed)"
     fi
 
@@ -1804,19 +1804,19 @@ main() {
     # infrastructure and the script skips all S3 auto-detection, credential
     # creation, and bucket creation.
     export USER_S3_CONFIGURED="false"
-    export USER_S3_EXISTING_SECRET=""
+    export USER_S3_SECRET_NAME=""
     if [ -n "$VALUES_FILE" ] && [ -f "$VALUES_FILE" ] && command_exists yq; then
         local user_endpoint
         user_endpoint=$(yq '.objectStorage.endpoint // ""' "$VALUES_FILE" 2>/dev/null)
         if [ -n "$user_endpoint" ]; then
             USER_S3_CONFIGURED="true"
-            USER_S3_EXISTING_SECRET=$(yq '.objectStorage.existingSecret // ""' "$VALUES_FILE" 2>/dev/null)
+            USER_S3_SECRET_NAME=$(yq '.objectStorage.secretName // ""' "$VALUES_FILE" 2>/dev/null)
             echo_info "S3 storage pre-configured in values file:"
             echo_info "  Endpoint: $user_endpoint"
             echo_info "  Port: $(yq '.objectStorage.port // 443' "$VALUES_FILE" 2>/dev/null)"
             echo_info "  SSL: $(yq '.objectStorage.useSSL // true' "$VALUES_FILE" 2>/dev/null)"
-            if [ -n "$USER_S3_EXISTING_SECRET" ]; then
-                echo_info "  Credentials Secret: $USER_S3_EXISTING_SECRET (user-managed)"
+            if [ -n "$USER_S3_SECRET_NAME" ]; then
+                echo_info "  Credentials Secret: $USER_S3_SECRET_NAME (user-managed)"
             else
                 echo_info "  Credentials Secret: will be created by install script"
             fi
@@ -1837,17 +1837,17 @@ main() {
     fi
 
     # Determine whether to skip storage credential and bucket creation:
-    #   - USER_S3_CONFIGURED=true + existingSecret set → skip credentials + buckets
-    #   - USER_S3_CONFIGURED=true + no existingSecret  → create credentials, skip buckets
-    #   - USING_EXTERNAL_OBC=true                      → skip credentials + buckets (OBC provides both)
-    #   - Otherwise                                    → auto-detect and create both
+    #   - USER_S3_CONFIGURED=true + secretName set → skip credentials + buckets
+    #   - USER_S3_CONFIGURED=true + no secretName  → create credentials, skip buckets
+    #   - USING_EXTERNAL_OBC=true                  → skip credentials + buckets (OBC provides both)
+    #   - Otherwise                                → auto-detect and create both
     local skip_storage_credentials="false"
     local skip_bucket_creation="false"
 
     if [ "$USER_S3_CONFIGURED" = "true" ]; then
         # User manages their S3 — always skip bucket creation
         skip_bucket_creation="true"
-        if [ -n "$USER_S3_EXISTING_SECRET" ]; then
+        if [ -n "$USER_S3_SECRET_NAME" ]; then
             # User also manages their own credentials secret
             skip_storage_credentials="true"
         fi
@@ -1876,7 +1876,7 @@ main() {
     fi
 
     # Create storage credentials secret
-    # Track the secret name so we can tell Helm about it via --set objectStorage.existingSecret
+    # Track the secret name so we can tell Helm about it via --set objectStorage.secretName
     # This prevents Helm from trying to create a conflicting placeholder secret.
     export STORAGE_CREDENTIALS_SECRET=""
     if [ "$skip_storage_credentials" = "false" ]; then
@@ -1894,8 +1894,8 @@ main() {
         fi
         STORAGE_CREDENTIALS_SECRET="${fullname}-storage-credentials"
     else
-        if [ -n "$USER_S3_EXISTING_SECRET" ]; then
-            echo_info "Skipping storage credentials creation (using existing secret: $USER_S3_EXISTING_SECRET)"
+        if [ -n "$USER_S3_SECRET_NAME" ]; then
+            echo_info "Skipping storage credentials creation (using secret: $USER_S3_SECRET_NAME)"
         else
             echo_info "Skipping storage credentials creation (using OBC credentials)"
         fi
@@ -2054,7 +2054,7 @@ case "${1:-}" in
         echo "S3 Storage Configuration:"
         echo "  Option 1 (Recommended for production): Configure in values.yaml"
         echo "    Set objectStorage.endpoint, objectStorage.port, objectStorage.useSSL,"
-        echo "    objectStorage.existingSecret in your values file."
+        echo "    objectStorage.secretName in your values file."
         echo "    The script skips all S3 auto-detection when objectStorage.endpoint is set."
         echo ""
         echo "  Option 2 (Generic S3): Explicit endpoint via environment variable"

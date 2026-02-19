@@ -237,7 +237,7 @@ helm install cost-onprem ./cost-onprem \
   --set objectStorage.endpoint="<YOUR_S3_ENDPOINT>" \
   --set objectStorage.port=443 \
   --set objectStorage.useSSL=true \
-  --set objectStorage.existingSecret="my-s3-credentials" \
+  --set objectStorage.secretName="my-s3-credentials" \
   --set jwtAuth.keycloak.installed=true \
   --set jwtAuth.keycloak.namespace="$KEYCLOAK_NAMESPACE" \
   --set jwtAuth.keycloak.url="$KEYCLOAK_URL" \
@@ -256,7 +256,7 @@ The table below lists every cluster-specific value, its chart default, and how t
 | `objectStorage.endpoint` | `s3.openshift-storage.svc.cluster.local` | S3-compatible endpoint hostname | Your S3 provider's endpoint (e.g., `s3.amazonaws.com`, MinIO hostname) |
 | `objectStorage.port` | `443` | S3 endpoint port | `443` for HTTPS, `80` for HTTP |
 | `objectStorage.useSSL` | `true` | Use TLS for S3 connections | `true` for production, `false` for MinIO/dev |
-| `objectStorage.existingSecret` | `""` | Pre-created credentials secret name | Name of the `Secret` you created in Step 2 |
+| `objectStorage.secretName` | `""` | Pre-created credentials secret name | Name of the `Secret` you created in Step 2 |
 | `valkey.securityContext.fsGroup` | *(unset)* | GID for Valkey PVC access on OpenShift | `oc get ns <NS> -o jsonpath='{.metadata.annotations.openshift\.io/sa\.scc\.supplemental-groups}'` (first number) |
 | `jwtAuth.keycloak.installed` | `true` | Whether Keycloak is deployed | `true` if RHBK is installed, `false` otherwise |
 | `jwtAuth.keycloak.url` | `""` | Keycloak external URL | `oc get route keycloak -n keycloak -o jsonpath='https://{.spec.host}'` |
@@ -327,7 +327,7 @@ objectStorage:
   endpoint: "s3.us-east-1.amazonaws.com"
   port: 443
   useSSL: true
-  existingSecret: "my-s3-credentials"
+  secretName: "my-s3-credentials"
   s3:
     region: "us-east-1"
 
@@ -358,7 +358,7 @@ database:
     host: "my-postgres.example.com"
     port: 5432
     sslMode: require
-  existingSecret: "cost-onprem-db-credentials"
+  secretName: "cost-onprem-db-credentials"
 
 valkey:
   deploy: false
@@ -373,7 +373,7 @@ objectStorage:
   endpoint: "s3.us-east-1.amazonaws.com"
   port: 443
   useSSL: true
-  existingSecret: "my-s3-credentials"
+  secretName: "my-s3-credentials"
   s3:
     region: "us-east-1"
 
@@ -435,7 +435,7 @@ objectStorage:
   endpoint: "s3.us-east-1.amazonaws.com"  # Your S3 endpoint
   port: 443
   useSSL: true
-  existingSecret: "my-s3-credentials"
+  secretName: "my-s3-credentials"
   s3:
     region: "us-east-1"
 ```

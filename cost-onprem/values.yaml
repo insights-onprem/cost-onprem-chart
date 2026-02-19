@@ -584,7 +584,7 @@ database:
   #   1. Set database.server.host to your external database hostname
   #   2. Pre-create the required databases: costonprem_ros, costonprem_kruize, costonprem_koku
   #   3. Pre-create the required users with appropriate grants
-  #   4. Create a credentials secret (or set database.existingSecret)
+  #   4. Create a credentials secret (or set database.secretName)
   # See docs/operations/configuration.md "External Infrastructure" for full setup guide.
   deploy: true
 
@@ -607,14 +607,14 @@ database:
   # Database Credentials Secret Name
   # Created by: scripts/install-helm-chart.sh
   # Override to use a different secret name (must exist before Helm install)
-  existingSecret: ""  # Empty = use default: <release-name>-db-credentials
+  secretName: ""  # Empty = use default: <release-name>-db-credentials
 
   # ROS Database Configuration
   ros:
     # Database name on the unified server
     # Standardized naming: costonprem_<service> (underscores for PostgreSQL compatibility)
     name: costonprem_ros
-    # Dedicated user for ROS service (only used if existingSecret is empty)
+    # Dedicated user for ROS service (only used if secretName is empty)
     user: ros_user
     password: ros_password
 
@@ -623,7 +623,7 @@ database:
     # Database name on the unified server
     # Standardized naming: costonprem_<service> (underscores for PostgreSQL compatibility)
     name: costonprem_kruize
-    # Dedicated user for Kruize service (only used if existingSecret is empty)
+    # Dedicated user for Kruize service (only used if secretName is empty)
     user: kruize_user
     password: kruize_password
 
@@ -632,7 +632,7 @@ database:
     # Database name on the unified server
     # Standardized naming: costonprem_<service> (underscores for PostgreSQL compatibility)
     name: costonprem_koku
-    # Dedicated user for Koku service (only used if existingSecret is empty)
+    # Dedicated user for Koku service (only used if secretName is empty)
     user: koku_user
     password: koku_password
 
@@ -718,7 +718,7 @@ valkey:
 #   - Any S3-compatible storage provider
 #
 # Configuration options:
-#   1. Manual: Set endpoint/port/useSSL/existingSecret below and pre-create
+#   1. Manual: Set endpoint/port/useSSL/secretName below and pre-create
 #      the credentials secret yourself. The install script will skip S3 setup.
 #   2. Automated: Use install-helm-chart.sh which auto-detects ODF/MinIO/OBC
 #      and overrides the default endpoint via --set.
@@ -745,7 +745,7 @@ objectStorage:
   # credential creation entirely.
   # When empty, the install script creates a secret named
   # '<release-name>-storage-credentials' automatically.
-  existingSecret: ""
+  secretName: ""
 
   # S3 region for signature generation (required for S3v4 signatures)
   # Most S3-compatible backends (NooBaa, MinIO, Ceph) don't use regions,
