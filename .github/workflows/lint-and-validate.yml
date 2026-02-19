@@ -5,6 +5,7 @@ on:
     branches: [ main, master ]
     paths:
       - 'cost-onprem/**'
+      - '.github/workflows/lint-and-validate.yml'
   workflow_dispatch:
 
 jobs:
@@ -47,6 +48,11 @@ jobs:
         chmod +x oc-mirror
 
         echo "=== Creating ImageSetConfiguration ==="
+        # additionalImages lists images that oc-mirror cannot auto-discover
+        # from the Helm chart (e.g. images only used in Helm hooks like
+        # pre-install/pre-upgrade). Keep this list in sync with the
+        # disconnected deployment guide:
+        #   docs/operations/disconnected-deployment.md
         cat > /tmp/imageset-config.yaml << 'EOF'
         apiVersion: mirror.openshift.io/v2alpha1
         kind: ImageSetConfiguration
@@ -55,12 +61,92 @@ jobs:
             local:
               - name: cost-onprem
                 path: ./cost-onprem
+          additionalImages:
+            - name: quay.io/insights-onprem/postgresql:16
         EOF
 
         echo "=== Running oc-mirror --dry-run --v2 ==="
         ./oc-mirror --config /tmp/imageset-config.yaml --workspace file:///tmp/oc-mirror-workspace docker://localhost:5050 --dry-run --v2 --dest-tls-verify=false
 
         echo "✓ oc-mirror can discover and plan the mirror from the Helm chart"
+
+    - name: Verify image parity (helm template vs oc-mirror)
+      if: success()
+      run: |
+        set -euo pipefail
+
+        echo "=== Extracting images from helm template output ==="
+        HELM_IMAGES=$(grep -oP 'image:\s*"?\K[^"\s]+' /tmp/rendered.yaml | sort -u)
+        echo "Images found by helm template:"
+        echo "$HELM_IMAGES"
+        echo ""
+
+        echo "=== Extracting images planned by oc-mirror ==="
+        MAPPING_FILE=$(find /tmp/oc-mirror-workspace -name "mapping.txt" -type f 2>/dev/null | head -1)
+        if [ -z "$MAPPING_FILE" ]; then
+          echo "ERROR: No mapping.txt found in oc-mirror workspace."
+          echo "Workspace contents:"
+          find /tmp/oc-mirror-workspace -type f 2>/dev/null || true
+          exit 1
+        fi
+
+        OC_MIRROR_IMAGES=$(cut -d= -f1 "$MAPPING_FILE" | sed 's|docker://||' | sort -u)
+        echo "Images planned by oc-mirror:"
+        echo "$OC_MIRROR_IMAGES"
+        echo ""
+
+        echo "=== Comparing image lists ==="
+        MISSING=()
+        while IFS= read -r helm_img; do
+          [ -z "$helm_img" ] && continue
+          helm_repo="${helm_img%%:*}"
+          FOUND=false
+          while IFS= read -r mirror_img; do
+            [ -z "$mirror_img" ] && continue
+            if [[ "$mirror_img" == *"$helm_repo"* ]]; then
+              FOUND=true
+              break
+            fi
+          done <<< "$OC_MIRROR_IMAGES"
+          if [ "$FOUND" = false ]; then
+            MISSING+=("$helm_img")
+          fi
+        done <<< "$HELM_IMAGES"
+
+        if [ ${#MISSING[@]} -gt 0 ]; then
+          echo ""
+          echo "❌ IMAGE PARITY CHECK FAILED"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "The following images appear in 'helm template' output but were"
+          echo "NOT discovered by oc-mirror:"
+          echo ""
+          for img in "${MISSING[@]}"; do
+            echo "  ✗ $img"
+          done
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "WHAT HAPPENED:"
+          echo "  oc-mirror cannot auto-discover images from Helm hooks"
+          echo "  (pre-install/pre-upgrade) or conditional template blocks."
+          echo "  These must be listed explicitly as additionalImages."
+          echo ""
+          echo "HOW TO FIX:"
+          echo "  1. Add the missing images to 'additionalImages' in:"
+          echo "     .github/workflows/lint-and-validate.yml"
+          echo ""
+          echo "     additionalImages:"
+          for img in "${MISSING[@]}"; do
+            echo "       - name: $img"
+          done
+          echo ""
+          echo "  2. Update the air-gapped deployment guide with the same images:"
+          echo "     docs/operations/disconnected-deployment.md"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          exit 1
+        fi
+
+        echo "✓ All helm template images are covered by oc-mirror"
 
     - name: Cleanup registry
       if: always()
@@ -85,6 +171,4 @@ jobs:
         echo "=== Validating Kubernetes label standards ==="
         chmod +x scripts/validate-labels.sh
         ./scripts/validate-labels.sh /tmp/rendered.yaml
-
-
 
