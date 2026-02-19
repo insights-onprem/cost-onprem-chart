@@ -240,10 +240,18 @@ create_namespace() {
 verify_strimzi_and_kafka() {
     echo_info "Verifying Strimzi operator and Kafka cluster prerequisites..."
 
-    # If user provided external Kafka bootstrap servers, skip verification
+    # If user provided external Kafka bootstrap servers (env var or values file), skip verification
     if [ -n "$KAFKA_BOOTSTRAP_SERVERS" ]; then
         echo_info "Using provided Kafka bootstrap servers: $KAFKA_BOOTSTRAP_SERVERS"
         HELM_EXTRA_ARGS+=("--set" "kafka.bootstrapServers=$KAFKA_BOOTSTRAP_SERVERS")
+        echo_success "Kafka configuration verified"
+        return 0
+    fi
+
+    local values_kafka_bootstrap
+    values_kafka_bootstrap=$(get_helm_value "kafka.bootstrapServers" "")
+    if [ -n "$values_kafka_bootstrap" ]; then
+        echo_info "Using Kafka bootstrap servers from values file: $values_kafka_bootstrap"
         echo_success "Kafka configuration verified"
         return 0
     fi
@@ -269,9 +277,11 @@ verify_strimzi_and_kafka() {
         echo_info "  cd $SCRIPT_DIR"
         echo_info "  ./deploy-strimzi.sh"
         echo_info ""
-        echo_info "Or set KAFKA_BOOTSTRAP_SERVERS to use an existing Kafka cluster:"
+        echo_info "Or point to an existing Kafka cluster via env var or values file:"
         echo_info "  export KAFKA_BOOTSTRAP_SERVERS=my-kafka-bootstrap.my-namespace:9092"
         echo_info "  $0"
+        echo_info ""
+        echo_info "  # Or set kafka.bootstrapServers in your values file"
         echo_info ""
         return 1
     fi
