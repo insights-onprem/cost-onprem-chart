@@ -293,20 +293,31 @@ def _get_db_host_from_app_pod(cluster_config: ClusterConfig) -> Optional[str]:
     return None
 
 
-def _parse_k8s_service(hostname: str) -> tuple[Optional[str], Optional[str]]:
-    """Parse a Kubernetes service FQDN into (namespace, service_name).
+@dataclass
+class ParsedService:
+    """A Kubernetes service parsed from its FQDN."""
+
+    namespace: str
+    name: str
+
+
+def _parse_k8s_service(hostname: str) -> Optional[ParsedService]:
+    """Parse a Kubernetes service FQDN into a ParsedService.
 
     Handles forms like:
-      postgresql.byoi-infra.svc.cluster.local  -> ("byoi-infra", "postgresql")
-      postgresql.byoi-infra.svc                -> ("byoi-infra", "postgresql")
-    Returns (None, None) for non-FQDN hostnames.
+      postgresql.byoi-infra.svc.cluster.local  -> ParsedService("byoi-infra", "postgresql")
+      postgresql.byoi-infra.svc                -> ParsedService("byoi-infra", "postgresql")
+    Returns None for non-FQDN hostnames.
     """
     parts = hostname.split(".")
     if len(parts) >= 3 and "svc" in parts:
         svc_idx = parts.index("svc")
         if svc_idx >= 2:
-            return parts[svc_idx - 1], parts[svc_idx - 2]
-    return None, None
+            return ParsedService(
+                namespace=parts[svc_idx - 1],
+                name=parts[svc_idx - 2],
+            )
+    return None
 
 
 def _find_db_pod(namespace: str, service_name: str) -> Optional[str]:
@@ -366,9 +377,11 @@ def database_config(cluster_config: ClusterConfig) -> DatabaseConfig:
     # Step 2: Resolve hostname to namespace + service name
     if ".svc" in db_host:
         # FQDN: "postgresql.byoi-infra.svc.cluster.local"
-        db_namespace, service_name = _parse_k8s_service(db_host)
-        if not db_namespace:
+        parsed = _parse_k8s_service(db_host)
+        if not parsed:
             pytest.skip(f"Cannot parse k8s service from DB host: {db_host}")
+        db_namespace = parsed.namespace
+        service_name = parsed.name
     else:
         # Simple name: "cost-onprem-database" (same namespace)
         db_namespace = cluster_config.namespace
