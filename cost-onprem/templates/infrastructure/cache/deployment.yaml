@@ -1,3 +1,4 @@
+{{- if .Values.valkey.deploy }}
 {{- $cacheName := include "cost-onprem.cache.name" . }}
 apiVersion: apps/v1
 kind: Deployment
@@ -27,11 +28,9 @@ spec:
       {{- end }}
       securityContext:
         {{- include "cost-onprem.securityContext.pod" . | nindent 8 }}
-        {{- if .Values.valkey.persistence.enabled }}
         {{- $fsGroup := include "cost-onprem.valkey.fsGroup" . }}
         {{- if $fsGroup }}
         fsGroup: {{ $fsGroup }}
-        {{- end }}
         {{- end }}
       containers:
         - name: {{ $cacheName }}
@@ -52,21 +51,14 @@ spec:
             - "{{ .Values.valkey.port }}"
             - --protected-mode
             - "no"
-            {{- if .Values.valkey.persistence.enabled }}
-            # RDB persistence
             - --save
             - "900 1 300 10 60 10000"
-            # AOF persistence for durability
             - --appendonly
             - "yes"
             - --appendfsync
             - "everysec"
             - --dir
             - "/data"
-            {{- else }}
-            - --save
-            - ""
-            {{- end }}
             - --maxmemory
             - "{{ .Values.valkey.maxMemory }}"
             - --maxmemory-policy
@@ -91,14 +83,11 @@ spec:
             failureThreshold: {{ .Values.probes.failureThreshold }}
           resources:
             {{- toYaml .Values.valkey.resources | nindent 12 }}
-          {{- if .Values.valkey.persistence.enabled }}
           volumeMounts:
             - name: data
               mountPath: /data
-          {{- end }}
-      {{- if .Values.valkey.persistence.enabled }}
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "cost-onprem.fullname" . }}-valkey-data
-      {{- end }}
+{{- end }}

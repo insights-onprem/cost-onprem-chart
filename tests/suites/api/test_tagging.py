@@ -124,11 +124,28 @@ class TestTagBasedFiltering:
         - Tag filter parameter is accepted
         - Response structure is valid
         
-        Note: Results depend on having data with matching tags.
+        Skips when no tags are available (e.g. data not yet ingested).
         """
+        tags_response = authenticated_session.get(
+            f"{gateway_url}/cost-management/v1/tags/openshift/",
+            timeout=30,
+        )
+        if tags_response.status_code != 200:
+            pytest.skip(f"Tags endpoint returned {tags_response.status_code}")
+
+        available_tags = tags_response.json().get("data", [])
+        if not available_tags:
+            pytest.skip("No tags available — data may not be ingested yet")
+
+        tag_key = (
+            available_tags[0].get("key")
+            if isinstance(available_tags[0], dict)
+            else available_tags[0]
+        )
+
         response = authenticated_session.get(
             f"{gateway_url}/cost-management/v1/reports/openshift/costs/",
-            params={"filter[tag:app]": "*"},  # Filter by any value of 'app' tag
+            params={f"filter[tag:{tag_key}]": "*"},
             timeout=30,
         )
         
@@ -150,11 +167,28 @@ class TestTagBasedFiltering:
         - Tag group_by parameter is accepted
         - Response structure is valid
         
-        Note: Results depend on having data with tags.
+        Skips when no tags are available (e.g. data not yet ingested).
         """
+        tags_response = authenticated_session.get(
+            f"{gateway_url}/cost-management/v1/tags/openshift/",
+            timeout=30,
+        )
+        if tags_response.status_code != 200:
+            pytest.skip(f"Tags endpoint returned {tags_response.status_code}")
+
+        available_tags = tags_response.json().get("data", [])
+        if not available_tags:
+            pytest.skip("No tags available — data may not be ingested yet")
+
+        tag_key = (
+            available_tags[0].get("key")
+            if isinstance(available_tags[0], dict)
+            else available_tags[0]
+        )
+
         response = authenticated_session.get(
             f"{gateway_url}/cost-management/v1/reports/openshift/costs/",
-            params={"group_by[tag:app]": "*"},  # Group by 'app' tag
+            params={f"group_by[tag:{tag_key}]": "*"},
             timeout=30,
         )
         

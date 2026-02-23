@@ -40,7 +40,7 @@ spec:
             echo "Namespace: {{ .Release.Namespace }}"
 
             # Wait for database to be ready
-            DB_HOST="{{ include "cost-onprem.fullname" . }}-database.{{ .Release.Namespace }}.svc.cluster.local"
+            DB_HOST="{{ include "cost-onprem.database.host" . }}"
             DB_PORT="{{ .Values.database.server.port }}"
             MAX_WAIT=600  # 10 minutes timeout
             ELAPSED=0

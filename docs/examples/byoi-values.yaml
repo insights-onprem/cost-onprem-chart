@@ -1,0 +1,17 @@
+# BYOI Values Overlay - External PostgreSQL + Valkey
+# ==================================================
+# Disables bundled PostgreSQL and Valkey, pointing to standalone
+# instances in the byoi-infra namespace for E2E testing.
+
+database:
+  deploy: false
+  server:
+    host: "postgresql.byoi-infra.svc.cluster.local"
+    port: 5432
+    sslMode: disable
+  secretName: "cost-onprem-db-credentials"
+
+valkey:
+  deploy: false
+  host: "valkey.byoi-infra.svc.cluster.local"
+  port: 6379

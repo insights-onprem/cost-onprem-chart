@@ -119,7 +119,11 @@ Valkey Connection Helpers (cache/broker)
 Valkey host
 */}}
 {{- define "cost-onprem.koku.valkey.host" -}}
+{{- if .Values.valkey.deploy -}}
 {{- printf "%s-valkey" (include "cost-onprem.fullname" .) -}}
+{{- else -}}
+{{- .Values.valkey.host -}}
+{{- end -}}
 {{- end -}}
 
 {{/*
@@ -138,18 +142,18 @@ Kafka Connection Helpers (uses shared Kafka from infrastructure)
 {{/*
 Kafka hostname (without port)
 INSIGHTS_KAFKA_HOST - Koku's EnvConfigurator concatenates this with port
-Uses configurable value from .Values.costManagement.kafka.host
+Delegates to the shared kafka.host helper which parses kafka.bootstrapServers
 */}}
 {{- define "cost-onprem.koku.kafka.host" -}}
-{{- .Values.costManagement.kafka.host | default "kafka" -}}
+{{- include "cost-onprem.kafka.host" . -}}
 {{- end -}}
 
 {{/*
 Kafka port
-Uses configurable value from .Values.costManagement.kafka.port
+Delegates to the shared kafka.port helper which parses kafka.bootstrapServers
 */}}
 {{- define "cost-onprem.koku.kafka.port" -}}
-{{- .Values.costManagement.kafka.port | default "9092" -}}
+{{- include "cost-onprem.kafka.port" . -}}
 {{- end -}}
 
 {{/*
@@ -304,6 +308,16 @@ Common environment variables for Koku API and Celery
   value: {{ include "cost-onprem.koku.valkey.host" . | quote }}
 - name: REDIS_PORT
   value: {{ include "cost-onprem.koku.valkey.port" . | quote }}
+{{- if .Values.valkey.auth.enabled }}
+{{- if not .Values.valkey.auth.secretName }}
+  {{- fail "valkey.auth.enabled is true but valkey.auth.secretName is empty. Provide the name of a Secret containing key 'redis-password'." -}}
+{{- end }}
+- name: REDIS_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.valkey.auth.secretName }}
+      key: redis-password
+{{- end }}
 - name: CELERY_RESULT_EXPIRES
   value: {{ .Values.costManagement.celery.resultExpires | default "28800" | quote }}
 - name: INSIGHTS_KAFKA_HOST

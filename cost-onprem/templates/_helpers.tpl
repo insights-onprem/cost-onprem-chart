@@ -89,12 +89,12 @@ Usage: {{ include "cost-onprem.database.defaultSecretName" . }}
 {{- end -}}
 
 {{/*
-Get the database credentials secret name - returns existingSecret if set, otherwise returns generated secret name
+Get the database credentials secret name - returns secretName if set, otherwise returns generated secret name
 Usage: {{ include "cost-onprem.database.secretName" . }}
 */}}
 {{- define "cost-onprem.database.secretName" -}}
-{{- if .Values.database.existingSecret -}}
-{{- .Values.database.existingSecret -}}
+{{- if .Values.database.secretName -}}
+{{- .Values.database.secretName -}}
 {{- else -}}
 {{- include "cost-onprem.database.defaultSecretName" . -}}
 {{- end -}}
@@ -173,10 +173,10 @@ valkey
 
 {{/*
 Resolve object storage config from .Values.objectStorage.
-Returns a dict with keys: endpoint, port, useSSL, existingSecret, s3Region
+Returns a dict with keys: endpoint, port, useSSL, secretName, s3Region
 */}}
 {{- define "cost-onprem.storage.config" -}}
-  {{- $os := dict "endpoint" "" "port" 443 "useSSL" true "existingSecret" "" "s3Region" "onprem" -}}
+  {{- $os := dict "endpoint" "" "port" 443 "useSSL" true "secretName" "" "s3Region" "onprem" -}}
   {{- if .Values.objectStorage -}}
     {{- if and .Values.objectStorage.endpoint (ne .Values.objectStorage.endpoint "") -}}
       {{- $_ := set $os "endpoint" .Values.objectStorage.endpoint -}}
@@ -187,8 +187,8 @@ Returns a dict with keys: endpoint, port, useSSL, existingSecret, s3Region
     {{- if hasKey .Values.objectStorage "useSSL" -}}
       {{- $_ := set $os "useSSL" .Values.objectStorage.useSSL -}}
     {{- end -}}
-    {{- if and .Values.objectStorage.existingSecret (ne .Values.objectStorage.existingSecret "") -}}
-      {{- $_ := set $os "existingSecret" .Values.objectStorage.existingSecret -}}
+    {{- if and .Values.objectStorage.secretName (ne .Values.objectStorage.secretName "") -}}
+      {{- $_ := set $os "secretName" .Values.objectStorage.secretName -}}
     {{- end -}}
     {{- if and .Values.objectStorage.s3 .Values.objectStorage.s3.region -}}
       {{- $_ := set $os "s3Region" .Values.objectStorage.s3.region -}}
@@ -281,24 +281,24 @@ S3 region for signature generation
 
 {{/*
 Storage credentials secret name.
-Uses existingSecret if set, otherwise generates '<release>-storage-credentials'.
+Uses secretName if set, otherwise generates '<release>-storage-credentials'.
 */}}
 {{- define "cost-onprem.storage.secretName" -}}
 {{- $cfg := include "cost-onprem.storage.config" . | fromJson -}}
-{{- if ne $cfg.existingSecret "" -}}
-{{- $cfg.existingSecret -}}
+{{- if ne $cfg.secretName "" -}}
+{{- $cfg.secretName -}}
 {{- else -}}
 {{- printf "%s-storage-credentials" (include "cost-onprem.fullname" .) -}}
 {{- end -}}
 {{- end }}
 
 {{/*
-Check if user provided an existing secret for storage credentials.
+Check if user provided a secret name for storage credentials.
 Returns "true" or "false" as string.
 */}}
-{{- define "cost-onprem.storage.hasExistingSecret" -}}
+{{- define "cost-onprem.storage.hasSecretName" -}}
 {{- $cfg := include "cost-onprem.storage.config" . | fromJson -}}
-{{- if ne $cfg.existingSecret "" -}}true{{- else -}}false{{- end -}}
+{{- if ne $cfg.secretName "" -}}true{{- else -}}false{{- end -}}
 {{- end }}
 
 {{/*

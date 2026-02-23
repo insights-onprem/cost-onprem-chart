@@ -36,14 +36,17 @@ def get_fresh_token(keycloak_config, http_session: requests.Session) -> dict:
 class TestE2ESmoke:
     """Quick smoke tests for E2E validation."""
 
-    def test_all_critical_pods_running(self, cluster_config):
+    def test_all_critical_pods_running(self, cluster_config, database_deployed):
         """Verify all critical pods are running."""
         critical_components = [
-            ("database", "app.kubernetes.io/component=database"),
             ("ingress", "app.kubernetes.io/component=ingress"),
             ("kruize", "app.kubernetes.io/component=ros-optimization"),
             ("ros-api", "app.kubernetes.io/component=ros-api"),
         ]
+        if database_deployed:
+            critical_components.insert(
+                0, ("database", "app.kubernetes.io/component=database")
+            )
         
         failures = []
         for name, label in critical_components:
