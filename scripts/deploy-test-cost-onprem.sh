@@ -20,6 +20,8 @@ set -euo pipefail
 #   --skip-tls                Skip TLS certificate setup
 #   --skip-test               Skip JWT authentication test
 #   --skip-image-override     Skip creating custom values file for image override
+#   --deploy-s4               Deploy S4 (Super Simple Storage Service) for S3-compatible storage
+#   --s4-namespace NAME       S4 deployment namespace (default: s4-test)
 #   --namespace NAME          Target namespace (default: cost-onprem)
 #   --image-tag TAG           Custom image tag for cost-onprem-ocp-backend services
 #   --use-local-chart         Use local Helm chart instead of GitHub release
@@ -54,6 +56,12 @@ set -euo pipefail
 #   # Full deployment with custom image
 #   ./deploy-test-cost-onprem.sh --image-tag main-abc123
 #
+#   # Deploy with S4 storage for testing
+#   ./deploy-test-cost-onprem.sh --deploy-s4 --namespace cost-onprem-test
+#
+#   # Deploy S4 to custom namespace and use it
+#   ./deploy-test-cost-onprem.sh --deploy-s4 --s4-namespace my-s4-ns
+#
 #   # Skip RHBK if already deployed
 #   ./deploy-test-cost-onprem.sh --skip-rhbk --namespace cost-onprem-production
 #
@@ -76,6 +84,10 @@ INCLUDE_UI="${INCLUDE_UI:-false}"
 SAVE_VERSIONS="${SAVE_VERSIONS:-false}"
 VERSION_INFO_FILE="${VERSION_INFO_FILE:-version_info.json}"
 
+# S4 deployment configuration
+DEPLOY_S4="${DEPLOY_S4:-false}"
+S4_NAMESPACE="${S4_NAMESPACE:-s4-test}"
+
 # OpenShift authentication
 KUBECONFIG="${KUBECONFIG:-${HOME}/.kube/config}"
 OPENSHIFT_USERNAME="${OPENSHIFT_USERNAME:-kubeadmin}"
@@ -88,6 +100,7 @@ SHARED_DIR="${SHARED_DIR:-}"
 LOCAL_SCRIPTS_DIR="${SCRIPT_DIR}"
 SCRIPT_DEPLOY_RHBK="deploy-rhbk.sh"  # Red Hat Build of Keycloak (RHBK)
 SCRIPT_DEPLOY_STRIMZI="deploy-strimzi.sh"
+SCRIPT_DEPLOY_S4="deploy-s4-test.sh"  # S4 (Super Simple Storage Service)
 SCRIPT_INSTALL_HELM="install-helm-chart.sh"
 SCRIPT_SETUP_TLS="setup-cost-mgmt-tls.sh"
 OPENSHIFT_VALUES_FILE="openshift-values.yaml"
@@ -356,7 +369,7 @@ deploy_rhbk() {
         return 0
     fi
 
-    log_step "Deploying Red Hat Build of Keycloak (RHBK) (1/5)"
+    log_step "Deploying Red Hat Build of Keycloak (RHBK) (1/6)"
 
     # Export environment variables for RHBK script
     # export NAMESPACE="${NAMESPACE}"
@@ -379,7 +392,7 @@ deploy_strimzi() {
         return 0
     fi
 
-    log_step "Deploying Kafka/Strimzi (2/5)"
+    log_step "Deploying Kafka/Strimzi (2/6)"
 
     # Export environment variables for Strimzi script
     # export KAFKA_NAMESPACE="${NAMESPACE}"
@@ -400,13 +413,52 @@ deploy_strimzi() {
     log_success "Kafka/Strimzi deployment completed"
 }
 
+deploy_s4() {
+    if [[ "${DEPLOY_S4}" != "true" ]]; then
+        log_verbose "Skipping S4 deployment (--deploy-s4 not specified)"
+        return 0
+    fi
+
+    log_step "Deploying S4 (Super Simple Storage Service) (3/6)"
+    log_info "S4 namespace: ${S4_NAMESPACE}"
+
+    # Export environment variables for S4 script
+    export S4_RELEASE_TAG="${S4_RELEASE_TAG:-}"
+    export S4_REPO="${S4_REPO:-}"
+    export STORAGE_SIZE="${STORAGE_SIZE:-}"
+
+    if [[ "${VERBOSE}" == "true" ]]; then
+        export VERBOSE="true"
+    fi
+
+    # Pass S4_NAMESPACE as first argument to deploy-s4-test.sh
+    if ! execute_script "${SCRIPT_DEPLOY_S4}" "${S4_NAMESPACE}"; then
+        log_error "S4 deployment failed"
+        log_info "To troubleshoot S4 deployment:"
+        log_info "  1. Check S4 pod status: kubectl get pods -n ${S4_NAMESPACE}"
+        log_info "  2. Check S4 pod logs: kubectl logs -n ${S4_NAMESPACE} -l app.kubernetes.io/name=s4"
+        log_info "  3. Check S4 service: kubectl get svc s4 -n ${S4_NAMESPACE}"
+        log_info "  4. Clean up S4: ${LOCAL_SCRIPTS_DIR}/${SCRIPT_DEPLOY_S4} ${S4_NAMESPACE} cleanup"
+        exit 1
+    fi
+
+    # Set environment variables for Helm installation to use S4
+    export S3_ENDPOINT="s4.${S4_NAMESPACE}.svc.cluster.local"
+    export S3_PORT="7480"
+    export S3_USE_SSL="false"
+
+    log_success "S4 deployment completed"
+    log_info "S3 endpoint configured: ${S3_ENDPOINT}:${S3_PORT} (SSL: ${S3_USE_SSL})"
+    log_info "Storage credentials secret: cost-onprem-storage-credentials (in ${S4_NAMESPACE})"
+}
+
 deploy_helm_chart() {
     if [[ "${SKIP_HELM}" == "true" ]]; then
         log_warning "Skipping Cost On-Prem Helm chart installation (--skip-helm)"
         return 0
     fi
 
-    log_step "Deploying Cost On-Prem Helm chart (3/5)"
+    log_step "Deploying Cost On-Prem Helm chart (4/6)"
 
     # Use the official openshift-values.yaml from repo root
     local values_file="${PROJECT_ROOT}/${OPENSHIFT_VALUES_FILE}"
@@ -419,7 +471,7 @@ deploy_helm_chart() {
     export USE_LOCAL_CHART="${USE_LOCAL_CHART}"
     # Note: S3 setup behavior depends on values.yaml configuration:
     # - If objectStorage.endpoint is set: Script skips S3 auto-detection and bucket creation
-    # - If not set: Script auto-detects (MinIO, NooBaa, external OBC) and creates buckets
+    # - If not set: Script auto-detects (S4, NooBaa, external OBC) and creates buckets
     # SKIP_S3_SETUP=true can be used to skip bucket creation in CI environments
     # Pytests have their own S3 preflight checks that will setup the S3 buckets if they are not already present.
 
@@ -466,7 +518,7 @@ setup_tls() {
         return 0
     fi
 
-    log_step "Configuring TLS certificates (4/5)"
+    log_step "Configuring TLS certificates (5/6)"
 
     # Export environment variables for TLS script
     export NAMESPACE="${NAMESPACE}"
@@ -569,7 +621,7 @@ run_tests() {
         return 0
     fi
 
-    log_step "Testing JWT authentication (5/5)"
+    log_step "Testing JWT authentication (6/6)"
 
     # Ensure we're logged in to OpenShift for JWT test
     if [[ "${DRY_RUN}" != "true" ]]; then
@@ -675,11 +727,13 @@ print_summary() {
     echo ""
     log_info "Deployment Configuration:"
     echo "  Namespace:           ${NAMESPACE}"
+    [[ "${DEPLOY_S4}" == "true" ]] && echo "  S4 Namespace:        ${S4_NAMESPACE}"
     echo "  Use Local Chart:     ${USE_LOCAL_CHART}"
     echo ""
     log_info "Steps to execute:"
     [[ "${SKIP_RHBK}" == "false" ]] && echo "  ✓ Deploy Red Hat Build of Keycloak (RHBK)" || echo "  ✗ Deploy RHBK (SKIPPED)"
     [[ "${SKIP_STRIMZI}" == "false" ]] && echo "  ✓ Deploy Kafka/Strimzi" || echo "  ✗ Deploy Kafka/Strimzi (SKIPPED)"
+    [[ "${DEPLOY_S4}" == "true" ]] && echo "  ✓ Deploy S4 Storage (namespace: ${S4_NAMESPACE})" || echo "  ✗ Deploy S4 Storage (OPTIONAL)"
     [[ "${SKIP_HELM}" == "false" ]] && echo "  ✓ Deploy Cost On-Prem Helm Chart" || echo "  ✗ Deploy Cost On-Prem Helm Chart (SKIPPED)"
     [[ "${SKIP_TLS}" == "false" ]] && echo "  ✓ Setup TLS Certificates" || echo "  ✗ Setup TLS Certificates (SKIPPED)"
     [[ "${SKIP_TEST}" == "false" ]] && echo "  ✓ Test JWT Flow" || echo "  ✗ Test JWT Flow (SKIPPED)"
@@ -726,6 +780,14 @@ main() {
             --skip-test)
                 SKIP_TEST=true
                 shift
+                ;;
+            --deploy-s4)
+                DEPLOY_S4=true
+                shift
+                ;;
+            --s4-namespace)
+                S4_NAMESPACE="$2"
+                shift 2
                 ;;
             --namespace)
                 NAMESPACE="$2"
@@ -801,6 +863,7 @@ main() {
 
     deploy_rhbk
     deploy_strimzi
+    deploy_s4
 
     # Run Helm sanity test before deploying complex chart
     log_info "Running Helm sanity test to verify basic functionality..."
