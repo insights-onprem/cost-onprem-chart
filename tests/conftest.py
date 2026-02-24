@@ -754,44 +754,130 @@ def authenticated_session(jwt_token: JWTToken) -> requests.Session:
 # =============================================================================
 
 
+def _apply_test_network_policies(namespace: str, helm_release_name: str):
+    """Create NetworkPolicies allowing the test runner pod to reach internal services.
+
+    The chart's NetworkPolicies restrict ingress to the Koku API to specific
+    components (gateway, ingress, housekeeper). The test runner pod is not in
+    that allow-list, so direct pod-to-pod requests from the test runner time
+    out. This function creates an additive NetworkPolicy that permits traffic
+    from pods labelled ``app.kubernetes.io/component: testing`` to reach the
+    cost-management-api pods on port 8000.
+
+    Applied idempotently via ``oc apply`` so it is safe to call on every
+    session regardless of prior state.
+    """
+    import json
+    import subprocess
+
+    netpol = {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+            "name": "allow-test-runner-to-cost-api",
+            "namespace": namespace,
+            "labels": {
+                "app.kubernetes.io/part-of": "cost-onprem-tests",
+                "app.kubernetes.io/managed-by": "pytest",
+            },
+        },
+        "spec": {
+            "podSelector": {
+                "matchLabels": {
+                    "app.kubernetes.io/instance": helm_release_name,
+                    "app.kubernetes.io/component": "cost-management-api",
+                }
+            },
+            "policyTypes": ["Ingress"],
+            "ingress": [
+                {
+                    "from": [
+                        {
+                            "podSelector": {
+                                "matchLabels": {
+                                    "app.kubernetes.io/component": "testing",
+                                }
+                            }
+                        }
+                    ],
+                    "ports": [{"protocol": "TCP", "port": 8000}],
+                }
+            ],
+        },
+    }
+
+    result = subprocess.run(
+        ["oc", "apply", "-n", namespace, "-f", "-"],
+        input=json.dumps(netpol),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        # Non-fatal: log but don't block the session — the tests will
+        # fail with timeouts and the cause will be obvious.
+        import logging
+        logging.getLogger(__name__).warning(
+            "Failed to create test NetworkPolicy: %s", result.stderr
+        )
+
+
+def _delete_test_network_policies(namespace: str):
+    """Remove NetworkPolicies created by the test session."""
+    run_oc_command(
+        [
+            "delete", "networkpolicy",
+            "allow-test-runner-to-cost-api",
+            "-n", namespace,
+            "--ignore-not-found",
+        ],
+        check=False,
+    )
+
+
 @pytest.fixture(scope="session")
 def test_runner_pod(cluster_config: ClusterConfig):
     """Dedicated test runner pod for internal cluster commands.
-    
+
     Provides a consistent environment for executing commands inside the cluster
     without depending on application pod availability.
-    
+
     Benefits:
     - Isolation: Tests don't interfere with application pods
     - Consistent tooling: Same tools available regardless of app pods
     - No container guessing: Don't need to find "a pod that has curl"
     - Cleaner logs: Test output doesn't pollute application logs
-    
-    The pod is created at session start and cleaned up at session end
-    (unless E2E_CLEANUP_AFTER=false).
+
+    The pod and its companion NetworkPolicy are created at session start and
+    cleaned up at session end (unless E2E_CLEANUP_AFTER=false).
     """
     import json
-    
+
     namespace = cluster_config.namespace
     pod_name = "cost-onprem-test-runner"
-    
+
+    # Ensure the test runner is allowed through the chart's NetworkPolicies.
+    # Applied idempotently so it is safe in both the "pod already exists" and
+    # "create new pod" paths.
+    _apply_test_network_policies(namespace, cluster_config.helm_release_name)
+
     # Check if pod already exists and is ready
     check_result = run_oc_command([
         "get", "pod", pod_name, "-n", namespace,
         "-o", "jsonpath={.status.phase}"
     ], check=False)
-    
+
     if check_result.returncode == 0 and check_result.stdout.strip() == "Running":
         # Pod already exists and is running
         yield pod_name
         # Don't delete if we didn't create it
         return
-    
+
     # Delete any existing pod that's not running
     run_oc_command([
         "delete", "pod", pod_name, "-n", namespace, "--ignore-not-found"
     ], check=False)
-    
+
     pod_manifest = {
         "apiVersion": "v1",
         "kind": "Pod",
@@ -817,7 +903,7 @@ def test_runner_pod(cluster_config: ClusterConfig):
             }]
         }
     }
-    
+
     # Create pod using kubectl apply with stdin
     import subprocess
     result = subprocess.run(
@@ -827,25 +913,26 @@ def test_runner_pod(cluster_config: ClusterConfig):
         text=True,
         check=False,
     )
-    
+
     if result.returncode != 0:
         pytest.skip(f"Failed to create test runner pod: {result.stderr}")
-    
+
     # Wait for pod to be ready
     wait_result = run_oc_command([
         "wait", "pod", pod_name, "-n", namespace,
         "--for=condition=Ready", "--timeout=120s"
     ], check=False)
-    
+
     if wait_result.returncode != 0:
         # Clean up failed pod
         run_oc_command(["delete", "pod", pod_name, "-n", namespace, "--ignore-not-found"], check=False)
         pytest.skip(f"Test runner pod failed to become ready: {wait_result.stderr}")
-    
+
     yield pod_name
-    
+
     # Cleanup (unless E2E_CLEANUP_AFTER=false)
     if os.environ.get("E2E_CLEANUP_AFTER", "true").lower() == "true":
+        _delete_test_network_policies(namespace)
         run_oc_command([
             "delete", "pod", pod_name, "-n", namespace, "--ignore-not-found"
         ], check=False)
