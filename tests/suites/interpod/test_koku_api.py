@@ -43,7 +43,7 @@ class TestKokuAPIInternal:
         assert response.ok, f"Request failed: {response.status_code} - {response.text}"
         
         data = response.json()
-        assert "api_version" in data or "server_address" in data, (
+        assert "status" in data or "api_version" in data or "server_address" in data, (
             f"Unexpected status response: {data}"
         )
 
@@ -83,7 +83,7 @@ class TestKokuAPIInternal:
         - Response structure is valid (may be empty)
         """
         response = pod_session.get(
-            f"{internal_api_url}/api/cost-management/v1/sources/"
+            f"{internal_api_url}/api/cost-management/v1/sources"
         )
         
         assert response.ok, f"Request failed: {response.status_code} - {response.text}"

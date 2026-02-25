@@ -90,7 +90,7 @@ spec:
             # Authentication configuration
             # JWT is handled by centralized gateway, backend trusts X-Rh-Identity header
             - name: INGRESS_AUTH
-              value: "false"  # Auth is handled by gateway, backend trusts X-Rh-Identity
+              value: "true"
 
             # Logging configuration
             - name: INGRESS_LOGLEVEL
