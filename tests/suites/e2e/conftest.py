@@ -28,7 +28,7 @@ def e2e_pod_session(
     
     Usage:
         def test_something(e2e_pod_session, koku_api_url):
-            response = e2e_pod_session.get(f"{koku_api_url}/sources/")
+            response = e2e_pod_session.get(f"{koku_api_url}/sources")
             assert response.ok
             data = response.json()
     """
