@@ -5,7 +5,11 @@ This is the root conftest.py that provides shared fixtures used across all test 
 Suite-specific fixtures are defined in each suite's conftest.py.
 """
 
+import base64
+import json
+import logging
 import os
+import subprocess
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -598,8 +602,6 @@ if failed:
 @pytest.fixture(scope="session")
 def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> str:
     """Get org_id from Keycloak test user or use default."""
-    import base64
-    
     try:
         # Get admin credentials
         admin_pass_result = run_oc_command([
@@ -754,7 +756,7 @@ def authenticated_session(jwt_token: JWTToken) -> requests.Session:
 # =============================================================================
 
 
-def _apply_test_network_policies(namespace: str, helm_release_name: str):
+def _apply_test_network_policies(namespace: str, helm_release_name: str) -> None:
     """Create NetworkPolicies allowing the test runner pod to reach internal services.
 
     The chart's NetworkPolicies restrict ingress to the Koku API to specific
@@ -767,9 +769,6 @@ def _apply_test_network_policies(namespace: str, helm_release_name: str):
     Applied idempotently via ``oc apply`` so it is safe to call on every
     session regardless of prior state.
     """
-    import json
-    import subprocess
-
     netpol = {
         "apiVersion": "networking.k8s.io/v1",
         "kind": "NetworkPolicy",
@@ -816,13 +815,12 @@ def _apply_test_network_policies(namespace: str, helm_release_name: str):
     if result.returncode != 0:
         # Non-fatal: log but don't block the session — the tests will
         # fail with timeouts and the cause will be obvious.
-        import logging
         logging.getLogger(__name__).warning(
             "Failed to create test NetworkPolicy: %s", result.stderr
         )
 
 
-def _delete_test_network_policies(namespace: str):
+def _delete_test_network_policies(namespace: str) -> None:
     """Remove NetworkPolicies created by the test session."""
     run_oc_command(
         [
@@ -851,8 +849,6 @@ def test_runner_pod(cluster_config: ClusterConfig):
     The pod and its companion NetworkPolicy are created at session start and
     cleaned up at session end (unless E2E_CLEANUP_AFTER=false).
     """
-    import json
-
     namespace = cluster_config.namespace
     pod_name = "cost-onprem-test-runner"
 
@@ -904,8 +900,6 @@ def test_runner_pod(cluster_config: ClusterConfig):
         }
     }
 
-    # Create pod using kubectl apply with stdin
-    import subprocess
     result = subprocess.run(
         ["oc", "apply", "-n", namespace, "-f", "-"],
         input=json.dumps(pod_manifest),
