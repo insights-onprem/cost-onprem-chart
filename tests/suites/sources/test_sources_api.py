@@ -73,7 +73,7 @@ def get_ocp_source_type_id(
     # Try to infer from existing sources
     try:
         response = session.get(
-            f"{gateway_url}/cost-management/v1/sources/",
+            f"{gateway_url}/cost-management/v1/sources",
             timeout=30,
         )
         if response.ok:
@@ -112,7 +112,7 @@ class TestSourcesExternalHealth:
     ):
         """Verify Sources API is accessible through the external gateway with JWT auth."""
         response = authenticated_session.get(
-            f"{gateway_url}/cost-management/v1/sources/",
+            f"{gateway_url}/cost-management/v1/sources",
             timeout=30,
         )
 
@@ -143,7 +143,7 @@ class TestSourcesExternalSourceTypes:
         source types through the sources list response which includes source_type_id.
         """
         response = authenticated_session.get(
-            f"{gateway_url}/cost-management/v1/sources/",
+            f"{gateway_url}/cost-management/v1/sources",
             timeout=30,
         )
 
@@ -183,7 +183,7 @@ class TestSourcesExternalCRUD:
         cluster_id = f"gateway-cluster-{uuid.uuid4().hex[:8]}"
 
         create_response = authenticated_session.post(
-            f"{gateway_url}/cost-management/v1/sources/",
+            f"{gateway_url}/cost-management/v1/sources",
             json={
                 "name": source_name,
                 "source_type_id": ocp_source_type_id,
@@ -204,7 +204,7 @@ class TestSourcesExternalCRUD:
         try:
             # Verify we can GET the source
             get_response = authenticated_session.get(
-                f"{gateway_url}/cost-management/v1/sources/{source_id}/",
+                f"{gateway_url}/cost-management/v1/sources/{source_id}",
                 timeout=30,
             )
             assert get_response.status_code == 200, (
@@ -219,7 +219,7 @@ class TestSourcesExternalCRUD:
         finally:
             # Clean up - delete the source
             delete_response = authenticated_session.delete(
-                f"{gateway_url}/cost-management/v1/sources/{source_id}/",
+                f"{gateway_url}/cost-management/v1/sources/{source_id}",
                 timeout=30,
             )
             assert delete_response.status_code in [204, 404], (
@@ -231,7 +231,7 @@ class TestSourcesExternalCRUD:
     ):
         """Verify GET for non-existent source returns 404 via gateway."""
         response = authenticated_session.get(
-            f"{gateway_url}/cost-management/v1/sources/99999999/",
+            f"{gateway_url}/cost-management/v1/sources/99999999",
             timeout=30,
         )
 
@@ -255,7 +255,7 @@ class TestSourcesExternalFiltering:
         
         # Filter sources by OCP type
         response = authenticated_session.get(
-            f"{gateway_url}/cost-management/v1/sources/",
+            f"{gateway_url}/cost-management/v1/sources",
             params={"source_type_id": ocp_source_type_id},
             timeout=30,
         )
@@ -277,7 +277,7 @@ class TestSourcesExternalFiltering:
         """Verify sources can be filtered by name via gateway."""
         # First list all sources to get a name to filter by
         list_response = authenticated_session.get(
-            f"{gateway_url}/cost-management/v1/sources/",
+            f"{gateway_url}/cost-management/v1/sources",
             timeout=30,
         )
         if list_response.status_code != 200:
@@ -292,7 +292,7 @@ class TestSourcesExternalFiltering:
 
         # Filter by name
         response = authenticated_session.get(
-            f"{gateway_url}/cost-management/v1/sources/",
+            f"{gateway_url}/cost-management/v1/sources",
             params={"name": source_name},
             timeout=30,
         )
@@ -340,7 +340,7 @@ class TestKokuSourcesHealth:
         self, pod_session: requests.Session, koku_api_url: str
     ):
         """Verify Koku sources endpoint responds to requests."""
-        response = pod_session.get(f"{koku_api_url}/sources/")
+        response = pod_session.get(f"{koku_api_url}/sources")
 
         assert response.ok, f"Koku sources endpoint returned {response.status_code}: {response.text[:200]}"
 
@@ -426,7 +426,7 @@ class TestAuthenticationErrors:
     ):
         """Verify malformed base64 in X-Rh-Identity returns 403 Forbidden."""
         response = pod_session_no_auth.get(
-            f"{koku_api_url}/sources/",
+            f"{koku_api_url}/sources",
             headers={"X-Rh-Identity": invalid_identity_headers["malformed_base64"]},
         )
 
@@ -437,7 +437,7 @@ class TestAuthenticationErrors:
     ):
         """Verify invalid JSON in decoded X-Rh-Identity returns an error."""
         response = pod_session_no_auth.get(
-            f"{koku_api_url}/sources/",
+            f"{koku_api_url}/sources",
             headers={"X-Rh-Identity": invalid_identity_headers["invalid_json"]},
         )
 
@@ -447,7 +447,7 @@ class TestAuthenticationErrors:
         self, pod_session_no_auth: requests.Session, koku_api_url: str
     ):
         """Verify missing X-Rh-Identity header returns 401 Unauthorized."""
-        response = pod_session_no_auth.get(f"{koku_api_url}/sources/")
+        response = pod_session_no_auth.get(f"{koku_api_url}/sources")
 
         assert response.status_code == 401, f"Expected 401, got {response.status_code}: {response.text[:200]}"
 
@@ -456,7 +456,7 @@ class TestAuthenticationErrors:
     ):
         """Verify request with missing cost_management entitlement returns 403 Forbidden."""
         response = pod_session_no_auth.get(
-            f"{koku_api_url}/sources/",
+            f"{koku_api_url}/sources",
             headers={"X-Rh-Identity": invalid_identity_headers["no_entitlements"]},
         )
 
@@ -471,7 +471,7 @@ class TestAuthenticationErrors:
         RBAC service, this returns 424 Failed Dependency.
         """
         response = pod_session_no_auth.post(
-            f"{koku_api_url}/sources/",
+            f"{koku_api_url}/sources",
             json={
                 "name": f"non-admin-test-{uuid.uuid4().hex[:8]}",
                 "source_type_id": "1",  # OpenShift
@@ -494,7 +494,7 @@ class TestAuthenticationErrors:
         and returns HttpResponseUnauthorizedRequest (401) when missing.
         """
         response = pod_session_no_auth.get(
-            f"{koku_api_url}/sources/",
+            f"{koku_api_url}/sources",
             headers={"X-Rh-Identity": invalid_identity_headers["no_email"]},
         )
 
@@ -537,7 +537,7 @@ class TestConflictHandling:
         ValidationError when the source_type_id doesn't exist.
         """
         response = pod_session.post(
-            f"{koku_api_url}/sources/",
+            f"{koku_api_url}/sources",
             json={
                 "name": f"invalid-type-test-{uuid.uuid4().hex[:8]}",
                 "source_type_id": "99999",  # Non-existent type
@@ -613,7 +613,7 @@ class TestSourcesFiltering:
     ):
         """Verify sources can be filtered by name."""
         response = pod_session.get(
-            f"{koku_api_url}/sources/",
+            f"{koku_api_url}/sources",
             params={"name": test_source["source_name"]},
         )
 
@@ -630,7 +630,7 @@ class TestSourcesFiltering:
     ):
         """Verify sources can be filtered by source_type_id."""
         response = pod_session.get(
-            f"{koku_api_url}/sources/",
+            f"{koku_api_url}/sources",
             params={"source_type_id": test_source["source_type_id"]},
         )
 

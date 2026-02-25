@@ -187,7 +187,7 @@ class TestGatewayJWTAuthentication:
         """Verify Sources API (now part of Koku) is accessible through gateway with valid JWT."""
         # Sources API is now at /api/cost-management/v1/sources/ (merged into Koku)
         response = http_session.get(
-            f"{gateway_url}/cost-management/v1/sources/",
+            f"{gateway_url}/cost-management/v1/sources",
             headers=jwt_token.authorization_header,
             timeout=10,
         )
