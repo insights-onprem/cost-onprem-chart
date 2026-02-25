@@ -48,7 +48,7 @@ if [ "$ACTION" = "cleanup" ]; then
     echo ""
     echo_info "Removing S4 resources from namespace: $NAMESPACE"
     helm uninstall s4 -n "$NAMESPACE" 2>/dev/null || true
-    kubectl delete secret cost-onprem-storage-credentials -n "$NAMESPACE" --ignore-not-found
+    kubectl delete secret s4-credentials -n "$NAMESPACE" --ignore-not-found
     echo_success "S4 cleanup complete in namespace: $NAMESPACE"
     exit 0
 fi
@@ -135,9 +135,9 @@ if ! helm upgrade --install s4 "$S4_TMPDIR/charts/s4" \
 fi
 echo_success "S4 Helm chart installed"
 
-# Create storage credentials secret (cost-onprem format: access-key / secret-key)
-echo_info "Creating storage credentials secret..."
-kubectl create secret generic cost-onprem-storage-credentials \
+# Create s4-credentials secret (cost-onprem format: access-key / secret-key)
+echo_info "Creating S4 credentials secret..."
+kubectl create secret generic s4-credentials \
     --namespace="$NAMESPACE" \
     --from-literal=access-key="$S4_ACCESS_KEY" \
     --from-literal=secret-key="$S4_SECRET_KEY" \
@@ -176,8 +176,8 @@ echo "  Access Key: $S4_ACCESS_KEY"
 echo "  Secret Key: $S4_SECRET_KEY"
 echo ""
 echo_info "To retrieve credentials later:"
-echo "  kubectl get secret cost-onprem-storage-credentials -n $NAMESPACE -o jsonpath='{.data.access-key}' | base64 -d"
-echo "  kubectl get secret cost-onprem-storage-credentials -n $NAMESPACE -o jsonpath='{.data.secret-key}' | base64 -d"
+echo "  kubectl get secret s4-credentials -n $NAMESPACE -o jsonpath='{.data.access-key}' | base64 -d"
+echo "  kubectl get secret s4-credentials -n $NAMESPACE -o jsonpath='{.data.secret-key}' | base64 -d"
 echo ""
 
 # Usage instructions

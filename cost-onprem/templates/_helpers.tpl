@@ -219,7 +219,7 @@ Constructs the full S3 endpoint URL including protocol and port.
 
 Returns examples:
   - HTTPS (useSSL=true):  https://s3.openshift-storage.svc:443
-  - HTTP (useSSL=false):  http://minio.minio-test.svc.cluster.local
+  - HTTP (useSSL=false):  http://s4.s4-test.svc.cluster.local:7480
 */}}
 {{- define "cost-onprem.storage.endpointWithProtocol" -}}
 {{- $endpoint := include "cost-onprem.storage.endpoint" . -}}

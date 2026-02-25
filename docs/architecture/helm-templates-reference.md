@@ -93,7 +93,7 @@ This document provides detailed information about the Helm templates used in the
 | `INGRESS_WEBPORT` | `8080` | Ingress listens on standard port |
 | `INGRESS_METRICSPORT` | `9090` | Prometheus metrics endpoint |
 | `INGRESS_AUTH` | `"false"` | Auth disabled - Gateway handles JWT validation and injects `X-Rh-Identity` |
-| `INGRESS_MINIOENDPOINT` | (from helper) | S3/MinIO storage endpoint |
+| `INGRESS_MINIOENDPOINT` | (from helper) | S3-compatible storage endpoint (env var name from upstream insights-ingress-go) |
 | `INGRESS_STAGEBUCKET` | (from helper) | S3 bucket for staged uploads |
 | `INGRESS_USESSL` | (from helper) | Whether to use SSL for S3 connection |
 | `INGRESS_KAFKA_BROKERS` | (from helper) | Kafka bootstrap servers |

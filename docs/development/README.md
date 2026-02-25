@@ -6,7 +6,7 @@ Testing guides, validation procedures, and development resources for Cost Manage
 
 | Document | Description |
 |----------|-------------|
-| **[OCP Dev Setup with MinIO](ocp-dev-setup-minio.md)** | Set up a dev environment on OCP using MinIO instead of ODF |
+| **[OCP Dev Setup with S4](ocp-dev-setup-s4.md)** | Set up a dev environment on OCP using S4 instead of ODF |
 | **[UI OAuth Testing](ui-oauth-testing.md)** | Guide for testing UI OAuth flow with Keycloak |
 | **[Cost Management Testing Results](cost-management-testing-results.md)** | Test results and validation data |
 

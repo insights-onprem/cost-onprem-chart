@@ -100,7 +100,7 @@ insights_cost_management_optimizations: "true"
 
 **Base Requirements:**
 - SNO cluster running OpenShift 4.18+
-- S3-compatible object storage (ODF, MinIO, AWS S3, or any S3 provider)
+- S3-compatible object storage (ODF, S4, AWS S3, or any S3 provider)
 - Block storage for databases and Kafka (ODF or any RWO-capable storage class)
 
 **Additional Resources for Cost Management On-Premise:**
@@ -122,7 +122,7 @@ This chart requires S3-compatible object storage. Any backend that speaks the S3
 There are two ways to configure storage:
 
 1. **Manual** (production): Set `objectStorage.*` in your values file and pre-create a credentials secret. The install script skips all S3 auto-detection.
-2. **Automated** (dev/CI): Leave `objectStorage.endpoint` empty and let the install script auto-detect from the cluster (OBC, MinIO, or NooBaa).
+2. **Automated** (dev/CI): Leave `objectStorage.endpoint` empty and let the install script auto-detect from the cluster (OBC, S4, or NooBaa).
 
 ### Required Buckets
 
@@ -155,7 +155,7 @@ stringData:
 |---------|-------------|---------------|-------|
 | **AWS S3** | Strong | No — manual config | For disconnected AWS deployments |
 | **Direct Ceph RGW** | Strong | Yes — via OBC | Recommended for ODF clusters |
-| **MinIO** | Strong | Yes — via `MINIO_ENDPOINT` | For development/testing |
+| **S4 (Ceph RGW)** | Strong | Yes — via `S3_ENDPOINT` | For development/testing |
 | **NooBaa** | Eventual | Yes — fallback | ⚠️ Not recommended (causes 403 errors) |
 
 ---
@@ -248,24 +248,24 @@ objectStorage:
 
 ---
 
-### Option C: MinIO (Development/Testing)
+### Option C: S4 (Development/Testing)
 
 Use this for local development or testing on OCP clusters without dedicated object storage.
 
-See [MinIO Development Setup Guide](../development/ocp-dev-setup-minio.md) for full instructions.
+See [S4 Development Setup Guide](../development/ocp-dev-setup-s4.md) for full instructions.
 
 **Quick start:**
 
 ```bash
-# Deploy MinIO
-./scripts/deploy-minio-test.sh cost-onprem
+# Deploy S4
+./scripts/deploy-s4-test.sh cost-onprem
 
-# Install chart with MinIO
-MINIO_ENDPOINT="http://minio.cost-onprem.svc.cluster.local:80" \
+# Install chart with S4
+S3_ENDPOINT=s4.cost-onprem.svc.cluster.local S3_PORT=7480 S3_USE_SSL=false \
   ./scripts/install-helm-chart.sh --namespace cost-onprem
 ```
 
-The script auto-detects the `MINIO_ENDPOINT`, creates storage credentials from the MinIO secret, creates buckets, and passes `objectStorage.endpoint`, `objectStorage.port=80`, `objectStorage.useSSL=false` to Helm.
+The script auto-detects `S3_ENDPOINT`, creates storage credentials from the S4 secret, creates buckets, and passes `objectStorage.endpoint`, `objectStorage.port=7480`, `objectStorage.useSSL=false` to Helm.
 
 ### Storage Class Configuration
 
@@ -397,7 +397,7 @@ When using `install-helm-chart.sh`, these values are **auto-detected** and passe
 | `global.volumeMode` | `Filesystem` | No | PVC volume mode. Change only if using raw block storage. |
 | `objectStorage.endpoint` | `s3.openshift-storage.svc.cluster.local` | Yes | S3-compatible endpoint hostname. Must point to your actual S3 provider. |
 | `objectStorage.port` | `443` | No | S3 endpoint port. |
-| `objectStorage.useSSL` | `true` | No | Use TLS for S3 connections. Set `false` for MinIO or other HTTP-only backends. |
+| `objectStorage.useSSL` | `true` | No | Use TLS for S3 connections. Set `false` for S3 or other HTTP-only backends. |
 | `objectStorage.secretName` | `""` | Yes (direct install) | Name of a pre-created `Secret` containing `access-key` and `secret-key`. |
 | `valkey.securityContext.fsGroup` | *(unset)* | Yes (OpenShift) | GID for Valkey PVC file ownership. Without this, Valkey pods fail with PVC permission errors. |
 | `jwtAuth.keycloak.installed` | `true` | No | Set `false` if Keycloak is not deployed. |

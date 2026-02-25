@@ -55,7 +55,8 @@ spec:
             - name: INGRESS_VALID_UPLOAD_TYPES
               value: {{ .Values.ingress.upload.validTypes | quote }}
 
-            # Storage configuration (MinIO/S3)
+            # S3-compatible storage configuration
+            # NOTE: INGRESS_MINIO* env var names are from upstream insights-ingress-go
             # insights-ingress-go expects endpoint in format "hostname:port"
             - name: INGRESS_MINIOENDPOINT
               value: "{{ include "cost-onprem.storage.endpoint" . }}:{{ include "cost-onprem.storage.port" . }}"

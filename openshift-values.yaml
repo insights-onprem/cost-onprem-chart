@@ -71,8 +71,8 @@ database:
 #      in the target namespace. The install script auto-detects it and
 #      configures endpoints, credentials, and bucket names.
 #
-#   3. MinIO (dev/test): Set MINIO_ENDPOINT env var before running the install
-#      script. See docs/development/ocp-dev-setup-minio.md.
+#   3. S4 (dev/test): Set S3_ENDPOINT env var before running the install
+#      script. See docs/development/ocp-dev-setup-s4.md.
 #
 #   4. Leave empty: The install script attempts NooBaa auto-detection as fallback.
 #      WARNING: NooBaa's eventual consistency may cause data processing failures.

@@ -74,7 +74,7 @@
 
 #### 1. S3-Compatible Object Storage
 
-The chart requires S3-compatible object storage. ODF is **not required** — any S3 provider works (AWS S3, ODF with Direct Ceph RGW, MinIO, etc.).
+The chart requires S3-compatible object storage. ODF is **not required** — any S3 provider works (AWS S3, ODF with Direct Ceph RGW, S4, etc.).
 
 See the [Storage Configuration](configuration.md#storage-configuration) section for full setup options.
 
@@ -265,7 +265,7 @@ cd /path/to/cost-onprem-chart/scripts
 
 **What the script does:**
 1. ✅ Verifies pre-requirements (S3 storage, Kafka)
-2. ✅ Auto-discovers S3 credentials (OBC, NooBaa, MinIO)
+2. ✅ Auto-discovers S3 credentials (OBC, NooBaa, S4)
 3. ✅ Creates namespace if needed
 4. ✅ Deploys unified chart (PostgreSQL, Valkey, Koku, ROS, Sources, Kruize)
 5. ✅ Runs database migrations automatically via init container
@@ -273,7 +273,7 @@ cd /path/to/cost-onprem-chart/scripts
 
 **Features:**
 - 🔐 Automatic secret creation (Django, S3)
-- 🔍 Auto-discovers S3 credentials from cluster (OBC, NooBaa, MinIO)
+- 🔍 Auto-discovers S3 credentials from cluster (OBC, NooBaa, S4)
 - ✅ Chart validation and linting before deployment
 - 🎯 Pod readiness checks and status reporting
 

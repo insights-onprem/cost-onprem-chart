@@ -17,7 +17,6 @@
 #   S3_ACCESS_KEY   - S3 access key (bypasses secret lookup in bucket creation)
 #   S3_SECRET_KEY   - S3 secret key (bypasses secret lookup in bucket creation)
 #   SKIP_S3_SETUP   - Skip S3 bucket creation entirely (default: false)
-#   MINIO_ENDPOINT  - MinIO endpoint for dev/test (e.g., "minio.minio-test.svc.cluster.local")
 #
 # Examples:
 #   # Default (clean output with successes/warnings/errors only)
@@ -29,7 +28,7 @@
 #   # Quiet (errors only)
 #   LOG_LEVEL=ERROR ./install-helm-chart.sh
 #
-#   # Generic S3 backend (non-ODF, non-MinIO)
+#   # Generic S3 backend (non-ODF)
 #   S3_ENDPOINT=s3.openshift-storage.svc S3_PORT=443 ./install-helm-chart.sh
 
 set -e  # Exit on any error
@@ -95,15 +94,15 @@ echo_success() { log_success "$1"; }
 echo_warning() { log_warning "$1"; }
 echo_error() { log_error "$1"; }
 
-# Parse MinIO endpoint: strips protocol and port from FQDN
-# Usage: parse_minio_host "http://minio.ns.svc.cluster.local:80" => "minio.ns.svc.cluster.local"
-parse_minio_host() {
+# Parse S3 endpoint: strips protocol and port from FQDN
+# Usage: parse_s3_host "http://s4.ns.svc.cluster.local:7480" => "s4.ns.svc.cluster.local"
+parse_s3_host() {
     echo "$1" | sed -E 's|^https?://||; s|:[0-9]+/?$||; s|/$||'
 }
 
-# Extract namespace from FQDN: "minio.ns.svc.cluster.local" => "ns"
-parse_minio_namespace() {
-    parse_minio_host "$1" | cut -d. -f2
+# Extract namespace from FQDN: "s4.ns.svc.cluster.local" => "ns"
+parse_s3_namespace() {
+    parse_s3_host "$1" | cut -d. -f2
 }
 
 # Read a value from the user-supplied Helm values file using yq
@@ -476,34 +475,33 @@ create_storage_credentials_secret() {
         return 0
     fi
 
-    # PRIORITY: If MINIO_ENDPOINT is set, use MinIO credentials (for testing/dev)
-    if [ -n "$MINIO_ENDPOINT" ]; then
-        echo_info "MINIO_ENDPOINT detected: Using MinIO credentials..."
-        local minio_host minio_ns
-        minio_host=$(parse_minio_host "$MINIO_ENDPOINT")
-        minio_ns=$(parse_minio_namespace "$MINIO_ENDPOINT")
+    # PRIORITY: If S3_ENDPOINT is set, look for S4 credentials (for testing/dev)
+    if [ -n "${S3_ENDPOINT:-}" ]; then
+        echo_info "S3_ENDPOINT detected: Looking for credentials..."
+        local s3_ns
+        s3_ns=$(parse_s3_namespace "$S3_ENDPOINT")
 
-        # Try the MinIO namespace first, then the chart namespace
-        for ns in "$minio_ns" "$NAMESPACE"; do
-            if kubectl get secret minio-credentials -n "$ns" >/dev/null 2>&1; then
-                echo_info "Found minio-credentials secret in namespace: $ns"
-                local access_key=$(kubectl get secret minio-credentials -n "$ns" -o jsonpath='{.data.access-key}' | base64 -d)
-                local secret_key=$(kubectl get secret minio-credentials -n "$ns" -o jsonpath='{.data.secret-key}' | base64 -d)
+        # Try the S3 service namespace first, then the chart namespace
+        for ns in "$s3_ns" "$NAMESPACE"; do
+            if kubectl get secret s4-credentials -n "$ns" >/dev/null 2>&1; then
+                echo_info "Found s4-credentials secret in namespace: $ns"
+                local access_key=$(kubectl get secret s4-credentials -n "$ns" -o jsonpath='{.data.access-key}' | base64 -d)
+                local secret_key=$(kubectl get secret s4-credentials -n "$ns" -o jsonpath='{.data.secret-key}' | base64 -d)
                 if [ -n "$access_key" ] && [ -n "$secret_key" ]; then
                     kubectl create secret generic "$secret_name" \
                         --namespace="$NAMESPACE" \
                         --from-literal=access-key="$access_key" \
                         --from-literal=secret-key="$secret_key"
-                    echo_success "Storage credentials created from MinIO credentials (namespace: $ns)"
+                    echo_success "Storage credentials created from S4 credentials (namespace: $ns)"
                     return 0
                 fi
             fi
         done
-        echo_warning "MinIO credentials secret not found in $minio_ns or $NAMESPACE, falling back to default logic..."
+        echo_warning "S4 credentials secret not found in $s3_ns or $NAMESPACE, falling back to default logic..."
     fi
 
     # OpenShift-only deployment: discover S3 credentials from known sources
-    # Priority: existing S3 credentials secret > NooBaa admin > MinIO > fail
+    # Priority: existing S3 credentials secret > NooBaa admin > S4 > fail
     local s3_creds_secret="cost-onprem-s3-credentials"
 
     if kubectl get secret "$s3_creds_secret" -n "$NAMESPACE" >/dev/null 2>&1; then
@@ -539,19 +537,18 @@ create_storage_credentials_secret() {
             --from-literal=secret-key="$secret_key"
         echo_success "Storage credentials created from NooBaa"
         echo_info "  Storage backend: NooBaa (via ODF)"
-    elif kubectl get secret minio-credentials -n minio >/dev/null 2>&1; then
-        # Scenario 3: MinIO credentials exist (testing/CI environment on OpenShift)
-        echo_info "Checking for MinIO deployment..."
-        echo_info "Found MinIO credentials secret in minio namespace"
+    elif kubectl get secret s4-credentials -n "$NAMESPACE" >/dev/null 2>&1; then
+        # Scenario 3: S4 credentials exist (testing/CI environment on OpenShift)
+        echo_info "Found S4 credentials secret in $NAMESPACE namespace"
 
-        local access_key=$(kubectl get secret minio-credentials -n minio -o jsonpath='{.data.access-key}')
-        local secret_key=$(kubectl get secret minio-credentials -n minio -o jsonpath='{.data.secret-key}')
+        local access_key=$(kubectl get secret s4-credentials -n "$NAMESPACE" -o jsonpath='{.data.access-key}')
+        local secret_key=$(kubectl get secret s4-credentials -n "$NAMESPACE" -o jsonpath='{.data.secret-key}')
         kubectl create secret generic "$secret_name" \
             --namespace="$NAMESPACE" \
             --from-literal=access-key="$(echo "$access_key" | base64 -d)" \
             --from-literal=secret-key="$(echo "$secret_key" | base64 -d)"
-        echo_success "Storage credentials created from MinIO"
-        echo_info "  Storage backend: MinIO"
+        echo_success "Storage credentials created from S4"
+        echo_info "  Storage backend: S4 (Ceph RGW)"
     else
         # Scenario 4: No storage backend found - FAIL
         echo_error "No S3 storage credentials detected!"
@@ -571,8 +568,8 @@ create_storage_credentials_secret() {
         echo_info "  - Set objectStorage.endpoint and objectStorage.secretName"
         echo_info "  - Pre-create the secret with 'access-key' and 'secret-key' keys"
         echo_info ""
-        echo_info "Option 3: Deploy with MinIO (Testing/CI only)"
-        echo_info "  - First deploy MinIO: ./scripts/deploy-minio-test.sh minio"
+        echo_info "Option 3: Deploy with S4 (Testing/CI only)"
+        echo_info "  - First deploy S4: ./scripts/deploy-s4-test.sh cost-onprem"
         echo_info "  - Then re-run this installation script"
         echo_info ""
         echo_error "Deployment aborted. Please configure a storage backend and try again."
@@ -625,18 +622,11 @@ create_s3_buckets() {
     fi
 
     # Determine S3 endpoint and configuration
-    # Priority: MINIO_ENDPOINT > S3_ENDPOINT env var > NooBaa auto-detect > values.yaml fallback
+    # Priority: S3_ENDPOINT env var > NooBaa auto-detect > values.yaml fallback
     local s3_url mc_insecure
 
-    if [ -n "$MINIO_ENDPOINT" ]; then
-        # PRIORITY 1: MinIO (testing/dev)
-        local minio_host
-        minio_host=$(parse_minio_host "$MINIO_ENDPOINT")
-        s3_url="http://${minio_host}:80"
-        mc_insecure=""
-        echo_info "  ✓ Using MinIO: $s3_url"
-    elif [ -n "${S3_ENDPOINT:-}" ]; then
-        # PRIORITY 2: Explicit S3_ENDPOINT env var (generic S3 backend)
+    if [ -n "${S3_ENDPOINT:-}" ]; then
+        # PRIORITY 1: Explicit S3_ENDPOINT env var (S4, or any S3 backend)
         local s3_port="${S3_PORT:-443}"
         local s3_ssl="${S3_USE_SSL:-true}"
         if [ "$s3_ssl" = "true" ]; then
@@ -674,13 +664,13 @@ create_s3_buckets() {
             echo_info "  ✓ Using S3 from values.yaml: $s3_url"
         else
             echo_error "Could not detect S3 storage backend"
-            echo_error "Checked for: MINIO_ENDPOINT, S3_ENDPOINT env vars, NooBaa CRD, values.yaml objectStorage"
+            echo_error "Checked for: S3_ENDPOINT env var, NooBaa CRD, values.yaml objectStorage"
             echo_error ""
             echo_error "Solutions:"
             echo_error "  1. Set S3_ENDPOINT=<hostname> (e.g., S3_ENDPOINT=s3.openshift-storage.svc)"
             echo_error "     Optional: S3_PORT=443 S3_USE_SSL=true (defaults)"
             echo_error "  2. Configure objectStorage.endpoint in values.yaml"
-            echo_error "  3. Set MINIO_ENDPOINT for MinIO backends"
+            echo_error "  3. Deploy S4 for dev/test: ./scripts/deploy-s4-test.sh cost-onprem"
             echo_error "  4. Set SKIP_S3_SETUP=true to skip bucket creation"
             exit 1
         fi
@@ -821,11 +811,11 @@ preflight_validate() {
 
     # S3 / Object Storage endpoint
     if [ "$USER_S3_CONFIGURED" != "true" ] && [ "$USING_EXTERNAL_OBC" != "true" ] && \
-       [ -z "$MINIO_ENDPOINT" ] && [ -z "${S3_ENDPOINT:-}" ]; then
+       [ -z "${S3_ENDPOINT:-}" ]; then
         # NooBaa detection
         if ! kubectl get crd noobaas.noobaa.io >/dev/null 2>&1 || \
            ! kubectl get noobaa -n openshift-storage >/dev/null 2>&1; then
-            echo_warning "No S3 backend detected (OBC, MinIO, S3_ENDPOINT, or NooBaa)"
+            echo_warning "No S3 backend detected (OBC, S3_ENDPOINT, or NooBaa)"
             echo_info "  Chart will use default 's3.openshift-storage.svc.cluster.local'"
             echo_info "  Override with S3_ENDPOINT=<hostname> or --set objectStorage.endpoint=..."
             warnings=$((warnings + 1))
@@ -966,7 +956,7 @@ deploy_helm_chart() {
     # S3 endpoint configuration for Helm:
     # If user pre-configured S3 in values.yaml, skip all --set overrides
     # (the values file already has the right config).
-    # Otherwise, auto-inject from OBC detection or MINIO_ENDPOINT.
+    # Otherwise, auto-inject from OBC detection or S3_ENDPOINT.
     if [ "$USER_S3_CONFIGURED" = "true" ]; then
         echo_info "S3 configuration provided in values file — skipping Helm --set overrides"
     elif [ "$USING_EXTERNAL_OBC" = "true" ]; then
@@ -987,16 +977,6 @@ deploy_helm_chart() {
         echo_info "  Endpoint: https://$EXTERNAL_OBC_ENDPOINT:$EXTERNAL_OBC_PORT"
         echo_info "  Bucket: $EXTERNAL_OBC_BUCKET_NAME"
         echo_info "  Bucket configured for ingress, Koku, and ROS components"
-    elif [ -n "$MINIO_ENDPOINT" ]; then
-        # MinIO S3 configuration (for testing/dev with MinIO in OCP)
-        local minio_host
-        minio_host=$(parse_minio_host "$MINIO_ENDPOINT")
-
-        echo_info "Configuring S3 endpoint for MinIO (dev/test)"
-        helm_cmd="$helm_cmd --set objectStorage.endpoint=\"${minio_host}\""
-        helm_cmd="$helm_cmd --set objectStorage.port=80"
-        helm_cmd="$helm_cmd --set objectStorage.useSSL=false"
-        echo_success "✓ S3 endpoint configured: ${minio_host} (port 80, no SSL)"
     elif [ -n "${S3_ENDPOINT:-}" ]; then
         # Explicit S3_ENDPOINT env var (generic S3 backend)
         local s3_port="${S3_PORT:-443}"
@@ -2076,8 +2056,6 @@ case "${1:-}" in
         echo "    S3_USE_SSL            - Whether to use TLS (default: true)"
         echo ""
         echo "  Option 3 (Automated): Let the script auto-detect"
-        echo "    MINIO_ENDPOINT        - MinIO endpoint (for dev/test with MinIO in OCP)"
-        echo "                            Example: http://minio.minio-test.svc.cluster.local:80"
         echo "    (OBC auto-detection)  - Detects ObjectBucketClaim 'ros-data-ceph' automatically"
         echo "    (NooBaa fallback)     - Falls back to NooBaa if available"
         echo ""

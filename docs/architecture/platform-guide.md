@@ -102,7 +102,7 @@ https://cost-onprem-ui-cost-onprem.apps.cluster.com        # UI (web interface)
 ### Storage
 
 **S3-Compatible Object Storage:**
-- Any S3-compatible backend (ODF, AWS S3, MinIO, or other)
+- Any S3-compatible backend (ODF, AWS S3, S4, or other)
 - ODF is **not required** — it is one option among several
 - Requires credentials secret with `access-key` and `secret-key`
 
@@ -117,7 +117,7 @@ objectStorage:
     region: "us-east-1"              # Or "onprem" for non-AWS backends
 ```
 
-See [Storage Configuration](../operations/configuration.md#storage-configuration) for full details including AWS S3, ODF, and MinIO options.
+See [Storage Configuration](../operations/configuration.md#storage-configuration) for full details including AWS S3, ODF, and S4 options.
 
 ### Security
 

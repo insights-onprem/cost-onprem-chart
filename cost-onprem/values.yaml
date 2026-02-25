@@ -515,7 +515,7 @@ ingress:
     # This is REQUIRED by insights-ingress-go
     validTypes: "hccm"
 
-  # Storage backend configuration (MinIO/S3)
+  # Storage backend configuration (S3-compatible)
   # INGRESS_STAGEBUCKET - staging bucket where uploads are stored before processing
   storage:
     bucket: "insights-upload-perma"
@@ -713,14 +713,14 @@ valkey:
 # -----------------------------------------------------------------------------
 # This chart requires S3-compatible object storage. Supported backends:
 #   - ODF (OpenShift Data Foundation) with NooBaa or Direct Ceph RGW
-#   - MinIO (for development/testing)
+#   - S4 / Ceph RGW (for development/testing)
 #   - AWS S3 (for disconnected AWS deployments)
 #   - Any S3-compatible storage provider
 #
 # Configuration options:
 #   1. Manual: Set endpoint/port/useSSL/secretName below and pre-create
 #      the credentials secret yourself. The install script will skip S3 setup.
-#   2. Automated: Use install-helm-chart.sh which auto-detects ODF/MinIO/OBC
+#   2. Automated: Use install-helm-chart.sh which auto-detects ODF/S4/OBC
 #      and overrides the default endpoint via --set.
 #
 objectStorage:
@@ -728,7 +728,7 @@ objectStorage:
   # Examples:
   #   - ODF NooBaa:    "s3.openshift-storage.svc.cluster.local"
   #   - Direct Ceph:   "rook-ceph-rgw-ocs-storagecluster-cephobjectstore.openshift-storage.svc"
-  #   - MinIO:         "minio.minio-test.svc.cluster.local"
+  #   - S4 (dev/test): "s4.s4-test.svc.cluster.local"
   #   - AWS S3:        "s3.amazonaws.com"
   # When empty, the install script auto-detects. Default allows offline templating (oc-mirror, helm template).
   endpoint: "s3.openshift-storage.svc.cluster.local"
@@ -748,7 +748,7 @@ objectStorage:
   secretName: ""
 
   # S3 region for signature generation (required for S3v4 signatures)
-  # Most S3-compatible backends (NooBaa, MinIO, Ceph) don't use regions,
+  # Most S3-compatible backends (NooBaa, S4, Ceph) don't use regions,
   # but boto3 requires it for signature calculation.
   # Default: "onprem" (for on-premise deployments)
   # Override to AWS region (e.g., "us-east-1") if deploying to AWS S3

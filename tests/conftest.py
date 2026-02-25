@@ -520,7 +520,7 @@ def s3_bucket_preflight(cluster_config: ClusterConfig, s3_config: Optional[S3Con
     This fixture runs automatically at the start of the test session and creates
     any missing S3 buckets. This prevents test failures due to missing buckets
     when the install script's bucket creation fails (e.g., network issues
-    downloading the MinIO client).
+    downloading the S3 client).
 
     Required buckets (from values.yaml):
     - koku-bucket: Main cost data storage

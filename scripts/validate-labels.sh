@@ -41,7 +41,7 @@ echo "   (These should only come from helpers, not be explicitly set)"
 # We're looking for app.kubernetes.io/name that appear to override the helper
 HARDCODED_NAMES=$(grep -n "app.kubernetes.io/name:" "$RENDERED_FILE" | \
   grep -v "app.kubernetes.io/name: cost-onprem" | \
-  grep -E "(database|cache|valkey|minio|storage|ros-api|ros-processor|ros-partition-cleaner|gateway|kruize|kruize-partitions|ingress|ros-rec-poller)" || true)
+  grep -E "(database|cache|valkey|storage|ros-api|ros-processor|ros-partition-cleaner|gateway|kruize|kruize-partitions|ingress|ros-rec-poller)" || true)
 
 if [[ -n "$HARDCODED_NAMES" ]]; then
   add_issue "ERROR" "Found hardcoded app.kubernetes.io/name labels that override helper templates:"

@@ -83,7 +83,7 @@ oc logs -n cost-onprem $INGRESS_POD -c ingress --tail=200 | grep -E "upload|ros|
 **Expected Results:**
 - ✅ Log line: `POST /api/ingress/v1/upload` with 202 status
 - ✅ Files extracted successfully
-- ✅ Files uploaded to storage (S3/MinIO/ODF)
+- ✅ Files uploaded to storage (S3/ODF)
 
 **If Failed:** Check ingress logs for errors, JWT authentication issues, or storage problems.
 
@@ -265,7 +265,7 @@ echo -e "\n=== Verification Complete ==="
 ### Issue: Ingress rejecting payload
 - Check JWT authentication (401 errors)
 - Verify X-Rh-Identity header present (with Envoy)
-- Check storage (S3/MinIO/ODF) is accessible
+- Check storage (S3/ODF) is accessible
 - Review ingress logs for specific error messages
 
 ### Issue: Processor not processing
