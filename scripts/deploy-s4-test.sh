@@ -120,7 +120,7 @@ fi
 
 # Deploy S4 via Helm
 echo_info "Deploying S4 via Helm..."
-if ! helm install s4 "$S4_TMPDIR/charts/s4" \
+if ! helm upgrade --install s4 "$S4_TMPDIR/charts/s4" \
     --namespace "$NAMESPACE" \
     --set s3.accessKeyId="$S4_ACCESS_KEY" \
     --set s3.secretAccessKey="$S4_SECRET_KEY" \
