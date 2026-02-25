@@ -532,88 +532,6 @@ setup_tls() {
     log_success "TLS certificate setup completed"
 }
 
-apply_test_networkpolicy() {
-    # Apply a standalone NetworkPolicy to allow test-runner pod access to internal services.
-    # This is applied separately from the Helm chart to avoid modifying production templates.
-    # Kubernetes NetworkPolicies are additive - this policy adds allowed ingress sources
-    # without affecting the existing policies from the Helm chart.
-    
-    log_info "Applying test NetworkPolicy to allow test-runner pod access..."
-    
-    local release_name="${HELM_RELEASE_NAME:-cost-onprem}"
-    
-    if [[ "${DRY_RUN}" == "true" ]]; then
-        log_info "DRY RUN: Would apply test NetworkPolicy for test-runner pod"
-        return 0
-    fi
-    
-    # Apply the NetworkPolicy using a heredoc
-    # This allows pods with app.kubernetes.io/component=testing to access koku-api and ros-api
-    if kubectl apply -n "${NAMESPACE}" -f - <<EOF
----
-# NetworkPolicy to allow test-runner pod access to Cost Management API
-# Applied by deploy-test-cost-onprem.sh for E2E testing
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: ${release_name}-test-runner-access
-  namespace: ${NAMESPACE}
-  labels:
-    app.kubernetes.io/name: cost-onprem
-    app.kubernetes.io/instance: ${release_name}
-    app.kubernetes.io/component: networkpolicy
-    app.kubernetes.io/managed-by: deploy-test-script
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/instance: ${release_name}
-      app.kubernetes.io/component: cost-management-api
-  policyTypes:
-    - Ingress
-  ingress:
-    # Allow traffic from test-runner pod
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: testing
-      ports:
-        - protocol: TCP
-          port: 8000
----
-# NetworkPolicy to allow test-runner pod access to ROS API
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: ${release_name}-test-runner-ros-access
-  namespace: ${NAMESPACE}
-  labels:
-    app.kubernetes.io/name: cost-onprem
-    app.kubernetes.io/instance: ${release_name}
-    app.kubernetes.io/component: networkpolicy
-    app.kubernetes.io/managed-by: deploy-test-script
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/instance: ${release_name}
-      app.kubernetes.io/component: ros-api
-  policyTypes:
-    - Ingress
-  ingress:
-    # Allow traffic from test-runner pod
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: testing
-      ports:
-        - protocol: TCP
-          port: 8000
-EOF
-    then
-        log_success "Test NetworkPolicy applied"
-    else
-        log_warning "Failed to apply test NetworkPolicy - interpod tests may fail"
-    fi
-}
 
 run_tests() {
     if [[ "${SKIP_TEST}" == "true" ]]; then
@@ -874,7 +792,6 @@ main() {
 
     deploy_helm_chart
     setup_tls
-    apply_test_networkpolicy
     run_tests
 
     # Save version information if requested
