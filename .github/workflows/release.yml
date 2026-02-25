@@ -9,7 +9,41 @@ on:
       - 'cost-onprem/**'
 
 jobs:
+  check-version:
+    name: Check if version changed
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.chart.outputs.version }}
+      changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract chart version
+        id: chart
+        run: |
+          VERSION=$(grep '^version:' cost-onprem/Chart.yaml | awk '{print $2}')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check if release already exists
+        id: check
+        run: |
+          TAG="cost-onprem-${{ steps.chart.outputs.version }}"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG)
+          if [ "$STATUS" = "200" ]; then
+            echo "Release $TAG already exists - skipping"
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "Release $TAG not found - will create"
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
   release:
+    needs: check-version
+    if: needs.check-version.outputs.changed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -34,6 +68,8 @@ jobs:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
 
   release-oci:
+    needs: check-version
+    if: needs.check-version.outputs.changed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -47,15 +83,9 @@ jobs:
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - name: Extract chart version
-        id: chart
-        run: |
-          VERSION=$(grep '^version:' cost-onprem/Chart.yaml | awk '{print $2}')
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
       - name: Package Helm chart
         run: helm package cost-onprem
 
       - name: Push to OCI registry
         run: |
-          helm push cost-onprem-${{ steps.chart.outputs.version }}.tgz oci://ghcr.io/insights-onprem/cost-onprem-chart
+          helm push cost-onprem-${{ needs.check-version.outputs.version }}.tgz oci://ghcr.io/insights-onprem/cost-onprem-chart
