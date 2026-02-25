@@ -447,9 +447,32 @@ deploy_s4() {
     export S3_PORT="7480"
     export S3_USE_SSL="false"
 
+    # Copy storage credentials from S4 namespace to chart namespace
+    # The install-helm-chart.sh script looks for credentials in the chart namespace
+    if [[ "${S4_NAMESPACE}" != "${NAMESPACE}" ]]; then
+        log_info "Copying storage credentials from ${S4_NAMESPACE} to ${NAMESPACE}..."
+        if kubectl get secret cost-onprem-storage-credentials -n "${S4_NAMESPACE}" >/dev/null 2>&1; then
+            # Extract credentials from S4 namespace
+            local access_key
+            local secret_key
+            access_key=$(kubectl get secret cost-onprem-storage-credentials -n "${S4_NAMESPACE}" -o jsonpath='{.data.access-key}' | base64 -d)
+            secret_key=$(kubectl get secret cost-onprem-storage-credentials -n "${S4_NAMESPACE}" -o jsonpath='{.data.secret-key}' | base64 -d)
+            
+            # Create secret in chart namespace
+            kubectl create secret generic cost-onprem-storage-credentials \
+                --namespace="${NAMESPACE}" \
+                --from-literal=access-key="${access_key}" \
+                --from-literal=secret-key="${secret_key}" \
+                --dry-run=client -o yaml | kubectl apply -f -
+            log_success "Storage credentials copied to ${NAMESPACE}"
+        else
+            log_warning "Storage credentials secret not found in ${S4_NAMESPACE}"
+        fi
+    fi
+
     log_success "S4 deployment completed"
     log_info "S3 endpoint configured: ${S3_ENDPOINT}:${S3_PORT} (SSL: ${S3_USE_SSL})"
-    log_info "Storage credentials secret: cost-onprem-storage-credentials (in ${S4_NAMESPACE})"
+    log_info "Storage credentials secret: cost-onprem-storage-credentials (in ${NAMESPACE})"
 }
 
 deploy_helm_chart() {
