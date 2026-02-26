@@ -5,6 +5,7 @@ on:
     branches: [ main, master ]
     paths:
       - 'cost-onprem/**'
+      - '.github/workflows/version-check.yml'
 
   push:
     branches: [ main, master ]
@@ -23,55 +24,46 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Fetch full history to compare with previous versions
+          fetch-depth: 0
 
       - name: Install semver tool
         run: |
-          # Install semver comparison tool
           wget -O /tmp/semver https://raw.githubusercontent.com/fsaintjacques/semver-tool/master/src/semver
           chmod +x /tmp/semver
           sudo mv /tmp/semver /usr/local/bin/semver
-
-          # Verify installation
           semver --version
 
       - name: Get current chart version
         id: current_version
         run: |
-          # Get cost-onprem version
           CURRENT_VERSION=$(grep '^version:' cost-onprem/Chart.yaml | sed 's/version: *//' | tr -d '"' | tr -d "'")
           echo "cost-onprem version: $CURRENT_VERSION"
           echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
 
-          # Validate current version is valid semver
           if ! semver validate "$CURRENT_VERSION"; then
-            echo "❌ Current version '$CURRENT_VERSION' is not valid semantic version"
+            echo "::error::Current version '$CURRENT_VERSION' is not valid semantic version"
             exit 1
           fi
-          echo "✅ Current version '$CURRENT_VERSION' is valid semantic version"
+          echo "Current version '$CURRENT_VERSION' is valid semantic version"
 
       - name: Get latest release version
         id: latest_release
         run: |
-          # Get the latest release tag from GitHub API
           LATEST_RELEASE=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.tag_name // empty')
 
           if [ -z "$LATEST_RELEASE" ] || [ "$LATEST_RELEASE" = "null" ]; then
-            echo "No previous releases found - this appears to be the first release"
+            echo "No previous releases found"
             echo "version=" >> $GITHUB_OUTPUT
             echo "is_first_release=true" >> $GITHUB_OUTPUT
           else
-            # Remove 'cost-onprem-' or 'v' prefix if present
             LATEST_VERSION=${LATEST_RELEASE#cost-onprem-}
             LATEST_VERSION=${LATEST_VERSION#v}
             echo "Latest release version: $LATEST_VERSION"
             echo "version=$LATEST_VERSION" >> $GITHUB_OUTPUT
             echo "is_first_release=false" >> $GITHUB_OUTPUT
 
-            # Validate latest version is valid semver
             if ! semver validate "$LATEST_VERSION"; then
-              echo "⚠️ Latest release version '$LATEST_VERSION' is not valid semantic version"
-              echo "This might be an old release format - proceeding with validation"
+              echo "::warning::Latest release version '$LATEST_VERSION' is not valid semver"
             fi
           fi
 
@@ -89,58 +81,57 @@ jobs:
           echo ""
 
           if [ "$IS_FIRST_RELEASE" = "true" ]; then
-            echo "✅ This is the first release - no version comparison needed"
-            echo "result=success" >> $GITHUB_OUTPUT
-            echo "message=First release - version $CURRENT_VERSION is valid" >> $GITHUB_OUTPUT
+            echo "First release - version $CURRENT_VERSION is valid"
+            echo "result=new_version" >> $GITHUB_OUTPUT
+            echo "message=First release - version $CURRENT_VERSION" >> $GITHUB_OUTPUT
+            echo "will_release=true" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          # Compare versions using semver tool
-          if semver validate "$LATEST_VERSION"; then
-            COMPARISON=$(semver compare "$CURRENT_VERSION" "$LATEST_VERSION")
-
-            case $COMPARISON in
-              1)
-                echo "✅ Version check passed: $CURRENT_VERSION > $LATEST_VERSION"
-                echo "result=success" >> $GITHUB_OUTPUT
-                echo "message=Version increased from $LATEST_VERSION to $CURRENT_VERSION" >> $GITHUB_OUTPUT
-
-                # Determine type of version bump
-                if semver compare "$CURRENT_VERSION" "$(semver bump major $LATEST_VERSION)" -eq 0; then
-                  echo "📈 This is a MAJOR version bump"
-                  echo "bump_type=major" >> $GITHUB_OUTPUT
-                elif semver compare "$CURRENT_VERSION" "$(semver bump minor $LATEST_VERSION)" -eq 0; then
-                  echo "📈 This is a MINOR version bump"
-                  echo "bump_type=minor" >> $GITHUB_OUTPUT
-                elif semver compare "$CURRENT_VERSION" "$(semver bump patch $LATEST_VERSION)" -eq 0; then
-                  echo "📈 This is a PATCH version bump"
-                  echo "bump_type=patch" >> $GITHUB_OUTPUT
-                else
-                  echo "📈 This is a CUSTOM version bump"
-                  echo "bump_type=custom" >> $GITHUB_OUTPUT
-                fi
-                ;;
-              0)
-                echo "❌ Version check failed: $CURRENT_VERSION = $LATEST_VERSION"
-                echo "The chart version must be higher than the latest release"
-                echo "result=failure" >> $GITHUB_OUTPUT
-                echo "message=Version $CURRENT_VERSION is the same as latest release" >> $GITHUB_OUTPUT
-                exit 1
-                ;;
-              -1)
-                echo "❌ Version check failed: $CURRENT_VERSION < $LATEST_VERSION"
-                echo "The chart version cannot be lower than the latest release"
-                echo "result=failure" >> $GITHUB_OUTPUT
-                echo "message=Version $CURRENT_VERSION is lower than latest release $LATEST_VERSION" >> $GITHUB_OUTPUT
-                exit 1
-                ;;
-            esac
-          else
-            echo "⚠️ Cannot compare with invalid semver latest version '$LATEST_VERSION'"
-            echo "Proceeding with basic validation that current version is valid"
+          if ! semver validate "$LATEST_VERSION"; then
+            echo "::warning::Cannot compare with invalid semver '$LATEST_VERSION' - passing"
             echo "result=warning" >> $GITHUB_OUTPUT
-            echo "message=Current version $CURRENT_VERSION is valid, but cannot compare with invalid latest version $LATEST_VERSION" >> $GITHUB_OUTPUT
+            echo "message=Current version $CURRENT_VERSION is valid, but cannot compare with latest '$LATEST_VERSION'" >> $GITHUB_OUTPUT
+            echo "will_release=false" >> $GITHUB_OUTPUT
+            exit 0
           fi
+
+          COMPARISON=$(semver compare "$CURRENT_VERSION" "$LATEST_VERSION")
+
+          case $COMPARISON in
+            1)
+              echo "Version bumped: $LATEST_VERSION -> $CURRENT_VERSION"
+              echo "result=new_version" >> $GITHUB_OUTPUT
+              echo "message=Version bumped from $LATEST_VERSION to $CURRENT_VERSION - a release will be created on merge" >> $GITHUB_OUTPUT
+              echo "will_release=true" >> $GITHUB_OUTPUT
+
+              NEXT_MAJOR=$(semver bump major "$LATEST_VERSION")
+              NEXT_MINOR=$(semver bump minor "$LATEST_VERSION")
+              NEXT_PATCH=$(semver bump patch "$LATEST_VERSION")
+              if [ "$(semver compare "$CURRENT_VERSION" "$NEXT_MAJOR")" -eq 0 ]; then
+                echo "bump_type=major" >> $GITHUB_OUTPUT
+              elif [ "$(semver compare "$CURRENT_VERSION" "$NEXT_MINOR")" -eq 0 ]; then
+                echo "bump_type=minor" >> $GITHUB_OUTPUT
+              elif [ "$(semver compare "$CURRENT_VERSION" "$NEXT_PATCH")" -eq 0 ]; then
+                echo "bump_type=patch" >> $GITHUB_OUTPUT
+              else
+                echo "bump_type=custom" >> $GITHUB_OUTPUT
+              fi
+              ;;
+            0)
+              echo "No version bump - chart version matches latest release ($CURRENT_VERSION)"
+              echo "result=no_bump" >> $GITHUB_OUTPUT
+              echo "message=No version bump. Chart version $CURRENT_VERSION matches latest release. No release will be created on merge." >> $GITHUB_OUTPUT
+              echo "will_release=false" >> $GITHUB_OUTPUT
+              ;;
+            -1)
+              echo "::error::Chart version $CURRENT_VERSION is lower than latest release $LATEST_VERSION"
+              echo "result=regression" >> $GITHUB_OUTPUT
+              echo "message=Version $CURRENT_VERSION is lower than latest release $LATEST_VERSION" >> $GITHUB_OUTPUT
+              echo "will_release=false" >> $GITHUB_OUTPUT
+              exit 1
+              ;;
+          esac
 
       - name: Suggest next versions
         if: failure()
@@ -149,12 +140,12 @@ jobs:
 
           if [ -n "$LATEST_VERSION" ] && semver validate "$LATEST_VERSION"; then
             echo ""
-            echo "💡 Suggested next versions:"
+            echo "Suggested next versions:"
             echo "  Patch: $(semver bump patch $LATEST_VERSION)"
             echo "  Minor: $(semver bump minor $LATEST_VERSION)"
             echo "  Major: $(semver bump major $LATEST_VERSION)"
             echo ""
-            echo "Update cost-onprem/Chart.yaml with the new version:"
+            echo "Update cost-onprem/Chart.yaml:"
             echo "  version: $(semver bump patch $LATEST_VERSION)"
           fi
 
@@ -164,59 +155,92 @@ jobs:
           RESULT="${{ steps.version_check.outputs.result }}"
           MESSAGE="${{ steps.version_check.outputs.message }}"
           BUMP_TYPE="${{ steps.version_check.outputs.bump_type }}"
+          WILL_RELEASE="${{ steps.version_check.outputs.will_release }}"
 
-          echo "## 📋 Version Check Results" >> $GITHUB_STEP_SUMMARY
+          echo "## Version Check Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           case $RESULT in
-            "success")
-              echo "✅ **Status**: Version check passed" >> $GITHUB_STEP_SUMMARY
-              echo "📝 **Details**: $MESSAGE" >> $GITHUB_STEP_SUMMARY
+            "new_version")
+              echo "**Status**: Version bump detected" >> $GITHUB_STEP_SUMMARY
+              echo "**Details**: $MESSAGE" >> $GITHUB_STEP_SUMMARY
               if [ -n "$BUMP_TYPE" ]; then
-                echo "🔄 **Bump Type**: $BUMP_TYPE" >> $GITHUB_STEP_SUMMARY
+                echo "**Bump Type**: $BUMP_TYPE" >> $GITHUB_STEP_SUMMARY
               fi
               ;;
-            "failure")
-              echo "❌ **Status**: Version check failed" >> $GITHUB_STEP_SUMMARY
-              echo "📝 **Details**: $MESSAGE" >> $GITHUB_STEP_SUMMARY
+            "no_bump")
+              echo "**Status**: No version bump (OK)" >> $GITHUB_STEP_SUMMARY
+              echo "**Details**: $MESSAGE" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
-              echo "### 💡 How to Fix" >> $GITHUB_STEP_SUMMARY
-              echo "Update the \`version\` field in \`cost-onprem/Chart.yaml\` to a higher semantic version." >> $GITHUB_STEP_SUMMARY
+              echo "This is fine. A release is only created when a PR bumps the \`version\` in \`cost-onprem/Chart.yaml\`." >> $GITHUB_STEP_SUMMARY
+              ;;
+            "regression")
+              echo "**Status**: Version regression detected" >> $GITHUB_STEP_SUMMARY
+              echo "**Details**: $MESSAGE" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "### How to Fix" >> $GITHUB_STEP_SUMMARY
+              echo "The chart version must be >= the latest release. Update \`cost-onprem/Chart.yaml\`." >> $GITHUB_STEP_SUMMARY
               ;;
             "warning")
-              echo "⚠️ **Status**: Version check completed with warnings" >> $GITHUB_STEP_SUMMARY
-              echo "📝 **Details**: $MESSAGE" >> $GITHUB_STEP_SUMMARY
+              echo "**Status**: Completed with warnings" >> $GITHUB_STEP_SUMMARY
+              echo "**Details**: $MESSAGE" >> $GITHUB_STEP_SUMMARY
               ;;
             *)
-              echo "ℹ️ **Status**: Version check completed" >> $GITHUB_STEP_SUMMARY
+              echo "**Status**: Completed" >> $GITHUB_STEP_SUMMARY
               ;;
           esac
 
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📊 Version Information" >> $GITHUB_STEP_SUMMARY
-          echo "- **Current Chart Version**: \`${{ steps.current_version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Latest Release Version**: \`${{ steps.latest_release.outputs.version || 'None' }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **First Release**: ${{ steps.latest_release.outputs.is_first_release }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Version Information" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Current Chart Version | \`${{ steps.current_version.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Latest Release | \`${{ steps.latest_release.outputs.version || 'None' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Will Release | $WILL_RELEASE |" >> $GITHUB_STEP_SUMMARY
 
-      - name: Comment on PR (if applicable)
-        if: github.event_name == 'pull_request' && steps.version_check.outputs.result == 'failure'
+      - name: Comment on PR (version regression)
+        if: github.event_name == 'pull_request' && steps.version_check.outputs.result == 'regression'
         uses: actions/github-script@v7
         with:
           script: |
-            const message = `## ❌ Version Check Failed
+            const message = `## Version Check Failed
 
-            The Helm chart version in \`cost-onprem/Chart.yaml\` must be semantically higher than the latest release.
+            The chart version in \`cost-onprem/Chart.yaml\` is **lower** than the latest release.
 
-            **Current version**: \`${{ steps.current_version.outputs.version }}\`
-            **Latest release**: \`${{ steps.latest_release.outputs.version }}\`
+            | | Version |
+            |---|---------|
+            | **Current** | \`${{ steps.current_version.outputs.version }}\` |
+            | **Latest release** | \`${{ steps.latest_release.outputs.version }}\` |
 
-            ### 💡 Suggested fixes:
-            Update the \`version\` field in \`cost-onprem/Chart.yaml\`:
+            The chart version must be **>=** the latest release. Suggested fixes:
             - \`$(semver bump patch ${{ steps.latest_release.outputs.version }})\` for bug fixes
             - \`$(semver bump minor ${{ steps.latest_release.outputs.version }})\` for new features
-            - \`$(semver bump major ${{ steps.latest_release.outputs.version }})\` for breaking changes
+            - \`$(semver bump major ${{ steps.latest_release.outputs.version }})\` for breaking changes`;
 
-            [Learn more about semantic versioning](https://semver.org/)`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: message
+            });
+
+      - name: Comment on PR (release note)
+        if: github.event_name == 'pull_request' && steps.version_check.outputs.result == 'new_version'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const bumpType = '${{ steps.version_check.outputs.bump_type }}';
+            const bumpLabel = bumpType ? ` (${bumpType})` : '';
+            const message = `## Release Pending
+
+            This PR bumps the chart version${bumpLabel}.
+
+            | | Version |
+            |---|---------|
+            | **Previous release** | \`${{ steps.latest_release.outputs.version || 'None' }}\` |
+            | **This PR** | \`${{ steps.current_version.outputs.version }}\` |
+
+            A new release **cost-onprem-${{ steps.current_version.outputs.version }}** will be created when this PR is merged.`;
 
             github.rest.issues.createComment({
               issue_number: context.issue.number,
