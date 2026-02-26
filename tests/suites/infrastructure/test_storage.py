@@ -32,7 +32,7 @@ def get_s3_endpoint_from_cluster(namespace: str) -> Optional[str]:
     3. Default ODF endpoint
     
     The MASU pod's S3_ENDPOINT is checked first because it reflects the actual
-    Helm values the chart was deployed with (e.g. MinIO or ODF). The OpenShift
+    Helm values the chart was deployed with (e.g. S4 or ODF). The OpenShift
     route is a fallback for clusters where the MASU pod isn't available yet.
     
     Args:

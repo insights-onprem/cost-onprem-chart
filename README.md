@@ -78,23 +78,24 @@ helm install cost-onprem cost-onprem/cost-onprem --namespace cost-onprem --creat
 
 ```
 cost-onprem-chart/
-├── cost-onprem/    # Helm chart directory
-│   ├── Chart.yaml             # Chart metadata (v0.2.0)
+├── .github/workflows/         # CI/CD automation
+├── cost-onprem/               # Helm chart directory
+│   ├── Chart.yaml             # Chart metadata
 │   ├── values.yaml            # Default configuration
-│   └── templates/             # Kubernetes resource templates (organized by service)
-│       ├── ros/               # Resource Optimization Service
-│       ├── kruize/            # Kruize optimization engine
-│       ├── cost-management/   # Cost Management (includes Sources API)
-│       ├── ingress/           # API gateway
+│   └── templates/             # Kubernetes resource templates
+│       ├── _helpers*.tpl      # Template helper functions
+│       ├── cost-management/   # Cost Management (Koku, Sources API)
+│       ├── gateway/           # API gateway (Envoy)
 │       ├── infrastructure/    # Database, Kafka, storage, cache
-│       ├── auth/              # Authentication (CA certificates)
+│       ├── ingress/           # File upload API
+│       ├── kruize/            # Kruize optimization engine
 │       ├── monitoring/        # Prometheus ServiceMonitor
+│       ├── ros/               # Resource Optimization Service
 │       ├── shared/            # Shared resources
-│       └── cost-management/   # Future cost management components
-├── tests/                     # Pytest test suite
+│       └── ui/                # Cost Management UI
 ├── docs/                      # Documentation
-├── scripts/                   # Installation and automation scripts
-└── .github/workflows/         # CI/CD automation
+├── scripts/                   # Deployment and automation scripts
+└── tests/                     # Pytest E2E test suite
 ```
 
 ## 📦 Services Deployed
@@ -276,10 +277,13 @@ This project is licensed under the terms specified in the [LICENSE](LICENSE) fil
 
 ## 🛠️ Development Environment
 
+New to this project? See the **[OCP Dev Setup with S4](docs/development/ocp-dev-setup-s4.md)** guide to set up a development environment on OpenShift using S4 (Ceph RGW) instead of ODF. This is the recommended approach for developers who don't have access to a multi-node OCP cluster with ODF.
+
 | Setup | Nodes | Storage Backend | Use Case |
 |-------|-------|-----------------|----------|
-| **Dev/Test** | 1+ | Any S3-compatible storage | Development, testing, demos |
-| **Production (ODF)** | 3+ | ODF with Direct Ceph RGW | Production deployments |
+| **Dev/Test (S4)** | 1 (SNO) | S4 / Ceph RGW (standalone) | Local development, testing, demos |
+| **Production (ODF)** | 3+ | S3-compatible object storage (ODF, AWS S3, or other)
+ | Production deployments |
 
 ## 🤝 Contributing
 

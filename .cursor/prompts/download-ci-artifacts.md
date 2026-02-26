@@ -29,7 +29,7 @@ Please provide ONE of the following:
 
 The E2E job runs these steps:
 1. `ipi-install-rbac` - RBAC setup (~10s)
-2. `insights-onprem-minio-deploy` - Deploy MinIO for S3 (~40s)
+2. `insights-onprem-s4-deploy` - Deploy S4 for S3 (~40s)
 3. `insights-onprem-cost-onprem-chart-e2e` - **Runs pytest** (~18m)
 
 ## Download Commands

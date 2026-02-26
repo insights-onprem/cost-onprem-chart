@@ -65,8 +65,8 @@ S3_ENDPOINT=s4.cost-onprem.svc.cluster.local S3_PORT=7480 S3_USE_SSL=false \
 
 The install script detects `S3_ENDPOINT` and automatically:
 
-- Locates the `cost-onprem-storage-credentials` secret (by parsing the namespace from the FQDN)
-- Creates the `cost-onprem-storage-credentials` secret in the chart namespace
+- Locates the `s4-credentials` secret (by parsing the namespace from the FQDN)
+- Creates the `cost-onprem-storage-credentials` secret used by the chart
 - Passes `objectStorage.endpoint`, `objectStorage.port=7480`, `objectStorage.useSSL=false` to Helm
 - Creates the S3 buckets (names read from `values.yaml`: `insights-upload-perma`, `koku-bucket`, `ros-data`)
 
@@ -134,8 +134,11 @@ kubectl get pods -l app.kubernetes.io/name=s4 -n cost-onprem
 Verify S4 credentials:
 
 ```bash
+kubectl get secret s4-credentials -n cost-onprem -o jsonpath='{.data.access-key}' | base64 -d
 kubectl get secret cost-onprem-storage-credentials -n cost-onprem -o jsonpath='{.data.access-key}' | base64 -d
 ```
+
+Both should return the same access key.
 
 ### "S3 endpoint not configured" error during helm install
 

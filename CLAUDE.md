@@ -51,9 +51,9 @@ CI Step Registry: insights-onprem/cost-onprem-chart/e2e/
 
 **CI Execution Sequence:**
 1. Dependencies: Installs yq, kubectl, helm, oc
-2. MinIO Setup: Reads config from `insights-onprem-minio-deploy` step
+2. S4 Setup: Reads config from `insights-onprem-s4-deploy` step
 3. Cost Management Operator: Installs via OLM (stable channel)
-4. Helm Wrapper: Injects MinIO storage config for cost-onprem chart
+4. Helm Wrapper: Injects S4 storage config for cost-onprem chart
 5. Deploy & Test: Runs `scripts/deploy-test-cost-onprem.sh --namespace cost-onprem --verbose`
 
 **Default CI Test Run:**

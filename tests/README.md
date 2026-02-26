@@ -346,9 +346,9 @@ release/ci-operator/step-registry/insights-onprem/cost-onprem-chart/e2e/
 
 **CI Execution Sequence:**
 1. Dependencies installed (yq, kubectl, helm, oc)
-2. MinIO configured from `insights-onprem-minio-deploy` step
+2. S4 configured from `insights-onprem-s4-deploy` step
 3. Cost Management Operator installed via OLM
-4. Helm wrapper injects MinIO storage config
+4. Helm wrapper injects S4 storage config
 5. `scripts/deploy-test-cost-onprem.sh` runs:
    - Deploys RHBK (Keycloak)
    - Deploys Strimzi/Kafka

@@ -99,7 +99,7 @@ The script deploys a unified chart containing all components:
 - ✅ Two-phase deployment (infrastructure first, then application)
 - ✅ Automatic secret creation (Django, Sources, S3 credentials)
 - ✅ Installs from the Helm chart repository (GitHub Pages)
-- ✅ Auto-discovers S3 credentials (OBC, NooBaa, MinIO)
+- ✅ Auto-discovers S3 credentials (OBC, NooBaa, S4)
 - ✅ OpenShift platform verification
 - ✅ Automatic upgrade detection
 - ✅ Perfect for CI/CD pipelines
@@ -253,9 +253,9 @@ The table below lists every cluster-specific value, its chart default, and how t
 | `global.clusterDomain` | `apps.cluster.local` | OpenShift wildcard domain for Routes | `oc get ingress.config.openshift.io cluster -o jsonpath='{.spec.domain}'` |
 | `global.storageClass` | `ocs-storagecluster-ceph-rbd` | Default StorageClass for PVCs | `kubectl get sc` (look for the `(default)` annotation) |
 | `global.volumeMode` | `Filesystem` | PVC volume mode | Usually `Filesystem`; change only for raw block storage |
-| `objectStorage.endpoint` | `s3.openshift-storage.svc.cluster.local` | S3-compatible endpoint hostname | Your S3 provider's endpoint (e.g., `s3.amazonaws.com`, MinIO hostname) |
+| `objectStorage.endpoint` | `s3.openshift-storage.svc.cluster.local` | S3-compatible endpoint hostname | Your S3 provider's endpoint (e.g., `s3.amazonaws.com`, S4 hostname) |
 | `objectStorage.port` | `443` | S3 endpoint port | `443` for HTTPS, `80` for HTTP |
-| `objectStorage.useSSL` | `true` | Use TLS for S3 connections | `true` for production, `false` for MinIO/dev |
+| `objectStorage.useSSL` | `true` | Use TLS for S3 connections | `true` for production, `false` for S4/dev |
 | `objectStorage.secretName` | `""` | Pre-created credentials secret name | Name of the `Secret` you created in Step 2 |
 | `valkey.securityContext.fsGroup` | *(unset)* | GID for Valkey PVC access on OpenShift | `oc get ns <NS> -o jsonpath='{.metadata.annotations.openshift\.io/sa\.scc\.supplemental-groups}'` (first number) |
 | `jwtAuth.keycloak.installed` | `true` | Whether Keycloak is deployed | `true` if RHBK is installed, `false` otherwise |
@@ -409,7 +409,7 @@ The chart requires S3-compatible object storage. ODF is **not required** — any
 |---------|----------|---------------|
 | AWS S3 | Production (disconnected AWS) | No — configure in `values.yaml` |
 | Direct Ceph RGW (ODF) | Production (OpenShift with ODF) | Yes — via OBC |
-| MinIO | Development/Testing | Yes — via `MINIO_ENDPOINT` |
+| S4 (Ceph RGW) | Development/Testing | Yes — via `S3_ENDPOINT` |
 | NooBaa (ODF) | Fallback only | Yes — not recommended |
 
 Choose your path:
@@ -466,20 +466,20 @@ The install script automatically detects the OBC, extracts configuration (endpoi
 
 > **Note**: Use Direct Ceph RGW (`ocs-storagecluster-ceph-rgw`) over NooBaa (`ocs-storagecluster-ceph-rbd`). NooBaa's eventual consistency causes 403 errors when reading freshly uploaded files.
 
-#### Path C: MinIO (development/testing only)
+#### Path C: S4 (development/testing only)
 
 ```bash
-# Deploy MinIO
-./scripts/deploy-minio-test.sh cost-onprem
+# Deploy S4
+./scripts/deploy-s4-test.sh cost-onprem
 
-# Install with MinIO
-MINIO_ENDPOINT=http://minio.cost-onprem.svc.cluster.local:80 \
+# Install with S4
+S3_ENDPOINT=s4.cost-onprem.svc.cluster.local S3_PORT=7480 S3_USE_SSL=false \
   ./scripts/install-helm-chart.sh --namespace cost-onprem
 ```
 
 The script creates credentials, buckets, and passes `objectStorage.*` values to Helm.
 
-See [MinIO Development Setup Guide](../development/ocp-dev-setup-minio.md) for details.
+See [S4 Development Setup Guide](../development/ocp-dev-setup-s4.md) for details.
 
 ### 2. Credentials and Secret Management
 
@@ -520,7 +520,7 @@ oc auth can-i create routes -n cost-onprem
 ### 5. Resource Requirements
 
 **Single Node OpenShift (SNO):**
-- SNO cluster with S3-compatible storage (ODF, MinIO, or external S3)
+- SNO cluster with S3-compatible storage (ODF, S4, or external S3)
 - 30GB+ block devices for persistent volumes
 - Additional 6GB RAM for Cost Management On-Premise workloads
 - Additional 2 CPU cores

@@ -45,7 +45,7 @@ The `deploy-test-cost-onprem.sh` script creates buckets automatically via `insta
 SKIP_S3_SETUP=true ./scripts/install-helm-chart.sh --namespace cost-onprem
 ```
 
-**To create buckets manually using mc (MinIO client):**
+**To create buckets manually using mc (S3 client):**
 
 ```bash
 # Set up mc alias for your S3 endpoint

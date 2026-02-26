@@ -357,9 +357,9 @@ kubectl exec -n cost-onprem $VALKEY_POD -- valkey-cli FLUSHALL
 kubectl delete pod -n cost-onprem -l app.kubernetes.io/component=listener
 kubectl wait --for=condition=ready pod -l app.kubernetes.io/component=listener -n cost-onprem --timeout=60s
 
-# 3. Delete test data from S3
-kubectl exec -n cost-onprem -l app.kubernetes.io/name=minio -- \
-    mc rm --recursive --force myminio/koku-bucket/reports/
+# 3. Delete test data from S3 (using mc client pod)
+kubectl run mc-cleanup --rm -it --restart=Never --image=minio/mc:latest -- \
+    sh -c 'mc alias set s3 http://s4.cost-onprem.svc.cluster.local:7480 $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY && mc rm --recursive --force s3/koku-bucket/reports/'
 
 # 4. Run E2E test
 NAMESPACE=cost-onprem ./scripts/run-pytest.sh --e2e

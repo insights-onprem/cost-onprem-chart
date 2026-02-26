@@ -24,7 +24,7 @@ Download artifacts with:
 ## CI Job Structure
 
 The `pull-ci-insights-onprem-cost-onprem-chart-main-e2e` job runs:
-1. `insights-onprem-minio-deploy` - Deploy MinIO (~40s)
+1. `insights-onprem-s4-deploy` - Deploy S4 (~40s)
 2. `insights-onprem-cost-onprem-chart-e2e` - **Runs pytest** (~18m)
 
 Pytest output is in: `artifacts/e2e/insights-onprem-cost-onprem-chart-e2e/build-log.txt`
@@ -113,6 +113,6 @@ pytest -x --pdb
 | Aspect | CI | Local |
 |--------|-----|-------|
 | Namespace | `cost-onprem` | Often `cost-onprem-ocp` |
-| S3 Backend | MinIO | ODF/NooBaa |
+| S3 Backend | S4 | ODF/NooBaa |
 | Extended tests | Skipped by default | Can run with `--extended` |
 | Cluster | Fresh pool cluster | Persistent dev cluster |
