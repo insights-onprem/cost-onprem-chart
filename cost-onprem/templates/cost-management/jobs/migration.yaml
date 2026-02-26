@@ -39,6 +39,7 @@ spec:
             echo "Timestamp: $(date)"
             echo "Release: {{ .Release.Name }}"
             echo "Namespace: {{ .Release.Namespace }}"
+            echo "ONPREM=${ONPREM:-not set}"
 
             # Wait for database to be ready
             DB_HOST="{{ include "cost-onprem.database.host" . }}"
