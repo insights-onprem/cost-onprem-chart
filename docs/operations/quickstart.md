@@ -25,7 +25,7 @@ The deployment scripts provide flexible options for OpenShift:
 Ensure your cluster has adequate resources for the deployment:
 - **Memory**: At least 16GB RAM (24GB+ recommended)
 - **CPU**: 8+ cores
-- **Storage**: S3-compatible object storage (ODF, AWS S3, MinIO, or other)
+- **Storage**: S3-compatible object storage (ODF, AWS S3, or other)
 
 The deployment includes:
 - PostgreSQL databases (unified)

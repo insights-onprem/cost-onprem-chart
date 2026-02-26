@@ -18,7 +18,7 @@ Complete Helm chart for deploying the full Cost Management stack with OCP cost a
 
 **📖 Documentation:**
 - **[Cost Management Installation Guide](docs/operations/cost-management-installation.md)** - Complete deployment guide
-- **Prerequisites**: OpenShift 4.18+, ODF with Direct Ceph RGW (150GB+), Kafka/Strimzi
+- **Prerequisites**: OpenShift 4.18+, S3-compatible object storage (ODF, AWS S3, or other), Kafka/Strimzi
 - **Architecture**: Single unified chart with all components
 - **E2E Testing**: Automated validation with `./scripts/run-pytest.sh` (pytest-based test suite)
 
@@ -101,7 +101,7 @@ cost-onprem-chart/
 
 ### Stateful Services
 - **PostgreSQL**: Unified database server hosting ROS, Kruize, Koku, and Sources databases
-- **ODF**: Object storage (OpenShift Data Foundation with NooBaa S3)
+- **S3-compatible object storage**: ODF, AWS S3, or other S3-compatible provider
 
 ### Kafka Infrastructure (Managed by Install Script)
 - **Strimzi Operator**: Deploys and manages Kafka clusters
@@ -143,12 +143,13 @@ Complete Cost Management deployment requires significant cluster resources:
 **📖 See [Resource Requirements Guide](docs/resource-requirements.md) for detailed breakdown by component.**
 
 ### Storage Options
-- **OpenShift**: ODF with Direct Ceph RGW (recommended for strong consistency)
 
-**Note**: Direct Ceph RGW (`ocs-storagecluster-ceph-rgw`) is recommended over NooBaa for ROS deployments due to strong read-after-write consistency requirements. NooBaa has eventual consistency issues that can cause ROS processing failures.
+Any S3-compatible object storage is supported:
+- **ODF with Direct Ceph RGW** (recommended for production - strong read-after-write consistency)
+- **AWS S3** (cloud-hosted)
+- **Other S3-compatible providers**
 
-### Storage Requirements
-- **ODF**: OpenShift Data Foundation with NooBaa (required for S3-compatible storage)
+**Note**: For ROS deployments, providers with strong read-after-write consistency are recommended. NooBaa has eventual consistency issues that can cause ROS processing failures.
 
 **See [Configuration Guide](docs/configuration.md) for detailed requirements**
 
@@ -275,11 +276,9 @@ This project is licensed under the terms specified in the [LICENSE](LICENSE) fil
 
 ## 🛠️ Development Environment
 
-New to this project? See the **[OCP Dev Setup with MinIO](docs/development/ocp-dev-setup-minio.md)** guide to set up a development environment on OpenShift using MinIO instead of ODF. This is the recommended approach for developers who don't have access to a multi-node OCP cluster with ODF.
-
 | Setup | Nodes | Storage Backend | Use Case |
 |-------|-------|-----------------|----------|
-| **Dev/Test (MinIO)** | 1 (SNO) | MinIO (standalone) | Local development, testing, demos |
+| **Dev/Test** | 1+ | Any S3-compatible storage | Development, testing, demos |
 | **Production (ODF)** | 3+ | ODF with Direct Ceph RGW | Production deployments |
 
 ## 🤝 Contributing
