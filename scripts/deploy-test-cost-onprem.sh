@@ -29,6 +29,8 @@ set -euo pipefail
 #   --dry-run                 Show what would be executed without running
 #   --tests-only              Run only JWT authentication tests (skip all deployments)
 #   --include-ui              Include UI tests (requires Playwright system dependencies)
+#   --run-iqe                 Run IQE cost-management tests after deployment
+#   --iqe-marker EXPR         Pytest marker for IQE tests (default: cost_ocp_on_prem)
 #   --save-versions [FILE]    Save deployment version info to JSON file (default: version_info.json)
 #   --help                    Display this help message
 #
@@ -81,6 +83,8 @@ VERBOSE="${VERBOSE:-false}"
 DRY_RUN="${DRY_RUN:-false}"
 TESTS_ONLY="${TESTS_ONLY:-false}"
 INCLUDE_UI="${INCLUDE_UI:-false}"
+RUN_IQE="${RUN_IQE:-false}"
+IQE_MARKER="${IQE_MARKER:-cost_ocp_on_prem}"
 SAVE_VERSIONS="${SAVE_VERSIONS:-false}"
 VERSION_INFO_FILE="${VERSION_INFO_FILE:-version_info.json}"
 
@@ -618,6 +622,46 @@ run_tests() {
     fi
     
     log_success "Pytest test suite completed"
+    
+    # Run IQE tests if requested
+    if [[ "${RUN_IQE}" == "true" ]]; then
+        run_iqe_tests
+    fi
+}
+
+################################################################################
+# IQE Test Execution
+################################################################################
+
+run_iqe_tests() {
+    log_step "Running IQE cost-management tests"
+    
+    local iqe_script="${LOCAL_SCRIPTS_DIR}/run-iqe-tests.sh"
+    if [[ ! -x "${iqe_script}" ]]; then
+        log_error "IQE test runner not found at: ${iqe_script}"
+        return 1
+    fi
+    
+    log_info "Running IQE tests with marker: ${IQE_MARKER}"
+    
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log_info "DRY RUN: Would execute: ${iqe_script} --namespace ${NAMESPACE} --marker '${IQE_MARKER}'"
+        return 0
+    fi
+    
+    # Export environment variables for IQE script
+    export NAMESPACE="${NAMESPACE}"
+    export HELM_RELEASE_NAME="${HELM_RELEASE_NAME:-cost-onprem}"
+    export IQE_MARKER="${IQE_MARKER}"
+    
+    if ! "${iqe_script}" --namespace "${NAMESPACE}" --marker "${IQE_MARKER}"; then
+        log_error "IQE tests failed"
+        log_info "IQE JUnit report available at: tests/reports/iqe_junit.xml"
+        log_info "IQE output log available at: tests/reports/iqe_output.log"
+        return 1
+    fi
+    
+    log_success "IQE tests completed"
 }
 
 ################################################################################
@@ -678,6 +722,7 @@ print_summary() {
     [[ "${SKIP_HELM}" == "false" ]] && echo "  ✓ Deploy Cost On-Prem Helm Chart" || echo "  ✗ Deploy Cost On-Prem Helm Chart (SKIPPED)"
     [[ "${SKIP_TLS}" == "false" ]] && echo "  ✓ Setup TLS Certificates" || echo "  ✗ Setup TLS Certificates (SKIPPED)"
     [[ "${SKIP_TEST}" == "false" ]] && echo "  ✓ Test JWT Flow" || echo "  ✗ Test JWT Flow (SKIPPED)"
+    [[ "${RUN_IQE}" == "true" ]] && echo "  ✓ Run IQE Tests (marker: ${IQE_MARKER})" || echo "  ✗ Run IQE Tests (OPTIONAL)"
     echo ""
 }
 
@@ -757,6 +802,14 @@ main() {
             --include-ui)
                 INCLUDE_UI=true
                 shift
+                ;;
+            --run-iqe)
+                RUN_IQE=true
+                shift
+                ;;
+            --iqe-marker)
+                IQE_MARKER="$2"
+                shift 2
                 ;;
             --save-versions)
                 SAVE_VERSIONS=true
