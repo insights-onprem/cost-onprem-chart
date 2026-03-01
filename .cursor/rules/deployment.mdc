@@ -23,14 +23,14 @@ globs: ["cost-onprem/**", "scripts/deploy-*.sh", "openshift-values.yaml"]
 |--------------|---------|
 | "Deploy the chart" | `./scripts/deploy-test-cost-onprem.sh --namespace cost-onprem --verbose` |
 | "Redeploy" | `helm uninstall cost-onprem -n cost-onprem && ./scripts/deploy-test-cost-onprem.sh --namespace cost-onprem --verbose` |
-| "Just reinstall helm chart" | `./scripts/deploy-test-cost-onprem.sh --skip-rhbk --skip-strimzi --namespace cost-onprem --verbose` |
+| "Just reinstall helm chart" | `./scripts/deploy-test-cost-onprem.sh --skip-rhbk --skip-kafka --namespace cost-onprem --verbose` |
 | "Run tests only" | `./scripts/deploy-test-cost-onprem.sh --tests-only` |
 | "Deploy without tests" | `./scripts/deploy-test-cost-onprem.sh --skip-test --namespace cost-onprem --verbose` |
 
 ## Skip Flags
 
 - `--skip-rhbk` - Skip Keycloak deployment
-- `--skip-strimzi` - Skip Kafka deployment  
+- `--skip-kafka` - Skip Kafka deployment  
 - `--skip-helm` - Skip Helm chart installation
 - `--skip-tls` - Skip TLS configuration
 - `--skip-test` - Skip running tests

@@ -351,7 +351,7 @@ release/ci-operator/step-registry/insights-onprem/cost-onprem-chart/e2e/
 4. Helm wrapper injects S4 storage config
 5. `scripts/deploy-test-cost-onprem.sh` runs:
    - Deploys RHBK (Keycloak)
-   - Deploys Strimzi/Kafka
+   - Deploys AMQ Streams/Kafka
    - Installs cost-onprem Helm chart
    - Configures TLS
    - **Runs `scripts/run-pytest.sh`** (CI mode)

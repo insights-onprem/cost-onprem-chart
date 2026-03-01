@@ -29,7 +29,7 @@ Ensure your cluster has adequate resources for the deployment:
 
 The deployment includes:
 - PostgreSQL databases (unified)
-- Kafka cluster (via Strimzi)
+- Kafka cluster (via AMQ Streams)
 - Kruize optimization engine (1-2Gi - most memory intensive)
 - Celery workers
 - Various application services
@@ -58,10 +58,10 @@ helm version
 cd /path/to/cost-onprem-chart/scripts/
 ```
 
-### 2. Deploy Kafka Infrastructure (Strimzi)
+### 2. Deploy Kafka Infrastructure (AMQ Streams)
 ```bash
-# Deploy Strimzi operator and Kafka cluster
-./deploy-strimzi.sh
+# Deploy AMQ Streams operator and Kafka cluster (KRaft mode)
+./deploy-kafka.sh
 ```
 
 ### 3. Deploy Cost Management On-Premise Services

@@ -4,7 +4,7 @@ Tests for validating infrastructure components required by Cost Management.
 
 ## Kafka Validation (`test_kafka.py`)
 
-Validates the Strimzi Kafka cluster and Koku listener connectivity.
+Validates the AMQ Streams Kafka cluster and Koku listener connectivity.
 
 | Test Class | Test | Description |
 |------------|------|-------------|

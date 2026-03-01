@@ -18,7 +18,7 @@ The `deploy-test-cost-onprem.sh` script handles everything:
 
 This will:
 1. Deploy Red Hat Build of Keycloak (RHBK)
-2. Deploy Strimzi/Kafka
+2. Deploy AMQ Streams/Kafka
 3. Install the cost-onprem Helm chart
 4. Configure TLS certificates
 5. Run the pytest test suite
@@ -50,8 +50,8 @@ helm upgrade cost-onprem ./cost-onprem \
 # Skip Keycloak deployment
 ./scripts/deploy-test-cost-onprem.sh --skip-rhbk
 
-# Skip Kafka/Strimzi deployment
-./scripts/deploy-test-cost-onprem.sh --skip-strimzi
+# Skip Kafka/AMQ Streams deployment
+./scripts/deploy-test-cost-onprem.sh --skip-kafka
 
 # Skip Helm chart installation
 ./scripts/deploy-test-cost-onprem.sh --skip-helm

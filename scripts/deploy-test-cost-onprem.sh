@@ -15,7 +15,7 @@ set -euo pipefail
 #
 # Options:
 #   --skip-rhbk               Skip Red Hat Build of Keycloak (RHBK) deployment
-#   --skip-strimzi            Skip Kafka/Strimzi deployment
+#   --skip-kafka              Skip Kafka/AMQ Streams deployment
 #   --skip-helm               Skip COST Helm chart installation
 #   --skip-tls                Skip TLS certificate setup
 #   --skip-test               Skip JWT authentication test
@@ -99,7 +99,7 @@ SHARED_DIR="${SHARED_DIR:-}"
 # Local scripts directory (this script sits alongside the other scripts)
 LOCAL_SCRIPTS_DIR="${SCRIPT_DIR}"
 SCRIPT_DEPLOY_RHBK="deploy-rhbk.sh"  # Red Hat Build of Keycloak (RHBK)
-SCRIPT_DEPLOY_STRIMZI="deploy-strimzi.sh"
+SCRIPT_DEPLOY_KAFKA="deploy-kafka.sh"
 SCRIPT_DEPLOY_S4="deploy-s4-test.sh"  # S4 (Super Simple Storage Service)
 SCRIPT_INSTALL_HELM="install-helm-chart.sh"
 SCRIPT_SETUP_TLS="setup-cost-mgmt-tls.sh"
@@ -107,7 +107,7 @@ OPENSHIFT_VALUES_FILE="openshift-values.yaml"
 
 # Step flags (default: run all steps)
 SKIP_RHBK=false  # Red Hat Build of Keycloak
-SKIP_STRIMZI=false
+SKIP_KAFKA=false
 SKIP_HELM=false
 SKIP_TLS=false
 SKIP_TEST=false
@@ -386,15 +386,15 @@ deploy_rhbk() {
     log_success "Red Hat Build of Keycloak (RHBK) deployment completed"
 }
 
-deploy_strimzi() {
-    if [[ "${SKIP_STRIMZI}" == "true" ]]; then
-        log_warning "Skipping Kafka/Strimzi deployment (--skip-strimzi)"
+deploy_kafka() {
+    if [[ "${SKIP_KAFKA}" == "true" ]]; then
+        log_warning "Skipping Kafka/AMQ Streams deployment (--skip-kafka)"
         return 0
     fi
 
-    log_step "Deploying Kafka/Strimzi (2/6)"
+    log_step "Deploying Kafka/AMQ Streams (2/6)"
 
-    # Export environment variables for Strimzi script
+    # Export environment variables for AMQ Streams script
     # export KAFKA_NAMESPACE="${NAMESPACE}"
     export KAFKA_ENVIRONMENT="ocp"
     export STORAGE_CLASS="${STORAGE_CLASS:-}"
@@ -405,12 +405,12 @@ deploy_strimzi() {
         export VERBOSE="true"
     fi
 
-    if ! execute_script "${SCRIPT_DEPLOY_STRIMZI}"; then
-        log_error "Kafka/Strimzi deployment failed"
+    if ! execute_script "${SCRIPT_DEPLOY_KAFKA}"; then
+        log_error "Kafka/AMQ Streams deployment failed"
         exit 1
     fi
 
-    log_success "Kafka/Strimzi deployment completed"
+    log_success "Kafka/AMQ Streams deployment completed"
 }
 
 deploy_s4() {
@@ -673,7 +673,7 @@ print_summary() {
     echo ""
     log_info "Steps to execute:"
     [[ "${SKIP_RHBK}" == "false" ]] && echo "  ✓ Deploy Red Hat Build of Keycloak (RHBK)" || echo "  ✗ Deploy RHBK (SKIPPED)"
-    [[ "${SKIP_STRIMZI}" == "false" ]] && echo "  ✓ Deploy Kafka/Strimzi" || echo "  ✗ Deploy Kafka/Strimzi (SKIPPED)"
+    [[ "${SKIP_KAFKA}" == "false" ]] && echo "  ✓ Deploy Kafka/AMQ Streams" || echo "  ✗ Deploy Kafka/AMQ Streams (SKIPPED)"
     [[ "${DEPLOY_S4}" == "true" ]] && echo "  ✓ Deploy S4 Storage (namespace: ${S4_NAMESPACE})" || echo "  ✗ Deploy S4 Storage (OPTIONAL)"
     [[ "${SKIP_HELM}" == "false" ]] && echo "  ✓ Deploy Cost On-Prem Helm Chart" || echo "  ✗ Deploy Cost On-Prem Helm Chart (SKIPPED)"
     [[ "${SKIP_TLS}" == "false" ]] && echo "  ✓ Setup TLS Certificates" || echo "  ✗ Setup TLS Certificates (SKIPPED)"
@@ -706,8 +706,8 @@ main() {
                 SKIP_RHBK=true
                 shift
                 ;;
-            --skip-strimzi)
-                SKIP_STRIMZI=true
+            --skip-kafka|--skip-strimzi)
+                SKIP_KAFKA=true
                 shift
                 ;;
             --skip-helm)
@@ -781,7 +781,7 @@ main() {
     # In tests-only mode, skip all deployment steps and run tests
     if [[ "${TESTS_ONLY}" == "true" ]]; then
         SKIP_RHBK=true
-        SKIP_STRIMZI=true
+        SKIP_KAFKA=true
         SKIP_HELM=true
         SKIP_TLS=true
         SKIP_TEST=false
@@ -803,7 +803,7 @@ main() {
     fi
 
     deploy_rhbk
-    deploy_strimzi
+    deploy_kafka
     deploy_s4
 
     # Run Helm sanity test before deploying complex chart

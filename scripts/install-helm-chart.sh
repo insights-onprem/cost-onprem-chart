@@ -60,7 +60,7 @@ HELM_REPO_URL="https://insights-onprem.github.io/cost-onprem-chart"
 CHART_VERSION=${CHART_VERSION:-}  # Empty = latest; set to pin a version (e.g., "0.2.9")
 USE_LOCAL_CHART=${USE_LOCAL_CHART:-false}  # Set to true to use local chart instead of Helm repository
 LOCAL_CHART_PATH=${LOCAL_CHART_PATH:-../cost-onprem}  # Path to local chart directory
-STRIMZI_NAMESPACE=${STRIMZI_NAMESPACE:-}  # If set, use existing Strimzi operator in this namespace
+STRIMZI_NAMESPACE=${STRIMZI_NAMESPACE:-}  # If set, use existing AMQ Streams operator in this namespace
 KAFKA_NAMESPACE=${KAFKA_NAMESPACE:-}  # If set, use existing Kafka cluster in this namespace
 
 # Logging functions with level-based filtering
@@ -237,9 +237,9 @@ create_namespace() {
     echo_info "  This enables the Cost Management Metrics Operator to collect resource optimization data"
 }
 
-# Function to verify Strimzi and Kafka prerequisites
+# Function to verify AMQ Streams and Kafka prerequisites
 verify_strimzi_and_kafka() {
-    echo_info "Verifying Strimzi operator and Kafka cluster prerequisites..."
+    echo_info "Verifying AMQ Streams operator and Kafka cluster prerequisites..."
 
     # If user provided external Kafka bootstrap servers (env var or values file), skip verification
     if [ -n "$KAFKA_BOOTSTRAP_SERVERS" ]; then
@@ -260,23 +260,23 @@ verify_strimzi_and_kafka() {
     # Determine which namespace to check
     local check_namespace="${KAFKA_NAMESPACE:-kafka}"
 
-    # Check if Strimzi operator exists
+    # Check if AMQ Streams / Strimzi operator exists
     local strimzi_ns=""
 
-    # Look for Strimzi operator in any namespace
-    strimzi_ns=$(kubectl get pods -A -l name=strimzi-cluster-operator -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null || echo "")
+    # Look for AMQ Streams operator in any namespace
+    strimzi_ns=$(kubectl get pods -A -l strimzi.io/kind=cluster-operator -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null || echo "")
 
     if [ -n "$strimzi_ns" ]; then
-        echo_success "Found Strimzi operator in namespace: $strimzi_ns"
+        echo_success "Found AMQ Streams operator in namespace: $strimzi_ns"
         check_namespace="$strimzi_ns"
     else
-        echo_error "Strimzi operator not found in cluster"
+        echo_error "AMQ Streams operator not found in cluster"
         echo_info ""
-        echo_info "Strimzi operator is required to manage Kafka clusters."
-        echo_info "Please deploy Strimzi before installing Cost Management On Premise:"
+        echo_info "AMQ Streams operator is required to manage Kafka clusters."
+        echo_info "Please deploy AMQ Streams before installing Cost Management On Premise:"
         echo_info ""
         echo_info "  cd $SCRIPT_DIR"
-        echo_info "  ./deploy-strimzi.sh"
+        echo_info "  ./deploy-kafka.sh"
         echo_info ""
         echo_info "Or point to an existing Kafka cluster via env var or values file:"
         echo_info "  export KAFKA_BOOTSTRAP_SERVERS=my-kafka-bootstrap.my-namespace:9092"
@@ -295,7 +295,7 @@ verify_strimzi_and_kafka() {
         echo_info "Please deploy a Kafka cluster before installing Cost Management On Premise:"
         echo_info ""
         echo_info "  cd $SCRIPT_DIR"
-        echo_info "  ./deploy-strimzi.sh"
+        echo_info "  ./deploy-kafka.sh"
         echo_info ""
         return 1
     fi
@@ -311,7 +311,7 @@ verify_strimzi_and_kafka() {
             echo_warning "Kafka cluster is not ready yet. Installation may fail if Kafka is not fully operational."
         fi
 
-        # Import Kafka bootstrap servers if available from deploy-strimzi.sh output
+        # Import Kafka bootstrap servers if available from deploy-kafka.sh output
         if [ -f /tmp/kafka-bootstrap-servers.env ]; then
             source /tmp/kafka-bootstrap-servers.env
             if [ -n "$KAFKA_BOOTSTRAP_SERVERS" ]; then
@@ -326,7 +326,7 @@ verify_strimzi_and_kafka() {
         fi
     fi
 
-    echo_success "Strimzi and Kafka verification completed"
+    echo_success "AMQ Streams and Kafka verification completed"
     return 0
 }
 
@@ -1251,8 +1251,8 @@ cleanup() {
     done
 
     echo_info "Cleaning up Cost Management On Premise deployment..."
-    echo_info "Note: This will NOT remove Strimzi/Kafka. To clean them up separately:"
-    echo_info "  ./deploy-strimzi.sh cleanup"
+    echo_info "Note: This will NOT remove AMQ Streams/Kafka. To clean them up separately:"
+    echo_info "  ./deploy-kafka.sh cleanup"
     echo ""
 
     # Check if namespace exists
@@ -1947,9 +1947,9 @@ main() {
         echo_warning "Failed to create Django secret. Koku may not start correctly."
     fi
 
-    # Verify Strimzi operator and Kafka cluster are available
+    # Verify AMQ Streams operator and Kafka cluster are available
     if ! verify_strimzi_and_kafka; then
-        echo_error "Strimzi/Kafka prerequisites not met"
+        echo_error "AMQ Streams/Kafka prerequisites not met"
         exit 1
     fi
 
@@ -2019,7 +2019,7 @@ case "${1:-}" in
         echo ""
         echo "Prerequisites:"
         echo "  Before running this installation, ensure you have:"
-        echo "  1. Strimzi operator and Kafka cluster deployed (run ./deploy-strimzi.sh)"
+        echo "  1. AMQ Streams operator and Kafka cluster deployed (run ./deploy-kafka.sh)"
         echo "     OR provide KAFKA_BOOTSTRAP_SERVERS for existing Kafka"
         echo "  2. For OpenShift with JWT auth: RHBK (optional, run ./deploy-rhbk.sh)"
         echo ""
@@ -2027,7 +2027,7 @@ case "${1:-}" in
         echo "  (none)              - Install Cost Management On Premise Helm chart"
         echo "  cleanup             - Delete Helm release and namespace (preserves PVs)"
         echo "  cleanup --complete  - Complete removal including Persistent Volumes"
-        echo "                        Note: Strimzi/Kafka are NOT removed. Use ./deploy-strimzi.sh cleanup"
+        echo "                        Note: AMQ Streams/Kafka are NOT removed. Use ./deploy-kafka.sh cleanup"
         echo "  status              - Show deployment status"
         echo "  health              - Run health checks"
         echo "  help                - Show this help message"
@@ -2041,8 +2041,8 @@ case "${1:-}" in
         echo "Uninstall/Reinstall Workflow:"
         echo "  # For clean reinstall with fresh data:"
         echo "  $0 cleanup --complete    # Remove everything including data volumes"
-        echo "  ./deploy-strimzi.sh cleanup  # Optional: remove Kafka/Strimzi too"
-        echo "  ./deploy-strimzi.sh      # Optional: reinstall Kafka/Strimzi"
+        echo "  ./deploy-kafka.sh cleanup  # Optional: remove AMQ Streams/Kafka too"
+        echo "  ./deploy-kafka.sh      # Optional: reinstall AMQ Streams/Kafka"
         echo "  $0                       # Fresh installation"
         echo ""
         echo "  # For reinstall preserving data:"
@@ -2092,11 +2092,11 @@ case "${1:-}" in
         echo ""
         echo "Examples:"
         echo "  # Complete fresh installation"
-        echo "  ./deploy-strimzi.sh                           # Install Strimzi and Kafka first"
+        echo "  ./deploy-kafka.sh                           # Install AMQ Streams and Kafka first"
         echo "  USE_LOCAL_CHART=true LOCAL_CHART_PATH=../cost-onprem $0  # Then install Cost Management On Premise"
         echo ""
-        echo "  # Install from Helm repository (with Strimzi already deployed)"
-        echo "  ./deploy-strimzi.sh                           # Install prerequisites"
+        echo "  # Install from Helm repository (with AMQ Streams already deployed)"
+        echo "  ./deploy-kafka.sh                           # Install prerequisites"
         echo "  $0                                            # Install Cost Management On Premise from Helm repo"
         echo ""
         echo "  # Custom namespace and release name"
@@ -2120,23 +2120,23 @@ case "${1:-}" in
         echo "  - Automatically detects Kubernetes vs OpenShift"
         echo "  - Uses openshift-values.yaml for OpenShift if available"
         echo "  - Auto-detects optimal storage class for platform"
-        echo "  - Verifies Strimzi operator and Kafka cluster prerequisites"
+        echo "  - Verifies AMQ Streams operator and Kafka cluster prerequisites"
         echo ""
         echo "Deployment Scenarios:"
         echo "  1. Fresh deployment (recommended):"
-        echo "     ./deploy-strimzi.sh    # Deploy Strimzi and Kafka first"
+        echo "     ./deploy-kafka.sh    # Deploy AMQ Streams and Kafka first"
         echo "     $0                     # Deploy Cost Management On Premise"
         echo "     - Auto-detects platform (OpenShift or Kubernetes)"
-        echo "     - Verifies Strimzi/Kafka prerequisites"
+        echo "     - Verifies AMQ Streams/Kafka prerequisites"
         echo "     - Deploys Cost Management On Premise with platform-specific configuration"
         echo ""
         echo "  2. With existing Kafka (external):"
         echo "     KAFKA_BOOTSTRAP_SERVERS=kafka.example.com:9092 $0"
         echo "     - Uses provided Kafka bootstrap servers"
-        echo "     - Skips Strimzi/Kafka verification"
+        echo "     - Skips AMQ Streams/Kafka verification"
         echo ""
         echo "  3. Custom configuration:"
-        echo "     ./deploy-strimzi.sh"
+        echo "     ./deploy-kafka.sh"
         echo "     $0 --set key=value"
         echo "     - Override any Helm value"
         echo "     - Platform detection still applies"

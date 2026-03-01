@@ -527,18 +527,19 @@ oc auth can-i create routes -n cost-onprem
 
 **See [Configuration Guide](../operations/configuration.md) for detailed requirements**
 
-### 5. Kafka (Strimzi)
+### 5. Kafka (AMQ Streams)
 
 Kafka is required for the Cost Management data pipeline (OCP metrics ingestion).
 
 **Automated Deployment (Recommended):**
 ```bash
-# Deploy Strimzi operator and Kafka cluster
-./scripts/deploy-strimzi.sh
+# Deploy AMQ Streams operator and Kafka cluster (KRaft mode)
+./scripts/deploy-kafka.sh
 
 # Script will:
-# - Install Strimzi operator (version 0.45.1)
-# - Deploy Kafka cluster (version 3.8.0)
+# - Install AMQ Streams operator via OLM (channel: amq-streams-3.1.x)
+# - Deploy Kafka 4.1.0 cluster in KRaft mode (no ZooKeeper)
+# - Create separate controller and broker node pools with persistent JBOD storage
 # - Verify OpenShift platform
 # - Configure appropriate storage class
 # - Wait for cluster to be ready
@@ -547,22 +548,23 @@ Kafka is required for the Cost Management data pipeline (OCP metrics ingestion).
 **Customization:**
 ```bash
 # Custom namespace
-KAFKA_NAMESPACE=my-kafka ./scripts/deploy-strimzi.sh
+KAFKA_NAMESPACE=my-kafka ./scripts/deploy-kafka.sh
 
 # Custom Kafka cluster name
-KAFKA_CLUSTER_NAME=my-cluster ./scripts/deploy-strimzi.sh
+KAFKA_CLUSTER_NAME=my-cluster ./scripts/deploy-kafka.sh
 
 # For OpenShift with specific storage class
-STORAGE_CLASS=ocs-storagecluster-ceph-rbd ./scripts/deploy-strimzi.sh
+STORAGE_CLASS=ocs-storagecluster-ceph-rbd ./scripts/deploy-kafka.sh
 ```
 
 **Manual Verification:**
 ```bash
-# Check Strimzi operator
-oc get csv -A | grep strimzi
+# Check AMQ Streams operator
+oc get csv -A | grep amqstreams
 
-# Check Kafka cluster
+# Check Kafka cluster and node pools
 oc get kafka -n kafka
+oc get kafkanodepool -n kafka
 
 # Verify Kafka is ready
 oc wait kafka/cost-onprem-kafka --for=condition=Ready --timeout=300s -n kafka
@@ -571,7 +573,7 @@ oc wait kafka/cost-onprem-kafka --for=condition=Ready --timeout=300s -n kafka
 **Required Kafka Topics:**
 - `platform.upload.announce` (created automatically by Koku on first message)
 
-> **Using an existing Kafka cluster:** If you already have a Kafka cluster (e.g., AMQ Streams, Confluent, MSK), you can skip the Strimzi deployment and configure `kafka.bootstrapServers` in your values file. Set `KAFKA_BOOTSTRAP_SERVERS` when running the install script to skip Strimzi verification. Only PLAINTEXT connections are currently supported. See [External Kafka](configuration.md#external-kafka) for details.
+> **Using an existing Kafka cluster:** If you already have a Kafka cluster (e.g., AMQ Streams, Confluent, MSK), you can skip the AMQ Streams deployment and configure `kafka.bootstrapServers` in your values file. Set `KAFKA_BOOTSTRAP_SERVERS` when running the install script to skip AMQ Streams verification. Only PLAINTEXT connections are currently supported. See [External Kafka](configuration.md#external-kafka) for details.
 
 ### 6. User Workload Monitoring (Required for ROS Metrics)
 

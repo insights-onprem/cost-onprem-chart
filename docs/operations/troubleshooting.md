@@ -320,20 +320,20 @@ oc exec -n cost-onprem deployment/cost-onprem-gateway -- \
 
 ---
 
-**Strimzi operator OOMKilled:**
+**AMQ Streams operator OOMKilled:**
 
 When this happens you typically see the operator pod cycling with logs full of repeated `Attempting reconnect` messages, `SessionExpiredException`, or `NoSuchElementException` just before it is killed by the OOM killer.
 ```bash
 # Check pod status for OOMKilled
-kubectl get pods -n kafka -l name=strimzi-cluster-operator
+kubectl get pods -n kafka -l strimzi.io/kind=cluster-operator
 
-# Bump the operator memory limits on the fly
-kubectl set resources deployment/strimzi-cluster-operator \
-  -n kafka --containers=strimzi-cluster-operator \
-  --limits=memory=768Mi --requests=memory=768Mi
+# Bump the operator memory limits on the fly (find the deployment name first)
+kubectl get deployment -n kafka -l strimzi.io/kind=cluster-operator
+kubectl set resources deployment/<operator-deployment-name> \
+  -n kafka --limits=memory=768Mi --requests=memory=768Mi
 
 # Confirm the pod restarts with the new limits
-kubectl get pods -n kafka -l name=strimzi-cluster-operator
+kubectl get pods -n kafka -l strimzi.io/kind=cluster-operator
 ```
 
 ---

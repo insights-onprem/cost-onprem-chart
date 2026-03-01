@@ -27,7 +27,7 @@ Complete configuration reference for resource requirements, storage, and access 
 | Service | CPU Request | CPU Limit |
 |---------|-------------|-----------|
 | PostgreSQL (3×) | 300m | 1500m |
-| Kafka + Zookeeper | 350m | 750m |
+| Kafka (KRaft) | 350m | 750m |
 | Kruize | 500m | 1000m |
 | Application Services | 800m | 1200m |
 | **Total** | **~2 cores** | **~4.5 cores** |
@@ -36,7 +36,7 @@ Complete configuration reference for resource requirements, storage, and access 
 | Service | Memory Request | Memory Limit |
 |---------|----------------|--------------|
 | PostgreSQL (3×) | 768MB | 1536MB |
-| Kafka + Zookeeper | 768MB | 1536MB |
+| Kafka (KRaft) | 768MB | 1536MB |
 | Kruize | 1GB | 2GB |
 | Application Services | 2GB | 3GB |
 | **Total** | **~4.5GB** | **~8GB** |
@@ -47,8 +47,8 @@ Complete configuration reference for resource requirements, storage, and access 
 | PostgreSQL ROS | 10GB | RWO | Main database |
 | PostgreSQL Kruize | 10GB | RWO | Kruize database |
 | PostgreSQL Koku | 10GB | RWO | Koku database (includes sources data) |
-| Kafka | 10GB | RWO | Message storage |
-| Zookeeper | 5GB | RWO | Coordination data |
+| Kafka Brokers | 10GB | RWO | Message storage |
+| Kafka Controllers | 5GB | RWO | KRaft metadata |
 | **Total** | **~45GB** | - | Production: 50GB+ |
 
 ---
@@ -629,13 +629,13 @@ global:
 
 ## External Infrastructure (BYOI)
 
-The chart bundles PostgreSQL, Valkey, and deploys Kafka via Strimzi for development and testing. For production deployments, you can **bring your own infrastructure** (BYOI) by connecting to externally-managed services instead.
+The chart bundles PostgreSQL, Valkey, and deploys Kafka via AMQ Streams for development and testing. For production deployments, you can **bring your own infrastructure** (BYOI) by connecting to externally-managed services instead.
 
 | Service | Bundled Default | External Examples | Config Key |
 |---------|----------------|-------------------|------------|
 | **PostgreSQL** | Single-replica StatefulSet | RDS, Crunchy, EDB, Azure DB | `database.deploy: false` |
 | **Valkey/Redis** | Single-replica Deployment | ElastiCache, Redis Enterprise, Azure Cache | `valkey.deploy: false` |
-| **Kafka** | Strimzi (via install script) | AMQ Streams, MSK, Confluent | `kafka.bootstrapServers` |
+| **Kafka** | AMQ Streams (via install script) | MSK, Confluent, other Kafka providers | `kafka.bootstrapServers` |
 | **Keycloak** | RHBK (via deploy-rhbk.sh) | Customer-managed Keycloak | `jwtAuth.keycloak.url` |
 
 ---
@@ -769,7 +769,7 @@ When `valkey.deploy: false`:
 
 ### External Kafka
 
-Use an existing Kafka cluster instead of the Strimzi-managed Kafka deployed by the install script.
+Use an existing Kafka cluster instead of the AMQ Streams-managed Kafka deployed by the install script.
 
 > **Known Limitation:** Only **PLAINTEXT** Kafka connections are currently supported. Both Koku and ROS backends do not read SASL/TLS configuration from environment variables in on-prem (non-Clowder) mode. Upstream application changes are required before chart-level SASL/TLS support can be added.
 
@@ -793,7 +793,7 @@ kafka:
   securityProtocol: "PLAINTEXT"
 ```
 
-**Install script behavior:** When running `install-helm-chart.sh`, set `KAFKA_BOOTSTRAP_SERVERS` to skip Strimzi verification:
+**Install script behavior:** When running `install-helm-chart.sh`, set `KAFKA_BOOTSTRAP_SERVERS` to skip AMQ Streams verification:
 
 ```bash
 KAFKA_BOOTSTRAP_SERVERS="my-kafka-broker1:9092" ./scripts/install-helm-chart.sh --namespace cost-onprem

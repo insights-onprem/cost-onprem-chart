@@ -8,7 +8,7 @@ Automation scripts for deploying, configuring, and testing the Cost Management O
 |--------|---------|-------------|
 | `deploy-test-cost-onprem.sh` | **Full deployment + test orchestration** | OpenShift |
 | `run-pytest.sh` | Run pytest test suite | All environments |
-| `deploy-strimzi.sh` | Deploy Kafka infrastructure | All environments |
+| `deploy-kafka.sh` | Deploy Kafka infrastructure | All environments |
 | `install-helm-chart.sh` | Deploy CoP Helm chart | All environments |
 | `deploy-rhbk.sh` | Deploy Red Hat Build of Keycloak | OpenShift |
 | `setup-cost-mgmt-tls.sh` | Configure TLS certificates | OpenShift |
@@ -22,7 +22,7 @@ Automation scripts for deploying, configuring, and testing the Cost Management O
 ./setup-cost-mgmt-tls.sh
 
 # 2. Deploy Kafka infrastructure
-./deploy-strimzi.sh
+./deploy-kafka.sh
 
 # 3. Deploy Cost Management
 ./install-helm-chart.sh
@@ -38,7 +38,7 @@ NAMESPACE=cost-onprem ./run-pytest.sh
 ./deploy-rhbk.sh
 
 # 2. Deploy Kafka infrastructure
-./deploy-strimzi.sh
+./deploy-kafka.sh
 
 # 3. Deploy CoP with JWT authentication
 export JWT_AUTH_ENABLED=true
@@ -149,43 +149,45 @@ Configure Cost Management Operator with comprehensive CA certificate support.
 
 ---
 
-### `deploy-strimzi.sh`
-Deploy Strimzi operator and Kafka cluster.
+### `deploy-kafka.sh`
+Deploy AMQ Streams (Streams for Apache Kafka) operator via OLM and a KRaft-based Kafka cluster.
 
 **What it creates:**
-- Strimzi Operator (Kafka cluster management)
-- Kafka 3.8.0 cluster with persistent storage
+- AMQ Streams Operator via OLM (channel: `amq-streams-3.1.x`)
+- Kafka 4.1.0 cluster in KRaft mode (no ZooKeeper) with separate controller and broker node pools
+- Persistent JBOD storage for both controllers and brokers
 - Required Kafka topics for Cost Management On-Premise
 
 **Usage:**
 ```bash
 # Basic deployment
-./deploy-strimzi.sh
+./deploy-kafka.sh
 
 # Deploy for OpenShift with custom storage
-KAFKA_ENVIRONMENT=ocp ./deploy-strimzi.sh
+KAFKA_ENVIRONMENT=ocp ./deploy-kafka.sh
 
-# Use existing Strimzi operator
-STRIMZI_NAMESPACE=existing-strimzi ./deploy-strimzi.sh
+# Use existing AMQ Streams operator
+AMQ_STREAMS_NAMESPACE=existing-operator ./deploy-kafka.sh
 
 # Use existing external Kafka
-KAFKA_BOOTSTRAP_SERVERS=my-kafka:9092 ./deploy-strimzi.sh
+KAFKA_BOOTSTRAP_SERVERS=my-kafka:9092 ./deploy-kafka.sh
 
 # Validate existing deployment
-./deploy-strimzi.sh validate
+./deploy-kafka.sh validate
 
 # Cleanup
-./deploy-strimzi.sh cleanup
+./deploy-kafka.sh cleanup
 ```
 
 **Environment variables:**
 - `KAFKA_NAMESPACE`: Target namespace (default: `kafka`)
 - `KAFKA_CLUSTER_NAME`: Kafka cluster name (default: `cost-onprem-kafka`)
-- `KAFKA_VERSION`: Kafka version (default: `3.8.0`)
-- `STRIMZI_VERSION`: Strimzi operator version (default: `0.45.1`)
+- `KAFKA_VERSION`: Kafka version (default: `4.1.0`)
+- `AMQ_STREAMS_CHANNEL`: OLM subscription channel (default: `amq-streams-3.1.x`)
 - `KAFKA_ENVIRONMENT`: Environment type - `dev` or `ocp` (default: `dev`)
 - `STORAGE_CLASS`: Storage class name (auto-detected if empty)
 - `KAFKA_BOOTSTRAP_SERVERS`: Use external Kafka (skips deployment)
+- `AMQ_STREAMS_NAMESPACE`: Use existing AMQ Streams operator in this namespace
 
 ---
 
@@ -202,7 +204,7 @@ release/ci-operator/step-registry/insights-onprem/cost-onprem-chart/e2e/
 
 **What it does:**
 1. Deploys Red Hat Build of Keycloak (RHBK)
-2. Deploys Kafka/Strimzi infrastructure
+2. Deploys Kafka/AMQ Streams infrastructure
 3. Installs Cost On-Prem Helm chart
 4. Configures TLS certificates
 5. **Runs pytest via `scripts/run-pytest.sh`** (CI mode - excludes extended tests)
@@ -217,7 +219,7 @@ release/ci-operator/step-registry/insights-onprem/cost-onprem-chart/e2e/
 ./deploy-test-cost-onprem.sh --tests-only
 
 # Skip specific steps
-./deploy-test-cost-onprem.sh --skip-rhbk --skip-strimzi
+./deploy-test-cost-onprem.sh --skip-rhbk --skip-kafka
 
 # Save deployment version info for CI traceability
 ./deploy-test-cost-onprem.sh --save-versions
