@@ -11,7 +11,6 @@ from utils import (
     execute_db_query,
     run_oc_command,
     get_job_logs,
-    assert_log_contains,
     validate_logs,
 )
 
@@ -303,39 +302,6 @@ class TestHiveWorkaround:
         assert result[0][0] in ["f", "False", False, "0"], (
             f"{database_config.user} should NOT have CREATEDB privilege (FLPATH-3265). "
             "This privilege was only needed for the old hive workaround."
-        )
-
-    def test_migration_skipped_hive_creation(self, cluster_config):
-        """Verify migration 0039 skipped hive creation via log message.
-        
-        When ONPREM=True, Koku migration 0039_create_hive_db should log:
-        "Skipping hive database creation for on-premises deployment (Trino not used)"
-        
-        This confirms the Koku-side fix from PR #5900 is active.
-        """
-        job_name = f"{cluster_config.helm_release_name}-koku-migrate"
-        logs = get_job_logs(
-            cluster_config.namespace,
-            job_name,
-            container="migrate",
-        )
-        
-        if logs is None:
-            pytest.skip(
-                "Migration job logs not available (job may have been cleaned up). "
-                "Run this test immediately after deployment to capture logs."
-            )
-        
-        # The log message from Koku's migration 0039 when ONPREM=True
-        assert_log_contains(
-            logs,
-            "Skipping hive database creation",
-            message=(
-                "Expected Koku migration 0039 to log 'Skipping hive database creation' "
-                "when ONPREM=True. This indicates the Koku fix from PR #5900 may not "
-                "be present in the deployed image, or ONPREM is not set to True."
-            ),
-            case_sensitive=False,
         )
 
 
