@@ -41,6 +41,12 @@ Images marked **additional** are not auto-discovered by `oc-mirror` and
 | `registry.redhat.io/rhceph/oauth2-proxy-rhel9:v7.6.0` | UI OAuth proxy | auto |
 | `quay.io/insights-onprem/koku-ui-onprem:latest` | Cost Management UI | auto |
 | `registry.access.redhat.com/ubi9/ubi-minimal:latest` | Init containers (wait-for probes) | auto |
+| `amazon/aws-cli:latest` | S3 bucket creation (`install-helm-chart.sh`) | **script** |
+
+> **Note:** The `amazon/aws-cli:latest` image is used by `install-helm-chart.sh` for
+> one-shot S3 bucket creation (not by the Helm chart itself). Override with
+> `S3_CLI_IMAGE` to point to a mirrored copy. If you create buckets manually or
+> use `SKIP_S3_SETUP=true`, this image is not required.
 
 > **Why are some images not auto-discovered?** `oc-mirror` discovers images
 > by running `helm template` internally. Kubernetes resources created via
@@ -73,6 +79,8 @@ mirror:
   # Keep in sync with the "Required Container Images" table above.
   additionalImages:
     - name: quay.io/insights-onprem/postgresql:16
+    # Only needed if using install-helm-chart.sh for bucket creation:
+    - name: amazon/aws-cli:latest
 ```
 
 ## Step 2: Mirror to Disk

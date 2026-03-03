@@ -348,7 +348,7 @@ operator: RHBK
 {{- end }}
 
 {{/*
-Kafka service host resolver (supports both internal Strimzi and external Kafka)
+Kafka service host resolver (supports both internal and external Kafka)
 */}}
 {{- define "cost-onprem.kafka.host" -}}
 {{- if .Values.kafka.bootstrapServers -}}
@@ -373,7 +373,7 @@ Kafka service host resolver (supports both internal Strimzi and external Kafka)
 {{- end }}
 
 {{/*
-Kafka port resolver (supports both internal Strimzi and external Kafka)
+Kafka port resolver (supports both internal and external Kafka)
 */}}
 {{- define "cost-onprem.kafka.port" -}}
 {{- if .Values.kafka.bootstrapServers -}}
@@ -398,7 +398,7 @@ Kafka port resolver (supports both internal Strimzi and external Kafka)
 {{- end }}
 
 {{/*
-Kafka bootstrap servers resolver (supports both internal Strimzi and external Kafka)
+Kafka bootstrap servers resolver (supports both internal and external Kafka)
 */}}
 {{- define "cost-onprem.kafka.bootstrapServers" -}}
 {{- if .Values.kafka.bootstrapServers -}}
@@ -409,7 +409,7 @@ Kafka bootstrap servers resolver (supports both internal Strimzi and external Ka
 {{- end }}
 
 {{/*
-Kafka security protocol resolver (supports both internal Strimzi and external Kafka)
+Kafka security protocol resolver (supports both internal and external Kafka)
 */}}
 {{- define "cost-onprem.kafka.securityProtocol" -}}
 {{- .Values.kafka.securityProtocol | default "PLAINTEXT" -}}

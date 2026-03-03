@@ -14,9 +14,11 @@
 #   S3_ENDPOINT     - S3 endpoint hostname for generic S3 backends (e.g., "s3.example.com")
 #   S3_PORT         - S3 port (default: 443, used with S3_ENDPOINT)
 #   S3_USE_SSL      - Whether S3 uses TLS (default: true, used with S3_ENDPOINT)
+#   S3_VERIFY_SSL   - Verify S3 TLS certificates (default: false; internal services use cluster CA)
 #   S3_ACCESS_KEY   - S3 access key (bypasses secret lookup in bucket creation)
 #   S3_SECRET_KEY   - S3 secret key (bypasses secret lookup in bucket creation)
 #   SKIP_S3_SETUP   - Skip S3 bucket creation entirely (default: false)
+#   S3_CLI_IMAGE    - Container image with AWS CLI for bucket creation (default: amazon/aws-cli:latest)
 #
 # Examples:
 #   # Default (clean output with successes/warnings/errors only)
@@ -58,8 +60,7 @@ HELM_REPO_URL="https://insights-onprem.github.io/cost-onprem-chart"
 CHART_VERSION=${CHART_VERSION:-}  # Empty = latest; set to pin a version (e.g., "0.2.9")
 USE_LOCAL_CHART=${USE_LOCAL_CHART:-false}  # Set to true to use local chart instead of Helm repository
 LOCAL_CHART_PATH=${LOCAL_CHART_PATH:-../cost-onprem}  # Path to local chart directory
-STRIMZI_NAMESPACE=${STRIMZI_NAMESPACE:-}  # If set, use existing Strimzi operator in this namespace
-KAFKA_NAMESPACE=${KAFKA_NAMESPACE:-}  # If set, use existing Kafka cluster in this namespace
+KAFKA_NAMESPACE=${KAFKA_NAMESPACE:-}  # If set, look for operator and Kafka cluster in this namespace
 
 # Logging functions with level-based filtering
 log_debug() {
@@ -235,9 +236,9 @@ create_namespace() {
     echo_info "  This enables the Cost Management Metrics Operator to collect resource optimization data"
 }
 
-# Function to verify Strimzi and Kafka prerequisites
-verify_strimzi_and_kafka() {
-    echo_info "Verifying Strimzi operator and Kafka cluster prerequisites..."
+# Function to verify AMQ Streams and Kafka prerequisites
+verify_kafka() {
+    echo_info "Verifying AMQ Streams operator and Kafka cluster prerequisites..."
 
     # If user provided external Kafka bootstrap servers (env var or values file), skip verification
     if [ -n "$KAFKA_BOOTSTRAP_SERVERS" ]; then
@@ -258,23 +259,23 @@ verify_strimzi_and_kafka() {
     # Determine which namespace to check
     local check_namespace="${KAFKA_NAMESPACE:-kafka}"
 
-    # Check if Strimzi operator exists
-    local strimzi_ns=""
+    # Check if AMQ Streams operator exists
+    local kafka_ns=""
 
-    # Look for Strimzi operator in any namespace
-    strimzi_ns=$(kubectl get pods -A -l name=strimzi-cluster-operator -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null || echo "")
+    # Look for AMQ Streams operator in any namespace
+    kafka_ns=$(kubectl get pods -A -l strimzi.io/kind=cluster-operator -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null || echo "")
 
-    if [ -n "$strimzi_ns" ]; then
-        echo_success "Found Strimzi operator in namespace: $strimzi_ns"
-        check_namespace="$strimzi_ns"
+    if [ -n "$kafka_ns" ]; then
+        echo_success "Found AMQ Streams operator in namespace: $kafka_ns"
+        check_namespace="$kafka_ns"
     else
-        echo_error "Strimzi operator not found in cluster"
+        echo_error "AMQ Streams operator not found in cluster"
         echo_info ""
-        echo_info "Strimzi operator is required to manage Kafka clusters."
-        echo_info "Please deploy Strimzi before installing Cost Management On Premise:"
+        echo_info "AMQ Streams operator is required to manage Kafka clusters."
+        echo_info "Please deploy AMQ Streams before installing Cost Management On Premise:"
         echo_info ""
         echo_info "  cd $SCRIPT_DIR"
-        echo_info "  ./deploy-strimzi.sh"
+        echo_info "  ./deploy-kafka.sh"
         echo_info ""
         echo_info "Or point to an existing Kafka cluster via env var or values file:"
         echo_info "  export KAFKA_BOOTSTRAP_SERVERS=my-kafka-bootstrap.my-namespace:9092"
@@ -293,7 +294,7 @@ verify_strimzi_and_kafka() {
         echo_info "Please deploy a Kafka cluster before installing Cost Management On Premise:"
         echo_info ""
         echo_info "  cd $SCRIPT_DIR"
-        echo_info "  ./deploy-strimzi.sh"
+        echo_info "  ./deploy-kafka.sh"
         echo_info ""
         return 1
     fi
@@ -309,7 +310,7 @@ verify_strimzi_and_kafka() {
             echo_warning "Kafka cluster is not ready yet. Installation may fail if Kafka is not fully operational."
         fi
 
-        # Import Kafka bootstrap servers if available from deploy-strimzi.sh output
+        # Import Kafka bootstrap servers if available from deploy-kafka.sh output
         if [ -f /tmp/kafka-bootstrap-servers.env ]; then
             source /tmp/kafka-bootstrap-servers.env
             if [ -n "$KAFKA_BOOTSTRAP_SERVERS" ]; then
@@ -324,7 +325,7 @@ verify_strimzi_and_kafka() {
         fi
     fi
 
-    echo_success "Strimzi and Kafka verification completed"
+    echo_success "AMQ Streams and Kafka verification completed"
     return 0
 }
 
@@ -587,6 +588,8 @@ create_storage_credentials_secret() {
 #   S3_ENDPOINT              - Manual S3 endpoint override (e.g., "s3.test.example.com")
 #   S3_ACCESS_KEY            - Manual S3 access key override
 #   S3_SECRET_KEY            - Manual S3 secret key override
+#   S3_CLI_IMAGE             - Container image with AWS CLI (default: amazon/aws-cli:latest)
+#   S3_VERIFY_SSL            - Verify TLS certificates (default: false)
 create_s3_buckets() {
     echo_info "Creating S3 buckets..."
 
@@ -623,7 +626,13 @@ create_s3_buckets() {
 
     # Determine S3 endpoint and configuration
     # Priority: S3_ENDPOINT env var > NooBaa auto-detect > values.yaml fallback
-    local s3_url mc_insecure
+    local s3_url no_verify_ssl
+
+    # Default to skipping verification: most on-prem S3 backends use certs
+    # signed by the cluster service CA, which is not in the container's trust
+    # store.  Set S3_VERIFY_SSL=true when the endpoint has a publicly trusted
+    # certificate (e.g., AWS S3 or a corporate CA in a custom image).
+    local verify_ssl="${S3_VERIFY_SSL:-false}"
 
     if [ -n "${S3_ENDPOINT:-}" ]; then
         # PRIORITY 1: Explicit S3_ENDPOINT env var (S4, or any S3 backend)
@@ -631,17 +640,19 @@ create_s3_buckets() {
         local s3_ssl="${S3_USE_SSL:-true}"
         if [ "$s3_ssl" = "true" ]; then
             s3_url="https://${S3_ENDPOINT}:${s3_port}"
-            mc_insecure="--insecure"
+            [ "$verify_ssl" = "true" ] && no_verify_ssl="" || no_verify_ssl="--no-verify-ssl"
         else
             s3_url="http://${S3_ENDPOINT}:${s3_port}"
-            mc_insecure=""
+            no_verify_ssl=""
         fi
         echo_info "  ✓ Using S3_ENDPOINT: $s3_url"
     elif kubectl get crd noobaas.noobaa.io >/dev/null 2>&1 && \
        kubectl get noobaa -n openshift-storage >/dev/null 2>&1; then
         # PRIORITY 3: NooBaa auto-detection (ODF S3 backend)
+        # Internal service-serving certs are signed by the cluster CA which
+        # the AWS CLI container does not trust, so verification is skipped.
         s3_url="https://s3.openshift-storage.svc:443"
-        mc_insecure="--insecure"
+        no_verify_ssl="--no-verify-ssl"
         echo_info "  ✓ Detected: NooBaa S3 (via ODF)"
     else
         # PRIORITY 4: Read objectStorage settings from base values.yaml
@@ -656,10 +667,10 @@ create_s3_buckets() {
         if [ -n "$s3_ep" ]; then
             if [ "$s3_ssl" = "true" ]; then
                 s3_url="https://${s3_ep}:${s3_port}"
-                mc_insecure="--insecure"
+                [ "$verify_ssl" = "true" ] && no_verify_ssl="" || no_verify_ssl="--no-verify-ssl"
             else
                 s3_url="http://${s3_ep}:${s3_port}"
-                mc_insecure=""
+                no_verify_ssl=""
             fi
             echo_info "  ✓ Using S3 from values.yaml: $s3_url"
         else
@@ -696,19 +707,20 @@ create_s3_buckets() {
 
     echo_info "Creating buckets at ${s3_url}..."
 
-    # Use kubectl run --rm for one-shot bucket creation (auto-cleanup)
-    # Using UBI9 minimal image (available on OpenShift without Docker Hub rate limits)
-    # Real failures (connectivity, permissions) will cause non-zero exit
+    # Use kubectl run --rm for one-shot bucket creation (auto-cleanup).
+    # The image must contain the AWS CLI; override S3_CLI_IMAGE for air-gapped
+    # environments where the default image is mirrored to a private registry.
+    # Real failures (connectivity, permissions) will cause non-zero exit.
     #
     # IMPORTANT: --overrides must NOT include a "containers" array.
     # When --overrides contains "containers", kubectl's strategic merge patch
-    # clobbers the "args" generated from "-- sh -c ...", causing the pod to
-    # run the image default entrypoint (/bin/bash) which exits 0 immediately
-    # without executing any bucket creation commands.
+    # clobbers the command generated by --command, causing the pod to run
+    # the image default entrypoint which exits immediately without executing
+    # any bucket creation commands.
     # Pod-level securityContext is sufficient; OpenShift SCC (nonroot-v2)
     # automatically applies container-level security constraints.
-    # HOME=/tmp lets mc write its config without a dedicated volume mount.
-    local bucket_image="registry.access.redhat.com/ubi9/ubi-minimal:latest"
+    # HOME=/tmp lets the AWS CLI write its config without a dedicated volume mount.
+    local bucket_image="${S3_CLI_IMAGE:-amazon/aws-cli:latest}"
     local output
     if output=$(kubectl run bucket-setup --rm -i --restart=Never \
         --image="$bucket_image" \
@@ -724,23 +736,25 @@ create_s3_buckets() {
                 }
             }
         }' \
-        -- sh -c "
+        --command -- sh -c "
             set -e
             export HOME=/tmp
-            curl -sSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /tmp/mc && chmod +x /tmp/mc
-            export PATH=/tmp:\$PATH
-            mc alias set s3 ${s3_url} '${access_key}' '${secret_key}' ${mc_insecure}
+            export AWS_ACCESS_KEY_ID='${access_key}'
+            export AWS_SECRET_ACCESS_KEY='${secret_key}'
+            export AWS_DEFAULT_REGION=us-east-1  # required by CLI for SigV4 signing; value is ignored by non-AWS S3 backends
+            mkdir -p \$HOME/.aws
+            printf '[default]\ns3 =\n    addressing_style = path\n' > \$HOME/.aws/config
             for bucket in ${bucket_list}; do
-                if mc ls s3/\${bucket} ${mc_insecure} >/dev/null 2>&1; then
+                if aws s3api head-bucket --bucket \${bucket} --endpoint-url ${s3_url} ${no_verify_ssl} 2>/dev/null; then
                     echo \"ℹ️  Bucket \${bucket} already exists\"
                 else
-                    mc mb s3/\${bucket} ${mc_insecure}
+                    aws s3 mb s3://\${bucket} --endpoint-url ${s3_url} ${no_verify_ssl}
                     echo \"✅ Created bucket: \${bucket}\"
                 fi
             done
             echo ''
             echo 'Available buckets:'
-            mc ls s3 ${mc_insecure}
+            aws s3 ls --endpoint-url ${s3_url} ${no_verify_ssl}
         " 2>&1); then
         echo "$output"
         echo_success "S3 buckets ready"
@@ -1236,8 +1250,8 @@ cleanup() {
     done
 
     echo_info "Cleaning up Cost Management On Premise deployment..."
-    echo_info "Note: This will NOT remove Strimzi/Kafka. To clean them up separately:"
-    echo_info "  ./deploy-strimzi.sh cleanup"
+    echo_info "Note: This will NOT remove AMQ Streams/Kafka. To clean them up separately:"
+    echo_info "  ./deploy-kafka.sh cleanup"
     echo ""
 
     # Check if namespace exists
@@ -1709,8 +1723,6 @@ set_platform_config() {
     else
         echo_info "Using custom values file: $VALUES_FILE"
     fi
-
-    export KAFKA_ENVIRONMENT="ocp"
 }
 
 # Main execution
@@ -1932,9 +1944,9 @@ main() {
         echo_warning "Failed to create Django secret. Koku may not start correctly."
     fi
 
-    # Verify Strimzi operator and Kafka cluster are available
-    if ! verify_strimzi_and_kafka; then
-        echo_error "Strimzi/Kafka prerequisites not met"
+    # Verify AMQ Streams operator and Kafka cluster are available
+    if ! verify_kafka; then
+        echo_error "AMQ Streams/Kafka prerequisites not met"
         exit 1
     fi
 
@@ -2004,7 +2016,7 @@ case "${1:-}" in
         echo ""
         echo "Prerequisites:"
         echo "  Before running this installation, ensure you have:"
-        echo "  1. Strimzi operator and Kafka cluster deployed (run ./deploy-strimzi.sh)"
+        echo "  1. AMQ Streams operator and Kafka cluster deployed (run ./deploy-kafka.sh)"
         echo "     OR provide KAFKA_BOOTSTRAP_SERVERS for existing Kafka"
         echo "  2. For OpenShift with JWT auth: RHBK (optional, run ./deploy-rhbk.sh)"
         echo ""
@@ -2012,7 +2024,7 @@ case "${1:-}" in
         echo "  (none)              - Install Cost Management On Premise Helm chart"
         echo "  cleanup             - Delete Helm release and namespace (preserves PVs)"
         echo "  cleanup --complete  - Complete removal including Persistent Volumes"
-        echo "                        Note: Strimzi/Kafka are NOT removed. Use ./deploy-strimzi.sh cleanup"
+        echo "                        Note: AMQ Streams/Kafka are NOT removed. Use ./deploy-kafka.sh cleanup"
         echo "  status              - Show deployment status"
         echo "  health              - Run health checks"
         echo "  help                - Show this help message"
@@ -2026,8 +2038,8 @@ case "${1:-}" in
         echo "Uninstall/Reinstall Workflow:"
         echo "  # For clean reinstall with fresh data:"
         echo "  $0 cleanup --complete    # Remove everything including data volumes"
-        echo "  ./deploy-strimzi.sh cleanup  # Optional: remove Kafka/Strimzi too"
-        echo "  ./deploy-strimzi.sh      # Optional: reinstall Kafka/Strimzi"
+        echo "  ./deploy-kafka.sh cleanup  # Optional: remove AMQ Streams/Kafka too"
+        echo "  ./deploy-kafka.sh      # Optional: reinstall AMQ Streams/Kafka"
         echo "  $0                       # Fresh installation"
         echo ""
         echo "  # For reinstall preserving data:"
@@ -2054,6 +2066,7 @@ case "${1:-}" in
         echo "    S3_ENDPOINT           - S3 endpoint hostname (e.g., s3.openshift-storage.svc)"
         echo "    S3_PORT               - S3 port (default: 443)"
         echo "    S3_USE_SSL            - Whether to use TLS (default: true)"
+        echo "    S3_VERIFY_SSL         - Verify TLS certificates (default: false)"
         echo ""
         echo "  Option 3 (Automated): Let the script auto-detect"
         echo "    (OBC auto-detection)  - Detects ObjectBucketClaim 'ros-data-ceph' automatically"
@@ -2076,11 +2089,11 @@ case "${1:-}" in
         echo ""
         echo "Examples:"
         echo "  # Complete fresh installation"
-        echo "  ./deploy-strimzi.sh                           # Install Strimzi and Kafka first"
+        echo "  ./deploy-kafka.sh                           # Install AMQ Streams and Kafka first"
         echo "  USE_LOCAL_CHART=true LOCAL_CHART_PATH=../cost-onprem $0  # Then install Cost Management On Premise"
         echo ""
-        echo "  # Install from Helm repository (with Strimzi already deployed)"
-        echo "  ./deploy-strimzi.sh                           # Install prerequisites"
+        echo "  # Install from Helm repository (with AMQ Streams already deployed)"
+        echo "  ./deploy-kafka.sh                           # Install prerequisites"
         echo "  $0                                            # Install Cost Management On Premise from Helm repo"
         echo ""
         echo "  # Custom namespace and release name"
@@ -2104,23 +2117,23 @@ case "${1:-}" in
         echo "  - Automatically detects Kubernetes vs OpenShift"
         echo "  - Uses openshift-values.yaml for OpenShift if available"
         echo "  - Auto-detects optimal storage class for platform"
-        echo "  - Verifies Strimzi operator and Kafka cluster prerequisites"
+        echo "  - Verifies AMQ Streams operator and Kafka cluster prerequisites"
         echo ""
         echo "Deployment Scenarios:"
         echo "  1. Fresh deployment (recommended):"
-        echo "     ./deploy-strimzi.sh    # Deploy Strimzi and Kafka first"
+        echo "     ./deploy-kafka.sh    # Deploy AMQ Streams and Kafka first"
         echo "     $0                     # Deploy Cost Management On Premise"
         echo "     - Auto-detects platform (OpenShift or Kubernetes)"
-        echo "     - Verifies Strimzi/Kafka prerequisites"
+        echo "     - Verifies AMQ Streams/Kafka prerequisites"
         echo "     - Deploys Cost Management On Premise with platform-specific configuration"
         echo ""
         echo "  2. With existing Kafka (external):"
         echo "     KAFKA_BOOTSTRAP_SERVERS=kafka.example.com:9092 $0"
         echo "     - Uses provided Kafka bootstrap servers"
-        echo "     - Skips Strimzi/Kafka verification"
+        echo "     - Skips AMQ Streams/Kafka verification"
         echo ""
         echo "  3. Custom configuration:"
-        echo "     ./deploy-strimzi.sh"
+        echo "     ./deploy-kafka.sh"
         echo "     $0 --set key=value"
         echo "     - Override any Helm value"
         echo "     - Platform detection still applies"

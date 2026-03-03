@@ -68,7 +68,7 @@
 | **Total Memory Limit** | **~19.6Gi** | **30+ Gi** |
 | **S3 Object Storage** | **150 GB** | **300+ GB** |
 
-**Note:** These totals exclude Kafka (Strimzi), which adds ~7 pods and ~3.2 cores / ~7Gi memory.
+**Note:** These totals exclude Kafka (AMQ Streams), which adds ~7 pods and ~3.2 cores / ~7Gi memory.
 
 ### Required OpenShift Components
 
@@ -83,16 +83,17 @@ See the [Storage Configuration](configuration.md#storage-configuration) section 
 - **Credentials** with read/write access to the required buckets
 - **150GB+** for development (300GB+ for production)
 
-#### 2. Kafka / Strimzi
+#### 2. Kafka / AMQ Streams
 
 **Automated Deployment (Recommended):**
 ```bash
-# Deploy Strimzi operator and Kafka cluster
-./scripts/deploy-strimzi.sh
+# Deploy AMQ Streams operator and Kafka cluster (KRaft mode)
+./scripts/deploy-kafka.sh
 
 # Script will:
-# - Install Strimzi operator (version 0.45.1)
-# - Deploy Kafka cluster (version 3.8.0)
+# - Install AMQ Streams operator via OLM (channel: amq-streams-3.1.x)
+# - Deploy Kafka 4.1.0 cluster in KRaft mode (no ZooKeeper)
+# - Create separate controller and broker node pools with persistent JBOD storage
 # - Configure appropriate storage class
 # - Wait for cluster to be ready
 ```
@@ -100,22 +101,23 @@ See the [Storage Configuration](configuration.md#storage-configuration) section 
 **Customization:**
 ```bash
 # Custom namespace
-KAFKA_NAMESPACE=my-kafka ./scripts/deploy-strimzi.sh
+KAFKA_NAMESPACE=my-kafka ./scripts/deploy-kafka.sh
 
 # Custom Kafka cluster name
-KAFKA_CLUSTER_NAME=my-cluster ./scripts/deploy-strimzi.sh
+KAFKA_CLUSTER_NAME=my-cluster ./scripts/deploy-kafka.sh
 
 # For OpenShift with specific storage class
-STORAGE_CLASS=ocs-storagecluster-ceph-rbd ./scripts/deploy-strimzi.sh
+STORAGE_CLASS=ocs-storagecluster-ceph-rbd ./scripts/deploy-kafka.sh
 ```
 
 **Manual Verification:**
 ```bash
-# Check Strimzi operator
-oc get csv -A | grep strimzi
+# Check AMQ Streams operator
+oc get csv -A | grep amqstreams
 
-# Check Kafka cluster
+# Check Kafka cluster and node pools
 oc get kafka -n kafka
+oc get kafkanodepool -n kafka
 
 # Verify Kafka is ready
 oc wait kafka/cost-onprem-kafka --for=condition=Ready --timeout=300s -n kafka
@@ -193,7 +195,7 @@ jq --version
             └─────────────────────┘
 
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃  MESSAGE QUEUE (Kafka/Strimzi - deployed separately)                 ┃
+┃  MESSAGE QUEUE (Kafka/AMQ Streams - deployed separately)             ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
             ┌───────────────────────────────┐
@@ -738,7 +740,7 @@ oc exec -n $NAMESPACE $(oc get pod -n $NAMESPACE -l app=koku-worker -o name | he
 
 - **Project Repository:** https://github.com/project-koku
 - **Koku Documentation:** https://koku.readthedocs.io/
-- **Strimzi (Kafka):** https://strimzi.io/
+- **AMQ Streams (Kafka):** https://docs.redhat.com/en/documentation/red_hat_streams_for_apache_kafka/3.1
 
 ### Project Documentation
 

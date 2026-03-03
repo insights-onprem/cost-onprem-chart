@@ -639,9 +639,9 @@ database:
 # -----------------------------------------------------------------------------
 # Shared Infrastructure - Kafka
 # -----------------------------------------------------------------------------
-# IMPORTANT: Kafka/Strimzi deployment is NOT managed by this Helm chart!
-# The install-helm-chart.sh script installs Strimzi operator and creates Kafka cluster separately
-# This section only contains connection settings
+# IMPORTANT: Kafka deployment is NOT managed by this Helm chart!
+# The deploy-kafka.sh script installs AMQ Streams operator and creates a KRaft Kafka cluster separately.
+# This section only contains connection settings.
 kafka:
   # Bootstrap servers for Kafka cluster
   # This is auto-configured by the install script based on the Kafka cluster it creates

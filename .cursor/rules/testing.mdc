@@ -23,7 +23,7 @@ CI Step Registry: insights-onprem/cost-onprem-chart/e2e/
 
 ### What `deploy-test-cost-onprem.sh` Does
 1. Deploys RHBK (Keycloak) for JWT authentication
-2. Deploys Strimzi/Kafka
+2. Deploys AMQ Streams/Kafka
 3. Installs cost-onprem Helm chart
 4. Configures TLS
 5. **Runs pytest via `scripts/run-pytest.sh`** (CI mode - excludes extended tests)

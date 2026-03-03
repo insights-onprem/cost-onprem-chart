@@ -2,7 +2,7 @@
 Kafka Infrastructure Validation Tests.
 
 These tests validate the Kafka infrastructure required for Cost Management:
-1. Kafka cluster health (Strimzi-managed)
+1. Kafka cluster health (AMQ Streams-managed, KRaft mode)
 2. Kafka listener pod deployment
 3. Kafka connectivity from listener
 4. Required Kafka topics existence
@@ -222,7 +222,7 @@ class TestKafkaCluster:
         
         assert status["total"] > 0, (
             f"No Kafka pods found in namespace '{kafka_ns}'. "
-            "Ensure Strimzi Kafka is deployed."
+            "Ensure AMQ Streams Kafka is deployed."
         )
     
     def test_kafka_cluster_pods_running(self):

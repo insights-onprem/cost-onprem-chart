@@ -37,7 +37,7 @@ The following must be deployed **before** the chart:
 
 | Component | How to Deploy | Notes |
 |-----------|---------------|-------|
-| **Kafka (Strimzi)** | `./scripts/deploy-strimzi.sh` | Required for event streaming |
+| **Kafka (AMQ Streams)** | `./scripts/deploy-kafka.sh` | Required for event streaming |
 | **Keycloak (RHBK)** | `./scripts/deploy-rhbk.sh` | Required for JWT authentication |
 | **S4** | `./scripts/deploy-s4-test.sh cost-onprem` | S3 storage for dev/test |
 
@@ -46,8 +46,8 @@ The following must be deployed **before** the chart:
 ### 1. Deploy infrastructure
 
 ```bash
-# Deploy Strimzi (Kafka)
-./scripts/deploy-strimzi.sh
+# Deploy AMQ Streams (Kafka)
+./scripts/deploy-kafka.sh
 
 # Deploy Red Hat Build of Keycloak
 ./scripts/deploy-rhbk.sh
