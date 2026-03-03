@@ -30,6 +30,7 @@ IQE_IMAGE="${IQE_IMAGE:-quay.io/cloudservices/iqe-tests:cost-management}"
 KEEP_POD=false
 KEYCLOAK_SECRET_NS="${KEYCLOAK_SECRET_NS:-keycloak}"
 KEYCLOAK_SECRET_NAME="${KEYCLOAK_SECRET_NAME:-cost-management-auth-secret}"
+SYNC_PULL_SECRET=false
 
 show_help() {
     cat << EOF
@@ -42,6 +43,7 @@ Options:
     --marker EXPR        Pytest marker expression (default: cost_ocp_on_prem)
     --timeout SECONDS    Test timeout (default: 1800)
     --keep-pod           Don't delete the IQE pod after tests
+    --sync-pull-secret   Sync local container registry credentials to cluster
     --help               Show this help message
 
 Environment Variables:
@@ -58,6 +60,9 @@ Examples:
 
     # Keep pod for debugging
     ./scripts/run-iqe-tests.sh --keep-pod
+
+    # Sync local credentials to cluster (for local development)
+    ./scripts/run-iqe-tests.sh --sync-pull-secret
 EOF
 }
 
@@ -68,6 +73,7 @@ while [[ $# -gt 0 ]]; do
         --marker) IQE_MARKER="$2"; shift 2 ;;
         --timeout) IQE_TIMEOUT="$2"; shift 2 ;;
         --keep-pod) KEEP_POD=true; shift ;;
+        --sync-pull-secret) SYNC_PULL_SECRET=true; shift ;;
         --help) show_help; exit 0 ;;
         *) echo "Unknown option: $1"; show_help; exit 1 ;;
     esac
@@ -78,6 +84,78 @@ echo "Namespace: ${NAMESPACE}"
 echo "Marker: ${IQE_MARKER}"
 echo "Timeout: ${IQE_TIMEOUT}s"
 echo "Image: ${IQE_IMAGE}"
+
+# Validate container image pull access
+echo ""
+echo "Validating access to IQE container image..."
+
+# Extract registry from image (e.g., quay.io from quay.io/cloudservices/iqe-tests:cost-management)
+IQE_REGISTRY=$(echo "${IQE_IMAGE}" | cut -d'/' -f1)
+
+# Try to pull the image manifest to verify access without downloading the full image
+if command -v skopeo &>/dev/null; then
+    # Use skopeo if available (faster, doesn't download layers)
+    if ! skopeo inspect "docker://${IQE_IMAGE}" &>/dev/null; then
+        echo ""
+        echo "ERROR: Cannot access IQE container image: ${IQE_IMAGE}"
+        echo ""
+        echo "This may be due to:"
+        echo "  1. Missing authentication to ${IQE_REGISTRY}"
+        echo "  2. The image does not exist or tag is invalid"
+        echo "  3. Network connectivity issues"
+        echo ""
+        echo "To authenticate with ${IQE_REGISTRY}:"
+        if [[ "${IQE_REGISTRY}" == "quay.io" ]]; then
+            echo "  podman login quay.io"
+            echo "  # or"
+            echo "  docker login quay.io"
+            echo ""
+            echo "Note: The IQE image requires Red Hat internal access."
+            echo "Contact the Cost Management team for access to quay.io/cloudservices/iqe-tests"
+        else
+            echo "  podman login ${IQE_REGISTRY}"
+            echo "  # or"
+            echo "  docker login ${IQE_REGISTRY}"
+        fi
+        exit 1
+    fi
+    echo "✓ Image accessible via skopeo"
+elif command -v podman &>/dev/null; then
+    # Fall back to podman
+    if ! podman pull --quiet "${IQE_IMAGE}" &>/dev/null; then
+        echo ""
+        echo "ERROR: Cannot pull IQE container image: ${IQE_IMAGE}"
+        echo ""
+        echo "To authenticate with ${IQE_REGISTRY}:"
+        echo "  podman login ${IQE_REGISTRY}"
+        if [[ "${IQE_REGISTRY}" == "quay.io" ]]; then
+            echo ""
+            echo "Note: The IQE image requires Red Hat internal access."
+            echo "Contact the Cost Management team for access to quay.io/cloudservices/iqe-tests"
+        fi
+        exit 1
+    fi
+    echo "✓ Image accessible via podman"
+elif command -v docker &>/dev/null; then
+    # Fall back to docker
+    if ! docker pull --quiet "${IQE_IMAGE}" &>/dev/null; then
+        echo ""
+        echo "ERROR: Cannot pull IQE container image: ${IQE_IMAGE}"
+        echo ""
+        echo "To authenticate with ${IQE_REGISTRY}:"
+        echo "  docker login ${IQE_REGISTRY}"
+        if [[ "${IQE_REGISTRY}" == "quay.io" ]]; then
+            echo ""
+            echo "Note: The IQE image requires Red Hat internal access."
+            echo "Contact the Cost Management team for access to quay.io/cloudservices/iqe-tests"
+        fi
+        exit 1
+    fi
+    echo "✓ Image accessible via docker"
+else
+    echo "WARNING: Cannot validate image access (skopeo/podman/docker not found)"
+    echo "         The pod may fail to start if image pull fails in the cluster"
+fi
 
 # Get S3 credentials from the deployed chart
 S3_SECRET_NAME="${HELM_RELEASE_NAME}-storage-credentials"
@@ -122,6 +200,111 @@ fi
 
 if [ -z "$KEYCLOAK_CLIENT_SECRET" ]; then
     echo "WARNING: Could not extract Keycloak client secret. Authentication may fail."
+fi
+
+# Check if cluster has pull secret for the IQE image registry
+echo ""
+echo "Checking cluster pull secret configuration..."
+IQE_REGISTRY=$(echo "${IQE_IMAGE}" | cut -d'/' -f1)
+
+# Function to sync local credentials to cluster
+sync_local_credentials() {
+    local auth_file=""
+    
+    # Find local auth file (podman uses different location than docker)
+    if [ -f "${XDG_RUNTIME_DIR}/containers/auth.json" ]; then
+        auth_file="${XDG_RUNTIME_DIR}/containers/auth.json"
+    elif [ -f "$HOME/.docker/config.json" ]; then
+        auth_file="$HOME/.docker/config.json"
+    elif [ -f "$HOME/.config/containers/auth.json" ]; then
+        auth_file="$HOME/.config/containers/auth.json"
+    fi
+    
+    if [ -z "$auth_file" ]; then
+        echo "ERROR: No local container registry credentials found."
+        echo "       Expected locations:"
+        echo "         - \${XDG_RUNTIME_DIR}/containers/auth.json (podman)"
+        echo "         - \$HOME/.docker/config.json (docker)"
+        echo "         - \$HOME/.config/containers/auth.json (podman rootless)"
+        echo ""
+        echo "       Please authenticate first:"
+        echo "         podman login ${IQE_REGISTRY}"
+        echo "         # or"
+        echo "         docker login ${IQE_REGISTRY}"
+        return 1
+    fi
+    
+    # Check if the auth file contains credentials for the IQE registry
+    if ! grep -q "${IQE_REGISTRY}" "$auth_file" 2>/dev/null; then
+        echo "ERROR: Local credentials file does not contain ${IQE_REGISTRY}"
+        echo "       Please authenticate:"
+        echo "         podman login ${IQE_REGISTRY}"
+        return 1
+    fi
+    
+    echo "Found local credentials at: $auth_file"
+    
+    # Create or update the pull secret in the namespace
+    echo "Creating pull secret 'iqe-pull-secret' in namespace ${NAMESPACE}..."
+    kubectl create secret generic iqe-pull-secret \
+        --from-file=.dockerconfigjson="$auth_file" \
+        --type=kubernetes.io/dockerconfigjson \
+        -n "${NAMESPACE}" \
+        --dry-run=client -o yaml | kubectl apply -f -
+    
+    # Link the secret to the default service account
+    echo "Linking pull secret to default service account..."
+    kubectl patch serviceaccount default -n "${NAMESPACE}" \
+        -p '{"imagePullSecrets": [{"name": "iqe-pull-secret"}]}' 2>/dev/null || \
+    kubectl patch serviceaccount default -n "${NAMESPACE}" \
+        --type='json' -p='[{"op": "add", "path": "/imagePullSecrets/-", "value": {"name": "iqe-pull-secret"}}]' 2>/dev/null || true
+    
+    echo "✓ Local credentials synced to cluster"
+    return 0
+}
+
+# Check for pull secret in namespace
+PULL_SECRET_EXISTS=false
+if kubectl get secret -n "${NAMESPACE}" -o name 2>/dev/null | grep -q "pull-secret\|docker\|iqe-pull-secret"; then
+    PULL_SECRET_EXISTS=true
+fi
+
+# Check global pull secret (OpenShift)
+CLUSTER_HAS_REGISTRY_CREDS=false
+if kubectl get secret pull-secret -n openshift-config &>/dev/null; then
+    # Verify the registry is in the global pull secret
+    if kubectl get secret pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | base64 -d | grep -q "${IQE_REGISTRY}"; then
+        echo "✓ Cluster has pull credentials for ${IQE_REGISTRY} (global pull-secret)"
+        CLUSTER_HAS_REGISTRY_CREDS=true
+    fi
+fi
+
+# Check namespace-scoped secret
+if [ "$CLUSTER_HAS_REGISTRY_CREDS" = "false" ] && kubectl get secret iqe-pull-secret -n "${NAMESPACE}" &>/dev/null; then
+    echo "✓ Found iqe-pull-secret in namespace ${NAMESPACE}"
+    CLUSTER_HAS_REGISTRY_CREDS=true
+fi
+
+# Handle missing credentials
+if [ "$CLUSTER_HAS_REGISTRY_CREDS" = "false" ]; then
+    if [ "$SYNC_PULL_SECRET" = "true" ]; then
+        echo "Syncing local credentials to cluster (--sync-pull-secret)..."
+        if ! sync_local_credentials; then
+            exit 1
+        fi
+    else
+        echo ""
+        echo "WARNING: Cluster may not have pull credentials for ${IQE_REGISTRY}"
+        echo ""
+        echo "  If the pod fails with ImagePullBackOff, re-run with --sync-pull-secret"
+        echo "  to sync your local credentials to the cluster:"
+        echo ""
+        echo "    $0 --sync-pull-secret"
+        echo ""
+        echo "  This will create a namespace-scoped pull secret from your local"
+        echo "  podman/docker credentials."
+        echo ""
+    fi
 fi
 
 # Delete existing pod if present
@@ -233,6 +416,35 @@ kubectl wait --for=condition=Ready pod/iqe-cost-tests -n "${NAMESPACE}" --timeou
     echo "Pod status:"
     kubectl get pod iqe-cost-tests -n "${NAMESPACE}" -o wide || true
     echo ""
+    
+    # Check specifically for image pull errors
+    POD_STATUS=$(kubectl get pod iqe-cost-tests -n "${NAMESPACE}" -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}' 2>/dev/null || echo "")
+    if [[ "$POD_STATUS" == "ImagePullBackOff" ]] || [[ "$POD_STATUS" == "ErrImagePull" ]]; then
+        echo "=========================================="
+        echo "IMAGE PULL FAILURE DETECTED"
+        echo "=========================================="
+        echo ""
+        echo "The cluster cannot pull the IQE image: ${IQE_IMAGE}"
+        echo ""
+        echo "This typically means the cluster lacks credentials for ${IQE_REGISTRY}."
+        echo ""
+        echo "Quick fix - sync your local credentials to the cluster:"
+        echo ""
+        echo "  $0 --sync-pull-secret"
+        echo ""
+        echo "This requires you to be authenticated locally first:"
+        echo "  podman login ${IQE_REGISTRY}"
+        echo "  # or"
+        echo "  docker login ${IQE_REGISTRY}"
+        echo ""
+        if [[ "${IQE_REGISTRY}" == "quay.io" ]]; then
+            echo "Note: The IQE image (quay.io/cloudservices/iqe-tests) requires"
+            echo "      Red Hat internal access. Contact the Cost Management team"
+            echo "      for access to this repository."
+            echo ""
+        fi
+    fi
+    
     echo "Pod events:"
     kubectl describe pod iqe-cost-tests -n "${NAMESPACE}" | grep -A 20 "Events:" || true
     echo ""
