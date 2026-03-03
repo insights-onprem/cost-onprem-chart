@@ -87,6 +87,9 @@ spec:
               value: {{ .Values.ingress.kafka.topic | quote }}
             - name: INGRESS_KAFKAGROUPID
               value: {{ .Values.ingress.kafka.groupId | default "ingress" | quote }}
+            - name: KAFKA_SECURITY_PROTOCOL
+              value: {{ .Values.kafka.security.protocol | quote }}
+            {{- include "cost-onprem.kafka.securityEnv" . | nindent 12 }}
 
             # Authentication configuration
             # JWT is handled by centralized gateway, backend trusts X-Rh-Identity header
@@ -127,6 +130,7 @@ spec:
             - name: ca-bundle
               mountPath: /etc/ssl/certs/ca-bundle
               readOnly: true
+            {{- include "cost-onprem.kafka.tls.volumeMount" . | nindent 12 }}
       volumes:
         - name: aws-config
           configMap:
@@ -144,3 +148,4 @@ spec:
             name: {{ include "cost-onprem.fullname" . }}-service-ca
         - name: ca-bundle
           emptyDir: {}
+        {{- include "cost-onprem.kafka.tls.volume" . | nindent 8 }}

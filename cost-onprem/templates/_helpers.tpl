@@ -409,10 +409,88 @@ Kafka bootstrap servers resolver (supports both internal and external Kafka)
 {{- end }}
 
 {{/*
-Kafka security protocol resolver (supports both internal and external Kafka)
+=============================================================================
+Kafka SASL/TLS Helpers
+=============================================================================
+Reusable helpers for Kafka SASL authentication and TLS encryption.
+Used by Koku, ROS, and Ingress components.
+All values live under kafka.security.* in values.yaml.
 */}}
-{{- define "cost-onprem.kafka.securityProtocol" -}}
-{{- .Values.kafka.securityProtocol | default "PLAINTEXT" -}}
+
+{{/*
+Check if Kafka SASL authentication is enabled.
+Returns "true" when kafka.security.sasl.mechanism is set to a non-empty value.
+*/}}
+{{- define "cost-onprem.kafka.sasl.enabled" -}}
+{{- if and .Values.kafka.security.sasl .Values.kafka.security.sasl.mechanism (ne .Values.kafka.security.sasl.mechanism "") -}}
+true
+{{- else -}}
+false
+{{- end -}}
+{{- end }}
+
+{{/*
+Check if Kafka TLS encryption is enabled.
+Returns "true" when kafka.security.tls.caCertSecret is set to a non-empty value.
+*/}}
+{{- define "cost-onprem.kafka.tls.enabled" -}}
+{{- if and .Values.kafka.security.tls .Values.kafka.security.tls.caCertSecret (ne .Values.kafka.security.tls.caCertSecret "") -}}
+true
+{{- else -}}
+false
+{{- end -}}
+{{- end }}
+
+{{/*
+Kafka SASL/TLS environment variables shared across all Kafka-consuming components.
+Injects SASL credentials from secret and TLS CA cert path when configured.
+Usage: {{ include "cost-onprem.kafka.securityEnv" . | nindent 8 }}
+*/}}
+{{- define "cost-onprem.kafka.securityEnv" -}}
+{{- if eq (include "cost-onprem.kafka.sasl.enabled" .) "true" }}
+- name: KAFKA_SASL_MECHANISM
+  value: {{ .Values.kafka.security.sasl.mechanism | quote }}
+- name: KAFKA_SASL_USERNAME
+  valueFrom:
+    secretKeyRef:
+      name: {{ required "kafka.security.sasl.existingSecret is required when kafka.security.sasl.mechanism is set" .Values.kafka.security.sasl.existingSecret }}
+      key: username
+- name: KAFKA_SASL_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.kafka.security.sasl.existingSecret }}
+      key: password
+{{- end }}
+{{- if eq (include "cost-onprem.kafka.tls.enabled" .) "true" }}
+- name: KAFKA_SSL_CA_LOCATION
+  value: "/etc/kafka/certs/ca.crt"
+{{- end }}
+{{- end }}
+
+{{/*
+Kafka TLS CA certificate volume.
+Mounts the CA certificate secret as a volume when TLS is enabled.
+Usage: {{ include "cost-onprem.kafka.tls.volume" . | nindent 6 }}
+*/}}
+{{- define "cost-onprem.kafka.tls.volume" -}}
+{{- if eq (include "cost-onprem.kafka.tls.enabled" .) "true" }}
+- name: kafka-ca-cert
+  secret:
+    secretName: {{ .Values.kafka.security.tls.caCertSecret }}
+{{- end }}
+{{- end }}
+
+{{/*
+Kafka TLS CA certificate volumeMount.
+Mounts the CA certificate at /etc/kafka/certs/ when TLS is enabled.
+Usage: {{ include "cost-onprem.kafka.tls.volumeMount" . | nindent 8 }}
+*/}}
+{{- define "cost-onprem.kafka.tls.volumeMount" -}}
+{{- if eq (include "cost-onprem.kafka.tls.enabled" .) "true" }}
+- name: kafka-ca-cert
+  mountPath: /etc/kafka/certs
+  readOnly: true
+{{- end }}
 {{- end }}
 
 {{/*
