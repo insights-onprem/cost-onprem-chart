@@ -1,0 +1,38 @@
+---
+generators:
+  - OCPGenerator:
+      nodes:
+        - node:
+          node_name: tests-outlier_forecast
+          cpu_cores: 2
+          memory_gig: 2
+          resource_id: 40404040
+          namespaces:
+            test_outlier_forecast:
+              pods:
+                - pod:
+                  pod_name: outlier_forecast
+                  cpu_request: 2
+                  mem_request_gig: 2
+                  cpu_limit: 2
+                  mem_limit_gig: 2
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 2
+                  mem_usage_gig:
+                    full_period: 2
+                  labels: label_app:outlier_forecast
+              volumes:
+                - volume:
+                  volume_name: pvc_outlier_forecast
+                  storage_class: gp2
+                  volume_request_gig: 2
+                  labels: label_volume:outlier_forecast
+                  volume_claims:
+                  - volume_claim:
+                    volume_claim_name: data_outlier_forecast
+                    pod_name: outlier_forecast
+                    labels: label_volume:stor_outlier_forecast
+                    capacity_gig: 2
+                    volume_claim_usage_gig:
+                      full_period: 2

@@ -1,0 +1,320 @@
+---
+generators:
+  - OCPGenerator:
+      start_date: last_month
+      nodes:
+        - node:
+          node_name: qe-node
+          node_labels: label_node:meliodas
+          cpu_cores: 20
+          memory_gig: 18
+          namespaces:
+            openshift-qe_test:    # default_project
+              namespace_labels: proj_metric_2:flint
+              pods:
+                - pod:
+                  pod_name: qe
+                  cpu_request: 3
+                  mem_request_gig: 2
+                  cpu_limit: 3
+                  mem_limit_gig: 5
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 2
+                  mem_usage_gig:
+                    full_period: 1
+                  labels: label_app:king
+                - pod:
+                  pod_name: qe_2
+                  cpu_request: 1
+                  mem_request_gig: 4
+                  cpu_limit: 3
+                  mem_limit_gig: 6
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 3
+                  mem_usage_gig:
+                    full_period: 5
+                  labels: label_app:king
+              volumes:
+                - volume:
+                  volume_name: pvc-volume_1
+                  storage_class: gp2
+                  volume_request_gig: 25
+                  labels: label_volume:elizabeth
+                  volume_claims:
+                  - volume_claim:
+                    volume_claim_name: qe_data
+                    pod_name: qe
+                    labels: label_volume:elizabeth
+                    capacity_gig: 20
+                    volume_claim_usage_gig:
+                      full_period: 1
+            user-qe_test:
+              namespace_labels: proj_metric_1:flo
+              pods:
+                - pod:
+                  pod_name: user_qe
+                  cpu_request: 4
+                  mem_request_gig: 3
+                  cpu_limit: 4
+                  mem_limit_gig: 5
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 3
+                  mem_usage_gig:
+                    full_period: 2
+                  labels: label_app:zeldris
+              volumes:
+                - volume:
+                  volume_name: pvc-volume_6
+                  storage_class: gp2
+                  volume_request_gig: 20
+                  labels: label_volume:estarossa
+                  volume_claims:
+                    - volume_claim:
+                      volume_claim_name: user_qe_data
+                      pod_name: user_qe
+                      labels: label_volume:estarossa
+                      capacity_gig: 15
+                      volume_claim_usage_gig:
+                        full_period: 10
+            user-qe_new_test:
+              namespace_labels: proj_metric_2:flame
+              pods:
+                - pod:
+                  pod_name: user_new_qe
+                  cpu_request: 4
+                  mem_request_gig: 2
+                  cpu_limit: 4
+                  mem_limit_gig: 3
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 2
+                  mem_usage_gig:
+                    full_period: 1
+                  labels: label_app:drole
+            user-empty: # empty user project
+              namespace_labels: proj_metric_2:flame|proj_metric_1:faustino|proj_metric_3:fanni
+
+
+  - OCPGenerator:
+      start_date: last_month
+      nodes:
+        - node:
+          node_name: dev-node
+          node_labels: label_node:gowther
+          cpu_cores: 30
+          memory_gig: 25
+          namespaces:
+            kube-apiserver:  # default_project
+              namespace_labels: proj_metric_1:flo
+              pods:
+                - pod:
+                  pod_name: kube_dev
+                  cpu_request: 2
+                  mem_request_gig: 3
+                  cpu_limit: 3
+                  mem_limit_gig: 3
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 1
+                  mem_usage_gig:
+                    full_period: 2
+                  labels: label_app:diane|label_vm_kubevirt_io_name:firstrawcalcvm
+              volumes:
+                - volume:
+                  volume_name: pvc-volume_2
+                  storage_class: gp2
+                  volume_request_gig: 5
+                  labels: label_volume:pride
+                  volume_claims:
+                  - volume_claim:
+                    volume_claim_name: kube_dev_data
+                    pod_name: kube_dev
+                    labels: label_volume:pride
+                    capacity_gig: 5
+                    volume_claim_usage_gig:
+                      full_period: 1
+            user-dev:
+              namespace_labels: proj_metric_2:flint|proj_metric_3:no_charge|proj_metric_1:faben
+              pods:
+                - pod:
+                  pod_name: user_dev
+                  cpu_request: 4
+                  mem_request_gig: 3
+                  cpu_limit: 6
+                  mem_limit_gig: 7
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 5
+                  mem_usage_gig:
+                    full_period: 2
+                  labels: label_app:gloxinia
+              volumes:
+                - volume:
+                  volume_name: pvc-volume_7
+                  storage_class: gp2
+                  volume_request_gig: 20
+                  labels: label_volume:monspeet
+                  volume_claims:
+                    - volume_claim:
+                      volume_claim_name: user_dev_data
+                      pod_name: user_dev
+                      labels: label_volume:monspeet
+                      capacity_gig: 20
+                      volume_claim_usage_gig:
+                        full_period: 10
+            user-multi-node-proj-1:
+              namespace_labels: proj_metric_1:figan|proj_metric_2:faben
+              pods:
+                - pod:
+                  pod_name: user_multi_node_1_dev
+                  cpu_request: 1
+                  mem_request_gig: 4
+                  cpu_limit: 3
+                  mem_limit_gig: 4
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 2
+                  mem_usage_gig:
+                    full_period: 1
+                  labels: label_app:derieri
+            user-multi-node-proj-2:
+              pods:
+                - pod:
+                  pod_name: user_multi_node_2_dev
+                  cpu_request: 2
+                  mem_request_gig: 4
+                  cpu_limit: 5
+                  mem_limit_gig: 10
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 5
+                  mem_usage_gig:
+                    full_period: 3
+                  labels: label_app:derieri
+
+
+  - OCPGenerator:
+      start_date: last_month
+      nodes:
+        - node:
+          node_name: stage-node
+          node_labels: label_node:ban
+          cpu_cores: 23
+          memory_gig: 28
+          namespaces:
+            stage_test:
+              namespace_labels: proj_metric_1:flo|proj_metric_2:flint
+              pods:
+                - pod:
+                  pod_name: stage
+                  cpu_request: 2
+                  mem_request_gig: 1
+                  cpu_limit: 3
+                  mem_limit_gig: 3
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 1
+                  mem_usage_gig:
+                    full_period: 2
+                  labels: label_app:merlin|label_vm_kubevirt_io_name:secondrawcalcvm
+              volumes:
+                - volume:
+                  volume_name: pvc-volume_3
+                  storage_class: gp2
+                  volume_request_gig: 25
+                  labels: label_volume:escanor
+                  volume_claims:
+                  - volume_claim:
+                    volume_claim_name: stage_data
+                    pod_name: stage
+                    labels: label_volume:escanor
+                    capacity_gig: 20
+                    volume_claim_usage_gig:
+                      full_period: 1
+                - volume:
+                  volume_name: pvc-volume_4
+                  storage_class: gp2
+                  volume_request_gig: 22
+                  labels: label_volume:escanor2
+                  volume_claims:
+                  - volume_claim:
+                    volume_claim_name: stage_data_2
+                    pod_name: stage
+                    labels: label_volume:escanor2
+                    capacity_gig: 20
+                    volume_claim_usage_gig:
+                      full_period: 10
+                - volume:
+                  volume_name: pvc-volume_5
+                  storage_class: gp2
+                  volume_request_gig: 4
+                  labels: label_volume:escanor3
+                  volume_claims:
+                  - volume_claim:
+                    volume_claim_name: stage_data_3
+                    pod_name: stage
+                    labels: label_volume:escanor3
+                    capacity_gig: 3
+                    volume_claim_usage_gig:
+                      full_period: 1
+            user-multi-node-proj-1:
+              namespace_labels: proj_metric_1:figan|proj_metric_2:faben
+              pods:
+                - pod:
+                  pod_name: user_multi_node_1_stage
+                  cpu_request: 6
+                  mem_request_gig: 5
+                  cpu_limit: 10
+                  mem_limit_gig: 7
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 4
+                  mem_usage_gig:
+                    full_period: 2
+                  labels: label_app:sariel
+              volumes:
+                - volume:
+                  volume_name: pvc-volume_8
+                  storage_class: gp2
+                  volume_request_gig: 20
+                  labels: label_volume:monspeet
+                  volume_claims:
+                    - volume_claim:
+                      volume_claim_name: user_multi-node-proj_data_1
+                      pod_name: user_multi_node_1_stage
+                      labels: label_volume:tarmiel
+                      capacity_gig: 20
+                      volume_claim_usage_gig:
+                        full_period: 10
+            user-multi-node-proj-2:
+              pods:
+                - pod:
+                  pod_name: user_multi_node_2_stage
+                  cpu_request: 1
+                  mem_request_gig: 3
+                  cpu_limit: 3
+                  mem_limit_gig: 3
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 2
+                  mem_usage_gig:
+                    full_period: 1
+                  labels: label_app:mael
+            stage_test_2:
+              namespace_labels: proj_metric_1:flo|proj_metric_2:faben
+              pods:
+                - pod:
+                  pod_name: stage_test_2
+                  cpu_request: 3
+                  mem_request_gig: 7
+                  cpu_limit: 8
+                  mem_limit_gig: 10
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 7
+                  mem_usage_gig:
+                    full_period: 9
+                  labels: label_app:griamore

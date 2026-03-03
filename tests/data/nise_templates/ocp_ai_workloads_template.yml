@@ -1,0 +1,386 @@
+---
+
+generators:
+
+  # Utilization tests (short time periods)
+  - OCPGenerator:
+      start_date: "{{node_a30_start_date}}"
+      end_date: "{{node_a30_end_date}}"
+      nodes:
+        - node:
+          node_name: node_a30
+          node_labels: label_node_name:node_a30|label_qe-source:ai_workloads|label_tier:node
+          cpu_cores: 5
+          memory_gig: 16
+          namespaces:
+            ns_inference:
+              namespace_labels: project_name:ns_inference
+              pods:
+                - pod:
+                  pod_name: inference_pod
+                  cpu_request: 15
+                  mem_request_gig: 7
+                  cpu_limit: 8
+                  mem_limit_gig: 10
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 12
+                  mem_usage_gig:
+                    full_period: 9
+                  labels: label_app:ns_inference
+                  gpus:
+                    - gpu_model: A30
+                      gpu_memory_capacity_mib: 16384
+                    - gpu_model: A30
+                      gpu_memory_capacity_mib: 16384
+
+  - OCPGenerator:
+      start_date: "{{node_v100_start_date}}"
+      end_date: "{{node_v100_end_date}}"
+      nodes:
+        - node:
+          node_name: node_v100
+          node_labels: label_node_name:node_v100|label_qe-source:ai_workloads|label_tier:node|nvidia_com_gpu_count:4|nvidia_com_gpu_product:V100|nvidia_com_gpu_present:True|nvidia_com_gpu_replicas:4
+          cpu_cores: 5
+          memory_gig: 16
+          namespaces:
+            ns_training_v100:
+              namespace_labels: project_name:ns_training_v100
+              pods:
+                - pod:
+                  pod_name: training_v100_pod
+                  cpu_request: 15
+                  mem_request_gig: 7
+                  cpu_limit: 8
+                  mem_limit_gig: 10
+                  pod_seconds: 1800
+                  cpu_usage:
+                    full_period: 12
+                  mem_usage_gig:
+                    full_period: 9
+                  labels: label_app:ns_training_v100
+                  gpus:
+                    - gpu_model: V100
+                      gpu_memory_capacity_mib: 16384
+                    - gpu_model: V100
+                      gpu_memory_capacity_mib: 16384
+
+  - OCPGenerator:
+      start_date: "{{node_h100_start_date}}"
+      end_date: "{{node_h100_end_date}}"
+      nodes:
+        - node:
+          node_name: node_h100
+          node_labels: label_node_name:node_h100|label_qe-source:ai_workloads|label_tier:node|nvidia_com_gpu_count:4|nvidia_com_gpu_product:H100|nvidia_com_gpu_present:True|nvidia_com_gpu_replicas:4
+          cpu_cores: 5
+          memory_gig: 16
+          namespaces:
+            ns_training_h100:
+              namespace_labels: project_name:ns_training_h100
+              pods:
+                - pod:
+                  pod_name: training_h100_pod
+                  cpu_request: 15
+                  mem_request_gig: 7
+                  cpu_limit: 8
+                  mem_limit_gig: 10
+                  pod_seconds: 1600
+                  cpu_usage:
+                    full_period: 12
+                  mem_usage_gig:
+                    full_period: 9
+                  labels: label_app:ns_training_h100
+                  gpus:
+                    - gpu_model: H100
+                      gpu_memory_capacity_mib: 16384
+                    - gpu_model: H100
+                      gpu_memory_capacity_mib: 16384
+                    - gpu_model: H100
+                      gpu_memory_capacity_mib: 16384
+
+
+  # T4 node with 2 namespaces each own with different hourly usages
+  - OCPGenerator:
+      start_date: last_month
+      nodes:
+        - node:
+          node_name: node_t4
+          node_labels: label_node_name:node_t4|label_qe-source:ai_workloads|label_tier:node
+          cpu_cores: 20
+          memory_gig: 32
+          namespaces:
+            ns_deployment:
+              namespace_labels: project_name:ns_deployment
+              pods:
+                - pod:
+                  pod_name: deployment_pod
+                  cpu_request: 15
+                  mem_request_gig: 7
+                  cpu_limit: 8
+                  mem_limit_gig: 10
+                  pod_seconds: 3200
+                  cpu_usage:
+                    full_period: 12
+                  mem_usage_gig:
+                    full_period: 9
+                  labels: label_app:ns_deployment
+                  gpus:
+                    - gpu_model: "Tesla_T4"
+                      gpu_memory_capacity_mib: 16384
+                    - gpu_model: "Tesla_T4"
+                      gpu_memory_capacity_mib: 16384
+            ns_workbench:
+              namespace_labels: project_name:ns_workbench
+              pods:
+                - pod:
+                  pod_name: workbench_pod
+                  cpu_request: 15
+                  mem_request_gig: 7
+                  cpu_limit: 8
+                  mem_limit_gig: 10
+                  pod_seconds: 3400
+                  cpu_usage:
+                    full_period: 12
+                  mem_usage_gig:
+                    full_period: 9
+                  labels: label_app:ns_workbench
+                  gpus:
+                    - gpu_model: "Tesla_T4"
+                      gpu_memory_capacity_mib: 16384
+                    - gpu_model: "Tesla_T4"
+                      gpu_memory_capacity_mib: 16384
+                    - gpu_model: "Tesla_T4"
+                      gpu_memory_capacity_mib: 16384
+
+
+  # A10 node with 2 namespaces
+  - OCPGenerator:
+      start_date: last_month
+      nodes:
+        - node:
+          node_name: node_a10_1
+          node_labels: label_node_name:node_a10_1|label_qe-source:ai_workloads|label_tier:node
+          cpu_cores: 20
+          memory_gig: 32
+          namespaces:
+            ns_ml_ops:
+              namespace_labels: project_name:ns_ml_ops
+              pods:
+                - pod:
+                  pod_name: ml_ops_pod
+                  cpu_request: 15
+                  mem_request_gig: 7
+                  cpu_limit: 8
+                  mem_limit_gig: 10
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 12
+                  mem_usage_gig:
+                    full_period: 9
+                  labels: label_app:ns_ml_ops
+                  gpus:
+                    - gpu_model: A10
+                      gpu_memory_capacity_mib: 16384
+            ns_jupyter:
+              namespace_labels: project_name:ns_jupyter
+              pods:
+                - pod:
+                  pod_name: jupyter_pod
+                  cpu_request: 15
+                  mem_request_gig: 7
+                  cpu_limit: 8
+                  mem_limit_gig: 10
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 12
+                  mem_usage_gig:
+                    full_period: 9
+                  labels: label_app:ns_jupyter
+                  gpus:
+                    - gpu_model: A10
+                      gpu_memory_capacity_mib: 24576
+                    - gpu_model: A10
+                      gpu_memory_capacity_mib: 24576
+
+    # Second A10 node with same ns_ml_ops project (tests project collapsing)
+  - OCPGenerator:
+      start_date: last_month
+      nodes:
+        - node:
+          node_name: node_a10_2
+          node_labels: label_node_name:node_a10_2|label_qe-source:ai_workloads|label_tier:node
+          cpu_cores: 20
+          memory_gig: 32
+          namespaces:
+            ns_ml_ops:
+              namespace_labels: project_name:ns_ml_ops
+              pods:
+                - pod:
+                  pod_name: ml_ops_pod_2
+                  cpu_request: 15
+                  mem_request_gig: 7
+                  cpu_limit: 8
+                  mem_limit_gig: 10
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 12
+                  mem_usage_gig:
+                    full_period: 9
+                  labels: label_app:ns_ml_ops
+                  gpus:
+                    - gpu_model: A10
+                      gpu_memory_capacity_mib: 16384
+                    - gpu_model: A10
+                      gpu_memory_capacity_mib: 16384
+
+    # Third A10 node with ns_deployment namespace (tests ns with different GPUs)
+  - OCPGenerator:
+      start_date: last_month
+      nodes:
+        - node:
+          node_name: node_a10_3
+          node_labels: label_node_name:node_a10_3|label_qe-source:ai_workloads|label_tier:node
+          cpu_cores: 20
+          memory_gig: 32
+          namespaces:
+            ns_deployment:
+              namespace_labels: project_name:ns_deployment
+              pods:
+                - pod:
+                  pod_name: deployment_pod_2
+                  cpu_request: 15
+                  mem_request_gig: 7
+                  cpu_limit: 8
+                  mem_limit_gig: 10
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 12
+                  mem_usage_gig:
+                    full_period: 9
+                  labels: label_app:ns_deployment
+                  gpus:
+                    - gpu_model: A10
+                      gpu_memory_capacity_mib: 16384
+
+
+    # Cluster 2 L40S nodes (tests same GPU in other cluster)
+  - OCPGenerator:
+      start_date: last_month
+      nodes:
+        - node:
+          node_name: node_l40s_1
+          node_labels: label_node_name:node_l40s_1|label_qe-source:ai_workloads|label_tier:node|nvidia_com_gpu_count:8|nvidia_com_gpu_product:L40S|nvidia_com_gpu_present:True|nvidia_com_gpu_replicas:8
+          cpu_cores: 20
+          memory_gig: 32
+          namespaces:
+            ns_training_c2:
+              namespace_labels: project_name:ns_training_c2
+              pods:
+                - pod:
+                  pod_name: training_c2_pod
+                  cpu_request: 15
+                  mem_request_gig: 7
+                  cpu_limit: 8
+                  mem_limit_gig: 10
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 12
+                  mem_usage_gig:
+                    full_period: 9
+                  labels: label_app:ns_training_c2
+                  gpus:
+                    - gpu_model: L40S
+                      gpu_memory_capacity_mib: 81920
+                    - gpu_model: L40S
+                      gpu_memory_capacity_mib: 81920
+                    - gpu_model: L40S
+                      gpu_memory_capacity_mib: 81920
+            ns_deployment:
+              namespace_labels: project_name:ns_deployment
+              pods:
+                - pod:
+                  pod_name: deployment_pod_3
+                  cpu_request: 16
+                  mem_request_gig: 4
+                  cpu_limit: 8
+                  mem_limit_gig: 10
+                  pod_seconds: 3200
+                  cpu_usage:
+                    full_period: 11
+                  mem_usage_gig:
+                    full_period: 8
+                  labels: label_app:ns_deployment
+                  gpus:
+                    - gpu_model: L40S
+                      gpu_memory_capacity_mib: 81920
+                    - gpu_model: L40S
+                      gpu_memory_capacity_mib: 81920
+                    - gpu_model: L40S
+                      gpu_memory_capacity_mib: 81920
+                    - gpu_model: L40S
+                      gpu_memory_capacity_mib: 81920
+
+
+  # This node has the same ns than node_l40s_1 and same GPU
+  - OCPGenerator:
+      start_date: last_month
+      nodes:
+        - node:
+          node_name: node_l40s_2
+          node_labels: label_node_name:node_l40s_2|label_qe-source:ai_workloads|label_tier:node|nvidia_com_gpu_count:3|nvidia_com_gpu_product:L40S|nvidia_com_gpu_present:True|nvidia_com_gpu_replicas:3
+          cpu_cores: 20
+          memory_gig: 32
+          namespaces:
+            ns_training_c2:
+              namespace_labels: project_name:ns_training_c2
+              pods:
+                - pod:
+                  pod_name: training_c2_pod_2
+                  cpu_request: 15
+                  mem_request_gig: 7
+                  cpu_limit: 8
+                  mem_limit_gig: 10
+                  pod_seconds: 3500
+                  cpu_usage:
+                    full_period: 12
+                  mem_usage_gig:
+                    full_period: 9
+                  labels: label_app:ns_training_c2
+                  gpus:
+                    - gpu_model: L40S
+                      gpu_memory_capacity_mib: 81920
+                    - gpu_model: L40S
+                      gpu_memory_capacity_mib: 81920
+
+
+  - OCPGenerator:
+      start_date: last_month
+      nodes:
+        - node:
+          node_name: node_a30_full_range_lifespan
+          node_labels: label_node_name:node_a30_full_lifespan|label_qe-source:ai_workloads|label_tier:node|nvidia_com_gpu_count:3|nvidia_com_gpu_product:A30|nvidia_com_gpu_present:True|nvidia_com_gpu_replicas:3
+          cpu_cores: 5
+          memory_gig: 16
+          namespaces:
+            ns_deployment:
+              namespace_labels: project_name:ns_deployment
+              pods:
+                - pod:
+                  pod_name: deployment_pod_4
+                  cpu_request: 15
+                  mem_request_gig: 7
+                  cpu_limit: 8
+                  mem_limit_gig: 10
+                  pod_seconds: 2800
+                  cpu_usage:
+                    full_period: 12
+                  mem_usage_gig:
+                    full_period: 9
+                  labels: label_app:ns_deployment
+                  gpus:
+                    - gpu_model: A30
+                      gpu_memory_capacity_mib: 16384
+                    - gpu_model: A30
+                      gpu_memory_capacity_mib: 16384
+                    - gpu_model: A30
+                      gpu_memory_capacity_mib: 16384

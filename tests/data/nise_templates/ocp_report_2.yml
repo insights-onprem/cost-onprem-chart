@@ -1,0 +1,40 @@
+---
+generators:
+  - OCPGenerator:
+      start_date: last_month
+      nodes:
+        - node:
+          node_name: tests-quebec
+          node_labels: label_node:lima
+          cpu_cores: 5
+          memory_gig: 5
+          resource_id: 22225555
+          namespaces:
+            test_quebec:
+              pods:
+                - pod:
+                  pod_name: quebec
+                  cpu_request: 5
+                  mem_request_gig: 5
+                  cpu_limit: 5
+                  mem_limit_gig: 5
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 5
+                  mem_usage_gig:
+                    full_period: 5
+                  labels: label_app:quebec|label_qe:roll
+              volumes:
+                - volume:
+                  volume_name: pvc-volume_1
+                  storage_class: gp2
+                  volume_request_gig: 5
+                  labels: label_volume:quebec
+                  volume_claims:
+                  - volume_claim:
+                    volume_claim_name: data_quebec
+                    pod_name: quebec
+                    labels: label_volume:stor_quebec|label_volqe:stor_qe
+                    capacity_gig: 5
+                    volume_claim_usage_gig:
+                      full_period: 5

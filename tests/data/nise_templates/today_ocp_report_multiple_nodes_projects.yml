@@ -1,0 +1,73 @@
+---
+generators:
+  - OCPGenerator:
+      start_date: today
+      nodes:
+        - node:
+          node_name: node_1
+          cpu_cores: 4
+          memory_gig: 16
+          resource_id: 89799558
+          namespaces:
+            project_1:
+              pods:
+                - pod:
+                  pod_name: pod_1
+                  cpu_request: 5
+                  mem_request_gig: 2
+                  cpu_limit: 5
+                  mem_limit_gig: 2
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 1
+                  mem_usage_gig:
+                    full_period: 2
+                  labels: label_key1:label_value1|label_key2:label_value2
+            project_2:
+              pods:
+                - pod:
+                  pod_name: pod_2
+                  cpu_request: 10
+                  mem_request_gig: 4
+                  cpu_limit: 10
+                  mem_limit_gig: 4
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 1
+                  mem_usage_gig:
+                    full_period: 2
+                  labels: label_key3:label_value3|label_key4:label_value4
+        - node:
+          node_name: node_2
+          cpu_cores: 4
+          memory_gig: 16
+          resource_id: 89799448
+          namespaces:
+            project_2:
+              pods:
+                - pod:
+                  pod_name: pod_3
+                  cpu_request: 5
+                  mem_request_gig: 2
+                  cpu_limit: 5
+                  mem_limit_gig: 2
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 1
+                  mem_usage_gig:
+                    full_period: 2
+                  labels: label_key1:label_value1|label_key2:label_value2
+            project_4:
+              pods:
+                - pod:
+                  pod_name: pod_4
+                  cpu_request: 10
+                  mem_request_gig: 4
+                  cpu_limit: 10
+                  mem_limit_gig: 4
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 1
+                  mem_usage_gig:
+                    full_period: 2
+                  labels: label_key3:label_value3|label_key4:label_value4
