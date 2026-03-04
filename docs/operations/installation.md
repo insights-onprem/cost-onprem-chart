@@ -115,7 +115,7 @@ The script deploys a unified chart containing all components:
 
 **Note**: JWT authentication is automatically enabled on OpenShift.
 
-> **BYOI (Bring Your Own Infrastructure):** When `database.deploy: false` is set in your values file, the script skips PostgreSQL credential creation and expects you to have pre-created the database credentials secret. See [External Infrastructure (BYOI)](configuration.md#external-infrastructure-byoi) for details.
+> **BYOI (Bring Your Own Infrastructure):** When using an external database, set `database.secretName` to your pre-created credentials secret. The script skips credential generation when `database.secretName` is set. If `database.secretName` is empty (default), the script always creates `cost-onprem-db-credentials` with random passwords. See [External Infrastructure (BYOI)](configuration.md#external-infrastructure-byoi) for details.
 ---
 
 ### Method 2: Direct Helm Installation

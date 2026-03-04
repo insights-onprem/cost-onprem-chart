@@ -1874,12 +1874,15 @@ main() {
     echo_info "════════════════════════════════════════════════════════════"
     echo ""
 
-    # Create database credentials secret (skip when using external database)
-    local database_deploy
-    database_deploy=$(get_helm_value "database.deploy" "false")
-    if [ "$database_deploy" = "false" ]; then
-        echo_info "Skipping database credentials creation (database.deploy=false, using external database)"
-        echo_info "Ensure the database credentials secret already exists in namespace '$NAMESPACE'"
+    # Create database credentials secret
+    # Skip only when the user provides their own secret via database.secretName.
+    # The secret is needed by ALL application components (Koku, ROS, etc.)
+    # regardless of whether the database is bundled (database.deploy=true)
+    # or external (database.deploy=false / BYOI).
+    local db_secret_name
+    db_secret_name=$(get_helm_value "database.secretName" "")
+    if [ -n "$db_secret_name" ]; then
+        echo_info "Skipping database credentials creation (using user-provided secret: $db_secret_name)"
     else
         if ! create_database_credentials_secret; then
             echo_error "Failed to create database credentials. Cannot proceed with installation."
