@@ -50,18 +50,18 @@ data:
     -- ========================================
 
     -- ROS Database
-    SELECT 'CREATE DATABASE {{ .Values.databases.ros.name }}'
-    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{{ .Values.databases.ros.name }}')
+    SELECT 'CREATE DATABASE {{ .Values.global.databases.ros.name }}'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{{ .Values.global.databases.ros.name }}')
     \gexec
 
     -- Kruize Database
-    SELECT 'CREATE DATABASE {{ .Values.databases.kruize.name }}'
-    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{{ .Values.databases.kruize.name }}')
+    SELECT 'CREATE DATABASE {{ .Values.global.databases.kruize.name }}'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{{ .Values.global.databases.kruize.name }}')
     \gexec
 
     -- Koku Database
-    SELECT 'CREATE DATABASE {{ .Values.databases.koku.name }}'
-    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{{ .Values.databases.koku.name }}')
+    SELECT 'CREATE DATABASE {{ .Values.global.databases.koku.name }}'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{{ .Values.global.databases.koku.name }}')
     \gexec
 
     -- ========================================
@@ -69,17 +69,17 @@ data:
     -- ========================================
 
     -- ROS Database - owned by $ROS_USER
-    GRANT ALL PRIVILEGES ON DATABASE {{ .Values.databases.ros.name }} TO $ROS_USER;
-    ALTER DATABASE {{ .Values.databases.ros.name }} OWNER TO $ROS_USER;
+    GRANT ALL PRIVILEGES ON DATABASE {{ .Values.global.databases.ros.name }} TO $ROS_USER;
+    ALTER DATABASE {{ .Values.global.databases.ros.name }} OWNER TO $ROS_USER;
 
     -- Kruize Database - owned by $KRUIZE_USER
-    GRANT ALL PRIVILEGES ON DATABASE {{ .Values.databases.kruize.name }} TO $KRUIZE_USER;
-    ALTER DATABASE {{ .Values.databases.kruize.name }} OWNER TO $KRUIZE_USER;
+    GRANT ALL PRIVILEGES ON DATABASE {{ .Values.global.databases.kruize.name }} TO $KRUIZE_USER;
+    ALTER DATABASE {{ .Values.global.databases.kruize.name }} OWNER TO $KRUIZE_USER;
 
     -- Koku Database - owned by $KOKU_USER
-    GRANT ALL PRIVILEGES ON DATABASE {{ .Values.databases.koku.name }} TO $KOKU_USER;
-    ALTER DATABASE {{ .Values.databases.koku.name }} OWNER TO $KOKU_USER;
+    GRANT ALL PRIVILEGES ON DATABASE {{ .Values.global.databases.koku.name }} TO $KOKU_USER;
+    ALTER DATABASE {{ .Values.global.databases.koku.name }} OWNER TO $KOKU_USER;
 
     -- Enable pg_stat_statements extension on koku database
-    \c {{ .Values.databases.koku.name }}
+    \c {{ .Values.global.databases.koku.name }}
     CREATE EXTENSION IF NOT EXISTS pg_stat_statements;

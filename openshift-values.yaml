@@ -9,7 +9,7 @@
 # - CI optimization hints to reduce Helm API lookups
 #
 # For production deployments, use larger values:
-#   --set database.ros.storage.size=100Gi
+#   --set cost-onprem-database.storage.size=100Gi
 #   --set resources.kruize.requests.memory=2Gi
 
 global:

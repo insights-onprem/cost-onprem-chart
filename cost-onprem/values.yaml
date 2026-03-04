@@ -19,6 +19,9 @@ fullnameOverride: ""
 # Global Configuration (applies to all components)
 # -----------------------------------------------------------------------------
 global:
+  # Parent chart name (passed to subcharts for naming consistency)
+  parentChartName: "cost-onprem"
+
   # Container image settings
   pullPolicy: IfNotPresent
   imagePullSecrets: []
@@ -31,6 +34,16 @@ global:
 
   # Volume mode for PVCs (Filesystem or Block)
   volumeMode: "Filesystem"
+
+  # Database names (single source of truth for parent chart and database subchart)
+  # Naming convention: costonprem_<service> (underscores for PostgreSQL compatibility)
+  databases:
+    ros:
+      name: costonprem_ros
+    kruize:
+      name: costonprem_kruize
+    koku:
+      name: costonprem_koku
 
   # Init container images (shared across all services)
   # Using alternative registries to avoid docker.io rate limits
@@ -605,21 +618,17 @@ database:
   # Override to use a different secret name (must exist before Helm install)
   secretName: ""  # Empty = use default: <release-name>-db-credentials
 
-  # ROS Database Configuration
+  # Per-service database credentials
+  # Database names are defined in global.databases (single source of truth)
   ros:
-    name: costonprem_ros
     user: ros_user
     password: ros_password
 
-  # Kruize Database Configuration
   kruize:
-    name: costonprem_kruize
     user: kruize_user
     password: kruize_password
 
-  # Koku Database Configuration
   koku:
-    name: costonprem_koku
     user: koku_user
     password: koku_password
 
@@ -740,14 +749,6 @@ cost-onprem-database:
     size: 30Gi
 
   secretName: ""
-
-  databases:
-    ros:
-      name: costonprem_ros
-    kruize:
-      name: costonprem_kruize
-    koku:
-      name: costonprem_koku
 
   probes:
     initialDelaySeconds: 30

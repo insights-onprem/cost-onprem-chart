@@ -119,7 +119,8 @@ helm install cost-onprem cost-onprem-${VERSION}.tgz -n cost-onprem --create-name
 # Use local chart source
 USE_LOCAL_CHART=true LOCAL_CHART_PATH=../cost-onprem ./install-helm-chart.sh
 
-# Or direct Helm installation
+# Or direct Helm installation (build subchart dependencies first)
+helm dependency build cost-onprem
 helm install cost-onprem ./cost-onprem -n cost-onprem --create-namespace
 ```
 
@@ -233,7 +234,7 @@ export NAMESPACE=my-namespace
 cat > my-values.yaml << EOF
 global:
   storageClass: "ocs-storagecluster-ceph-rbd"
-database:
+cost-onprem-database:
   storage:
     size: 20Gi
 resources:

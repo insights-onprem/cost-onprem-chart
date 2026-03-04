@@ -107,7 +107,7 @@ parse_s3_namespace() {
 }
 
 # Read a value from the user-supplied Helm values file using yq
-# Usage: get_helm_value "database.deploy" "true"
+# Usage: get_helm_value "database.deploy" "false"
 # Returns the value from VALUES_FILE if set, otherwise returns the default
 get_helm_value() {
     local key="$1"
@@ -873,6 +873,13 @@ deploy_helm_chart() {
 
         chart_source="$LOCAL_CHART_PATH"
         echo_info "Using local chart: $chart_source"
+
+        echo_info "Building subchart dependencies..."
+        helm dependency build "$chart_source" >/dev/null 2>&1 || {
+            echo_error "Failed to build subchart dependencies. Run: helm dependency build $chart_source"
+            return 1
+        }
+        echo_info "Subchart dependencies built"
     else
         echo_info "Using Helm repository (USE_LOCAL_CHART=false)"
 
@@ -947,7 +954,7 @@ deploy_helm_chart() {
             local fs_group
             fs_group=$(echo "$supp_groups" | cut -d'/' -f1)
             if [ -n "$fs_group" ]; then
-                helm_cmd="$helm_cmd --set valkey.securityContext.fsGroup=$fs_group"
+                helm_cmd="$helm_cmd --set cost-onprem-cache.securityContext.fsGroup=$fs_group"
                 echo_info "Valkey fsGroup: $fs_group"
             fi
         fi
@@ -1869,7 +1876,7 @@ main() {
 
     # Create database credentials secret (skip when using external database)
     local database_deploy
-    database_deploy=$(get_helm_value "database.deploy" "true")
+    database_deploy=$(get_helm_value "database.deploy" "false")
     if [ "$database_deploy" = "false" ]; then
         echo_info "Skipping database credentials creation (database.deploy=false, using external database)"
         echo_info "Ensure the database credentials secret already exists in namespace '$NAMESPACE'"
@@ -2105,7 +2112,7 @@ case "${1:-}" in
         echo ""
         echo "  # With custom overrides"
         echo "  USE_LOCAL_CHART=true LOCAL_CHART_PATH=../cost-onprem $0 \\"
-        echo "    --set database.ros.storage.size=200Gi"
+        echo "    --set cost-onprem-database.storage.size=200Gi"
         echo ""
         echo "  # Install latest from Helm repository"
         echo "  $0"

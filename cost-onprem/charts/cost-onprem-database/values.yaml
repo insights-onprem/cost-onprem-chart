@@ -10,15 +10,6 @@ storage:
   size: 30Gi
 
 secretName: ""
-
-databases:
-  ros:
-    name: costonprem_ros
-  kruize:
-    name: costonprem_kruize
-  koku:
-    name: costonprem_koku
-
 probes:
   initialDelaySeconds: 30
   periodSeconds: 10
