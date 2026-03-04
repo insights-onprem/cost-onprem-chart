@@ -48,7 +48,7 @@ ros:
   # use the same image
   image:
     repository: quay.io/insights-onprem/ros-ocp-backend
-    tag: "latest"
+    tag: "kafka-sasl-tls"
     pullPolicy: Always
 
   # Service Account
@@ -147,7 +147,7 @@ costManagement:
 
     image:
       repository: quay.io/insights-onprem/koku
-      tag: "sources-3"
+      tag: "kafka-sasl-tls"
       pullPolicy: Always
 
     replicas: 1
