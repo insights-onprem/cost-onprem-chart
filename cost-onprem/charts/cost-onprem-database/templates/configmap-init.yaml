@@ -1,0 +1,85 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cost-onprem-database.fullname" . }}-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-onprem-database.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+data:
+  init-databases.sh: |
+    #!/bin/bash
+    set -e
+
+    echo "Initializing databases with user-specific credentials..."
+
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<EOF
+    -- ========================================
+    -- Create Dedicated Database Users
+    -- ========================================
+
+    -- ROS User
+    DO \$\$
+    BEGIN
+      IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '$ROS_USER') THEN
+        EXECUTE 'CREATE USER $ROS_USER WITH PASSWORD ' || quote_literal('$ROS_PASSWORD');
+      END IF;
+    END
+    \$\$;
+
+    -- Kruize User
+    DO \$\$
+    BEGIN
+      IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '$KRUIZE_USER') THEN
+        EXECUTE 'CREATE USER $KRUIZE_USER WITH PASSWORD ' || quote_literal('$KRUIZE_PASSWORD');
+      END IF;
+    END
+    \$\$;
+
+    -- Koku User
+    DO \$\$
+    BEGIN
+      IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '$KOKU_USER') THEN
+        EXECUTE 'CREATE USER $KOKU_USER WITH PASSWORD ' || quote_literal('$KOKU_PASSWORD');
+      END IF;
+    END
+    \$\$;
+
+    -- ========================================
+    -- Create Databases
+    -- ========================================
+
+    -- ROS Database
+    SELECT 'CREATE DATABASE {{ .Values.databases.ros.name }}'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{{ .Values.databases.ros.name }}')
+    \gexec
+
+    -- Kruize Database
+    SELECT 'CREATE DATABASE {{ .Values.databases.kruize.name }}'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{{ .Values.databases.kruize.name }}')
+    \gexec
+
+    -- Koku Database
+    SELECT 'CREATE DATABASE {{ .Values.databases.koku.name }}'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{{ .Values.databases.koku.name }}')
+    \gexec
+
+    -- ========================================
+    -- Grant Database Ownership and Privileges
+    -- ========================================
+
+    -- ROS Database - owned by $ROS_USER
+    GRANT ALL PRIVILEGES ON DATABASE {{ .Values.databases.ros.name }} TO $ROS_USER;
+    ALTER DATABASE {{ .Values.databases.ros.name }} OWNER TO $ROS_USER;
+
+    -- Kruize Database - owned by $KRUIZE_USER
+    GRANT ALL PRIVILEGES ON DATABASE {{ .Values.databases.kruize.name }} TO $KRUIZE_USER;
+    ALTER DATABASE {{ .Values.databases.kruize.name }} OWNER TO $KRUIZE_USER;
+
+    -- Koku Database - owned by $KOKU_USER
+    GRANT ALL PRIVILEGES ON DATABASE {{ .Values.databases.koku.name }} TO $KOKU_USER;
+    ALTER DATABASE {{ .Values.databases.koku.name }} OWNER TO $KOKU_USER;
+
+    -- Enable pg_stat_statements extension on koku database
+    \c {{ .Values.databases.koku.name }}
+    CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
