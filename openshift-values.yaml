@@ -44,20 +44,14 @@ resources:
       memory: "2Gi"
       cpu: "1000m"
 
-# Use smaller storage sizes for testing
-# Production recommendation: 100Gi for ros/kruize, 50Gi for sources
+# Deploy bundled PostgreSQL for testing/CI (production uses BYOI)
 database:
-  ros:
-    storage:
-      size: "5Gi"
+  deploy: true
 
-  kruize:
-    storage:
-      size: "5Gi"
-
-  sources:
-    storage:
-      size: "5Gi"
+# Smaller database storage for testing
+cost-onprem-database:
+  storage:
+    size: 5Gi
 
 # S3-Compatible Object Storage
 # ----------------------------
