@@ -1,0 +1,28 @@
+nameOverride: "database"
+
+image:
+  repository: quay.io/insights-onprem/postgresql
+  tag: "16"
+
+port: 5432
+
+storage:
+  size: 30Gi
+
+secretName: ""
+probes:
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "100m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+
+service:
+  type: ClusterIP

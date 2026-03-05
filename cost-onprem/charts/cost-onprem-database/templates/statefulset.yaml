@@ -1,28 +1,25 @@
-{{- if .Values.database.deploy }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "cost-onprem.fullname" . }}-database
+  name: {{ include "cost-onprem-database.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "cost-onprem.labels" . | nindent 4 }}
+    {{- include "cost-onprem-database.labels" . | nindent 4 }}
     app.kubernetes.io/component: database
   annotations:
-    # Deploy database before migrations run (pre-install hook)
-    # No delete policy - database persists and remains managed by Helm
     "helm.sh/hook": pre-install,pre-upgrade
     "helm.sh/hook-weight": "-10"
 spec:
-  serviceName: {{ include "cost-onprem.fullname" . }}-database
+  serviceName: {{ include "cost-onprem-database.fullname" . }}
   replicas: 1
   selector:
     matchLabels:
-      {{- include "cost-onprem.selectorLabels" . | nindent 6 }}
+      {{- include "cost-onprem-database.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: database
   template:
     metadata:
       labels:
-        {{- include "cost-onprem.selectorLabels" . | nindent 8 }}
+        {{- include "cost-onprem-database.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: database
     spec:
       {{- with .Values.global.imagePullSecrets }}
@@ -31,56 +28,54 @@ spec:
       {{- end }}
       containers:
         - name: postgres
-          image: "{{ .Values.database.server.image.repository }}:{{ .Values.database.server.image.tag }}"
-          imagePullPolicy: {{ .Values.global.pullPolicy }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.global.pullPolicy | default "IfNotPresent" }}
           ports:
             - name: postgres
-              containerPort: {{ .Values.database.server.port }}
+              containerPort: {{ .Values.port }}
               protocol: TCP
           env:
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "cost-onprem.database.defaultSecretName" . }}
+                  name: {{ include "cost-onprem-database.secretName" . }}
                   key: postgres-user
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "cost-onprem.database.defaultSecretName" . }}
+                  name: {{ include "cost-onprem-database.secretName" . }}
                   key: postgres-password
             - name: PGDATA
               value: "/var/lib/postgresql/data/pgdata"
-            # User and password environment variables for database initialization script
-            # These are used by /docker-entrypoint-initdb.d/init-databases.sh
             - name: ROS_USER
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "cost-onprem.database.defaultSecretName" . }}
+                  name: {{ include "cost-onprem-database.secretName" . }}
                   key: ros-user
             - name: ROS_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "cost-onprem.database.defaultSecretName" . }}
+                  name: {{ include "cost-onprem-database.secretName" . }}
                   key: ros-password
             - name: KRUIZE_USER
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "cost-onprem.database.defaultSecretName" . }}
+                  name: {{ include "cost-onprem-database.secretName" . }}
                   key: kruize-user
             - name: KRUIZE_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "cost-onprem.database.defaultSecretName" . }}
+                  name: {{ include "cost-onprem-database.secretName" . }}
                   key: kruize-password
             - name: KOKU_USER
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "cost-onprem.database.defaultSecretName" . }}
+                  name: {{ include "cost-onprem-database.secretName" . }}
                   key: koku-user
             - name: KOKU_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "cost-onprem.database.defaultSecretName" . }}
+                  name: {{ include "cost-onprem-database.secretName" . }}
                   key: koku-password
           volumeMounts:
             - name: postgres-storage
@@ -109,19 +104,18 @@ spec:
             timeoutSeconds: {{ .Values.probes.timeoutSeconds }}
             failureThreshold: {{ .Values.probes.failureThreshold }}
           resources:
-            {{- toYaml .Values.resources.database | nindent 12 }}
+            {{- toYaml .Values.resources | nindent 12 }}
       volumes:
         - name: init-scripts
           configMap:
-            name: {{ include "cost-onprem.fullname" . }}-db-init
+            name: {{ include "cost-onprem-database.fullname" . }}-init
   volumeClaimTemplates:
     - metadata:
         name: postgres-storage
       spec:
         accessModes: [ "ReadWriteOnce" ]
-        volumeMode: {{ include "cost-onprem.storage.volumeMode" . }}
-        storageClassName: {{ include "cost-onprem.storage.databaseClass" . }}
+        volumeMode: {{ include "cost-onprem-database.volumeMode" . }}
+        storageClassName: {{ include "cost-onprem-database.storageClass" . }}
         resources:
           requests:
-            storage: {{ .Values.database.server.storage.size }}
-{{- end }}
+            storage: {{ .Values.storage.size }}

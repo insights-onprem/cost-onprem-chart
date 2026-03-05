@@ -1,11 +1,10 @@
-{{- if .Values.valkey.deploy }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "cost-onprem.fullname" . }}-valkey-data
+  name: {{ include "cost-onprem-cache.fullname" . }}-data
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "cost-onprem.labels" . | nindent 4 }}
+    {{- include "cost-onprem-cache.labels" . | nindent 4 }}
     app.kubernetes.io/component: cache
   annotations:
     "helm.sh/resource-policy": keep
@@ -14,10 +13,9 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: {{ .Values.valkey.persistence.size }}
-  {{- if .Values.valkey.persistence.storageClassName }}
-  storageClassName: {{ .Values.valkey.persistence.storageClassName }}
+      storage: {{ .Values.persistence.size }}
+  {{- if .Values.persistence.storageClassName }}
+  storageClassName: {{ .Values.persistence.storageClassName }}
   {{- else if .Values.global.storageClass }}
   storageClassName: {{ .Values.global.storageClass }}
   {{- end }}
-{{- end }}

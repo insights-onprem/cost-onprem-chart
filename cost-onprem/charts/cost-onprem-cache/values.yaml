@@ -1,0 +1,35 @@
+nameOverride: "valkey"
+
+image:
+  repository: registry.redhat.io/rhel10/valkey-8
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+port: 6379
+bindAddress: "0.0.0.0"
+maxMemory: "512mb"
+maxMemoryPolicy: "allkeys-lru"
+
+persistence:
+  size: 5Gi
+  storageClassName: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+securityContext:
+  fsGroup: null
+
+probes:
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+service:
+  type: ClusterIP

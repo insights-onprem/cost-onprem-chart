@@ -19,6 +19,9 @@ fullnameOverride: ""
 # Global Configuration (applies to all components)
 # -----------------------------------------------------------------------------
 global:
+  # Parent chart name (passed to subcharts for naming consistency)
+  parentChartName: "cost-onprem"
+
   # Container image settings
   pullPolicy: IfNotPresent
   imagePullSecrets: []
@@ -31,6 +34,16 @@ global:
 
   # Volume mode for PVCs (Filesystem or Block)
   volumeMode: "Filesystem"
+
+  # Database names (single source of truth for parent chart and database subchart)
+  # Naming convention: costonprem_<service> (underscores for PostgreSQL compatibility)
+  databases:
+    ros:
+      name: costonprem_ros
+    kruize:
+      name: costonprem_kruize
+    koku:
+      name: costonprem_koku
 
   # Init container images (shared across all services)
   # Using alternative registries to avoid docker.io rate limits
@@ -579,29 +592,25 @@ ingress:
 # - Credentials injected via secretKeyRef (never exposed in pod specs)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 database:
-  # Set to false to skip deploying the bundled PostgreSQL StatefulSet and Service.
+  # Controls whether the bundled PostgreSQL subchart is deployed.
+  # Set to true to deploy a single-instance PostgreSQL StatefulSet (dev/demo only).
+  # Default: false — production deployments MUST use an external database (BYOI).
+  #
   # When false, you must:
   #   1. Set database.server.host to your external database hostname
   #   2. Pre-create the required databases: costonprem_ros, costonprem_kruize, costonprem_koku
   #   3. Pre-create the required users with appropriate grants
   #   4. Create a credentials secret (or set database.secretName)
   # See docs/operations/configuration.md "External Infrastructure" for full setup guide.
-  deploy: true
+  #
+  # When true, deployment-specific settings (image, storage, resources) are configured
+  # under the cost-onprem-database: section below.
+  deploy: false
 
-  # Unified Database Server Configuration
+  # Server connection settings (used by all application components)
   server:
-    image:
-      repository: quay.io/insights-onprem/postgresql
-      tag: "16"
-
-    storage:
-      size: 30Gi  # Total storage for all databases (sum of individual DBs)
-
-    # Server connection settings
-    host: internal  # Use "internal" for built-in StatefulSet
+    host: internal  # Use "internal" for bundled database, or external hostname for BYOI
     port: 5432
-    # adminUser removed - stored in cost-onprem-db-credentials secret (key: postgres-user)
-    # adminPassword removed - stored in cost-onprem-db-credentials secret (key: postgres-password)
     sslMode: disable
 
   # Database Credentials Secret Name
@@ -609,30 +618,17 @@ database:
   # Override to use a different secret name (must exist before Helm install)
   secretName: ""  # Empty = use default: <release-name>-db-credentials
 
-  # ROS Database Configuration
+  # Per-service database credentials
+  # Database names are defined in global.databases (single source of truth)
   ros:
-    # Database name on the unified server
-    # Standardized naming: costonprem_<service> (underscores for PostgreSQL compatibility)
-    name: costonprem_ros
-    # Dedicated user for ROS service (only used if secretName is empty)
     user: ros_user
     password: ros_password
 
-  # Kruize Database Configuration
   kruize:
-    # Database name on the unified server
-    # Standardized naming: costonprem_<service> (underscores for PostgreSQL compatibility)
-    name: costonprem_kruize
-    # Dedicated user for Kruize service (only used if secretName is empty)
     user: kruize_user
     password: kruize_password
 
-  # Koku Database Configuration
   koku:
-    # Database name on the unified server
-    # Standardized naming: costonprem_<service> (underscores for PostgreSQL compatibility)
-    name: costonprem_koku
-    # Dedicated user for Koku service (only used if secretName is empty)
     user: koku_user
     password: koku_password
 
@@ -657,26 +653,25 @@ kafka:
 # Valkey is used as Celery broker/backend and for caching
 # Set deploy to false to use an external Redis/Valkey instance instead.
 valkey:
-  # Set to false to skip deploying the bundled Valkey Deployment, Service, and PVC.
+  # Controls whether the bundled Valkey cache subchart is deployed.
+  # Default: true — single-instance Valkey is acceptable for most deployments
+  # since it serves as an ephemeral cache/broker (data is recoverable from the database).
+  #
   # When false, you must:
   #   1. Set valkey.host to your external Redis/Valkey hostname
   #   2. Set valkey.port if not using the default 6379
   #   3. Optionally configure valkey.auth for password-protected instances
   # See docs/operations/configuration.md "External Infrastructure" for full setup guide.
+  #
+  # When true, deployment-specific settings (image, persistence, resources) are configured
+  # under the cost-onprem-cache: section below.
   deploy: true
-  image:
-    repository: registry.redhat.io/rhel10/valkey-8
-    tag: "latest"
-    pullPolicy: IfNotPresent
 
-  # Connection settings
+  # Connection settings (used by all application components)
   # When deploy is true, host is ignored (chart uses {release}-valkey internally).
   # When deploy is false, set host to your external Redis/Valkey endpoint.
   host: ""
   port: 6379
-  bindAddress: "0.0.0.0"
-  maxMemory: "512mb"
-  maxMemoryPolicy: "allkeys-lru"
 
   # Authentication for external Redis/Valkey (only used when deploy is false)
   # For password-protected Redis instances (e.g., ElastiCache, Redis Enterprise)
@@ -685,28 +680,6 @@ valkey:
     # Name of the Secret containing key: 'redis-password'
     # Required when auth.enabled is true.
     secretName: ""
-
-  # Persistence configuration for Celery chord callback reliability
-  # Persistent storage is always enabled when deploying bundled Valkey.
-  persistence:
-    size: 5Gi
-    storageClassName: ""  # Use default storage class
-
-  resources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-    limits:
-      cpu: 500m
-      memory: 512Mi
-
-  # Security context for Valkey pod
-  # fsGroup is dynamically detected from namespace SCC annotations for OpenShift
-  # This ensures compatibility across OCP 4.18 and 4.20+
-  securityContext:
-    fsGroup: null  # Dynamically detected by default
-    # Override only if needed for specific requirements:
-    # fsGroup: 1000740000  # Example: CI environment value
 
 # -----------------------------------------------------------------------------
 # Shared Infrastructure - S3-Compatible Object Storage
@@ -755,6 +728,82 @@ objectStorage:
   s3:
     region: "onprem"
 
+# -----------------------------------------------------------------------------
+# Infrastructure Subchart Configuration
+# -----------------------------------------------------------------------------
+# These sections configure the bundled infrastructure subcharts.
+# Values here are passed to the subcharts when their condition flag is true.
+# When database.deploy=false or valkey.deploy=false, these sections are ignored.
+
+# Database subchart (conditional on database.deploy)
+cost-onprem-database:
+  nameOverride: "database"
+
+  image:
+    repository: quay.io/insights-onprem/postgresql
+    tag: "16"
+
+  port: 5432
+
+  storage:
+    size: 30Gi
+
+  secretName: ""
+
+  probes:
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+  service:
+    type: ClusterIP
+
+# Cache subchart (conditional on valkey.deploy)
+cost-onprem-cache:
+  nameOverride: "valkey"
+
+  image:
+    repository: registry.redhat.io/rhel10/valkey-8
+    tag: "latest"
+    pullPolicy: IfNotPresent
+
+  port: 6379
+  bindAddress: "0.0.0.0"
+  maxMemory: "512mb"
+  maxMemoryPolicy: "allkeys-lru"
+
+  persistence:
+    size: 5Gi
+    storageClassName: ""
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  securityContext:
+    fsGroup: null
+
+  probes:
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  service:
+    type: ClusterIP
 
 # -----------------------------------------------------------------------------
 # Authentication Configuration (JWT with Keycloak/RHBK)
@@ -891,15 +940,6 @@ gatewayRoute:
 # Resource Defaults
 # -----------------------------------------------------------------------------
 resources:
-  # PostgreSQL resources
-  database:
-    requests:
-      memory: "256Mi"
-      cpu: "100m"
-    limits:
-      memory: "512Mi"
-      cpu: "500m"
-
   # Standard application services (ROS API, Processor, Poller, Housekeeper)
   # Aligned with SaaS Clowder configuration (ros-ocp-backend/clowdapp.yaml)
   application:

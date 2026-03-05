@@ -10,7 +10,7 @@ data:
     {
       "database": {
         "hostname": "{{ include "cost-onprem.kruize.databaseHost" . }}",
-        "name": "{{ .Values.database.kruize.name }}",
+        "name": "{{ include "cost-onprem.database.kruize.name" . }}",
         "port": {{ .Values.database.server.port }},
         "sslMode": "{{ .Values.database.server.sslMode }}"
       },

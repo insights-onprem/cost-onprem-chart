@@ -242,6 +242,9 @@ The unified `cost-onprem` chart deploys all components: PostgreSQL, Valkey, Koku
 ```bash
 cd /path/to/cost-onprem-chart
 
+# Build subchart dependencies (required for local source installs)
+helm dependency build cost-onprem
+
 # Deploy cost management chart
 helm install cost-onprem ./cost-onprem \
   --namespace $NAMESPACE \

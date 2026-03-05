@@ -22,6 +22,9 @@ jobs:
         curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
         helm version
 
+    - name: Build subchart dependencies
+      run: helm dependency build cost-onprem
+
     - name: Lint Helm chart
       run: |
         echo "=== Linting Helm chart ==="
@@ -49,10 +52,9 @@ jobs:
 
         echo "=== Creating ImageSetConfiguration ==="
         # additionalImages lists images that oc-mirror cannot auto-discover
-        # from the Helm chart (e.g. images only used in Helm hooks like
-        # pre-install/pre-upgrade). Keep this list in sync with the
-        # disconnected deployment guide:
-        #   docs/operations/disconnected-deployment.md
+        # from the Helm chart (e.g. images in conditional subcharts that are
+        # disabled by default). Keep this list in sync with the disconnected
+        # deployment guide: docs/operations/disconnected-deployment.md
         cat > /tmp/imageset-config.yaml << 'EOF'
         apiVersion: mirror.openshift.io/v2alpha1
         kind: ImageSetConfiguration

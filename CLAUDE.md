@@ -166,6 +166,7 @@ kubectl logs -n cost-onprem -l app.kubernetes.io/component=ros-processor --tail=
 **Root Cause:** Label changes require fresh install.
 ```bash
 helm uninstall cost-onprem -n cost-onprem
+helm dependency build cost-onprem
 helm install cost-onprem ./cost-onprem -n cost-onprem -f openshift-values.yaml --wait
 ```
 

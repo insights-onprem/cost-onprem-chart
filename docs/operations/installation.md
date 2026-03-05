@@ -115,7 +115,7 @@ The script deploys a unified chart containing all components:
 
 **Note**: JWT authentication is automatically enabled on OpenShift.
 
-> **BYOI (Bring Your Own Infrastructure):** When `database.deploy: false` is set in your values file, the script skips PostgreSQL credential creation and expects you to have pre-created the database credentials secret. See [External Infrastructure (BYOI)](configuration.md#external-infrastructure-byoi) for details.
+> **BYOI (Bring Your Own Infrastructure):** When using an external database, set `database.secretName` to your pre-created credentials secret. The script skips credential generation when `database.secretName` is set. If `database.secretName` is empty (default), the script always creates `cost-onprem-db-credentials` with random passwords. See [External Infrastructure (BYOI)](configuration.md#external-infrastructure-byoi) for details.
 ---
 
 ### Method 2: Direct Helm Installation
@@ -187,6 +187,9 @@ helm show all oci://ghcr.io/insights-onprem/cost-onprem-chart/cost-onprem
 git clone https://github.com/insights-onprem/cost-onprem-chart.git
 cd cost-onprem-chart
 
+# Build subchart dependencies (required before helm install from source)
+helm dependency build cost-onprem
+
 # Use ./cost-onprem in the helm install commands below
 ```
 
@@ -233,7 +236,7 @@ helm install cost-onprem ./cost-onprem \
   -f openshift-values.yaml \
   --set global.clusterDomain="$CLUSTER_DOMAIN" \
   --set global.storageClass="$STORAGE_CLASS" \
-  --set valkey.securityContext.fsGroup="$FS_GROUP" \
+  --set cost-onprem-cache.securityContext.fsGroup="$FS_GROUP" \
   --set objectStorage.endpoint="<YOUR_S3_ENDPOINT>" \
   --set objectStorage.port=443 \
   --set objectStorage.useSSL=true \
@@ -257,11 +260,11 @@ The table below lists every cluster-specific value, its chart default, and how t
 | `objectStorage.port` | `443` | S3 endpoint port | `443` for HTTPS, `80` for HTTP |
 | `objectStorage.useSSL` | `true` | Use TLS for S3 connections | `true` for production, `false` for S4/dev |
 | `objectStorage.secretName` | `""` | Pre-created credentials secret name | Name of the `Secret` you created in Step 2 |
-| `valkey.securityContext.fsGroup` | *(unset)* | GID for Valkey PVC access on OpenShift | `oc get ns <NS> -o jsonpath='{.metadata.annotations.openshift\.io/sa\.scc\.supplemental-groups}'` (first number) |
+| `cost-onprem-cache.securityContext.fsGroup` | *(unset)* | GID for Valkey PVC access on OpenShift | `oc get ns <NS> -o jsonpath='{.metadata.annotations.openshift\.io/sa\.scc\.supplemental-groups}'` (first number) |
 | `jwtAuth.keycloak.installed` | `true` | Whether Keycloak is deployed | `true` if RHBK is installed, `false` otherwise |
 | `jwtAuth.keycloak.url` | `""` | Keycloak external URL | `oc get route keycloak -n keycloak -o jsonpath='https://{.spec.host}'` |
 | `jwtAuth.keycloak.namespace` | `""` | Namespace where Keycloak runs | Usually `keycloak` |
-| `database.deploy` | `true` | Deploy bundled PostgreSQL StatefulSet | Set `false` to use an external database (see [BYOI](configuration.md#external-infrastructure-byoi)) |
+| `database.deploy` | `false` | Deploy bundled PostgreSQL subchart (dev/demo only) | Set `true` to deploy a single-instance PostgreSQL StatefulSet |
 | `valkey.deploy` | `true` | Deploy bundled Valkey Deployment | Set `false` to use an external Redis/Valkey (see [BYOI](configuration.md#external-infrastructure-byoi)) |
 
 > **Important:** The chart defaults are designed for `oc-mirror` image discovery (offline templating). They produce syntactically valid manifests but point to placeholder hostnames. For a working deployment, you **must** override the values marked above with real cluster values.
@@ -331,7 +334,7 @@ objectStorage:
   s3:
     region: "us-east-1"
 
-valkey:
+cost-onprem-cache:
   securityContext:
     fsGroup: 1000740000  # From namespace supplemental-groups annotation
 
@@ -647,11 +650,12 @@ helm upgrade cost-onprem cost-onprem/cost-onprem -n cost-onprem --values my-valu
 #### From Local Source
 
 ```bash
-# Using script
+# Using script (handles subchart dependencies automatically)
 export USE_LOCAL_CHART=true
 ./scripts/install-helm-chart.sh
 
-# Direct Helm command
+# Direct Helm command (build subchart dependencies first)
+helm dependency build cost-onprem
 helm upgrade cost-onprem ./cost-onprem -n cost-onprem
 ```
 

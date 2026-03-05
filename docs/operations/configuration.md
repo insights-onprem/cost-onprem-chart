@@ -399,7 +399,7 @@ When using `install-helm-chart.sh`, these values are **auto-detected** and passe
 | `objectStorage.port` | `443` | No | S3 endpoint port. |
 | `objectStorage.useSSL` | `true` | No | Use TLS for S3 connections. Set `false` for S3 or other HTTP-only backends. |
 | `objectStorage.secretName` | `""` | Yes (direct install) | Name of a pre-created `Secret` containing `access-key` and `secret-key`. |
-| `valkey.securityContext.fsGroup` | *(unset)* | Yes (OpenShift) | GID for Valkey PVC file ownership. Without this, Valkey pods fail with PVC permission errors. |
+| `cost-onprem-cache.securityContext.fsGroup` | *(unset)* | Yes (OpenShift) | GID for Valkey PVC file ownership. Without this, Valkey pods fail with PVC permission errors. |
 | `jwtAuth.keycloak.installed` | `true` | No | Set `false` if Keycloak is not deployed. |
 | `jwtAuth.keycloak.url` | `""` | Recommended | Keycloak external URL. Defaults to internal cluster URL `https://keycloak-service.keycloak.svc.cluster.local:8080` when empty. |
 | `jwtAuth.keycloak.namespace` | `""` | No | Keycloak namespace. Defaults to `keycloak` when empty. |
@@ -711,12 +711,16 @@ database:
     port: 5432
     sslMode: require  # or verify-full for production
   secretName: "my-external-db-credentials"
-  ros:
-    name: costonprem_ros
-  kruize:
-    name: costonprem_kruize
-  koku:
-    name: costonprem_koku
+
+# Database names are configured in global.databases (single source of truth)
+global:
+  databases:
+    ros:
+      name: costonprem_ros
+    kruize:
+      name: costonprem_kruize
+    koku:
+      name: costonprem_koku
 ```
 
 When `database.deploy: false`:

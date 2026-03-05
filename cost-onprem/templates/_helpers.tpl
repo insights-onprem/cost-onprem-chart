@@ -109,27 +109,27 @@ Naming convention: costonprem_<service> (underscores for PostgreSQL compatibilit
 */}}
 
 {{/*
-ROS database name
+ROS database name (from global.databases — shared with database subchart)
 Usage: {{ include "cost-onprem.database.ros.name" . }}
 */}}
 {{- define "cost-onprem.database.ros.name" -}}
-{{- .Values.database.ros.name | default "costonprem_ros" -}}
+{{- .Values.global.databases.ros.name | default "costonprem_ros" -}}
 {{- end -}}
 
 {{/*
-Kruize database name
+Kruize database name (from global.databases — shared with database subchart)
 Usage: {{ include "cost-onprem.database.kruize.name" . }}
 */}}
 {{- define "cost-onprem.database.kruize.name" -}}
-{{- .Values.database.kruize.name | default "costonprem_kruize" -}}
+{{- .Values.global.databases.kruize.name | default "costonprem_kruize" -}}
 {{- end -}}
 
 {{/*
-Koku database name
+Koku database name (from global.databases — shared with database subchart)
 Usage: {{ include "cost-onprem.database.koku.name" . }}
 */}}
 {{- define "cost-onprem.database.koku.name" -}}
-{{- .Values.database.koku.name | default "costonprem_koku" -}}
+{{- .Values.global.databases.koku.name | default "costonprem_koku" -}}
 {{- end -}}
 
 {{/*
@@ -141,34 +141,11 @@ Usage: {{ include "cost-onprem.platform.clusterDomain" . }}
 {{- end }}
 
 {{/*
-Get volume mode from values (detected by install script; default allows offline templating)
-Usage: {{ include "cost-onprem.storage.volumeMode" . }}
-*/}}
-{{- define "cost-onprem.storage.volumeMode" -}}
-{{- .Values.global.volumeMode | default "Filesystem" -}}
-{{- end }}
-
-{{/*
 Get storage class name from values (detected by install script; default allows offline templating)
 Usage: {{ include "cost-onprem.storage.class" . }}
 */}}
 {{- define "cost-onprem.storage.class" -}}
 {{- .Values.global.storageClass | default "ocs-storagecluster-ceph-rbd" -}}
-{{- end }}
-
-{{/*
-Get storage class for database workloads (same as main storage class)
-Usage: {{ include "cost-onprem.storage.databaseClass" . }}
-*/}}
-{{- define "cost-onprem.storage.databaseClass" -}}
-{{- include "cost-onprem.storage.class" . -}}
-{{- end }}
-
-{{/*
-Cache service name (valkey)
-*/}}
-{{- define "cost-onprem.cache.name" -}}
-valkey
 {{- end }}
 
 {{/*
@@ -413,15 +390,6 @@ Kafka security protocol resolver (supports both internal and external Kafka)
 */}}
 {{- define "cost-onprem.kafka.securityProtocol" -}}
 {{- .Values.kafka.securityProtocol | default "PLAINTEXT" -}}
-{{- end }}
-
-{{/*
-Valkey fsGroup from values (install script sets valkey.securityContext.fsGroup on OpenShift from namespace annotations)
-*/}}
-{{- define "cost-onprem.valkey.fsGroup" -}}
-{{- if and (hasKey .Values.valkey "securityContext") (hasKey .Values.valkey.securityContext "fsGroup") .Values.valkey.securityContext.fsGroup -}}
-{{- .Values.valkey.securityContext.fsGroup -}}
-{{- end -}}
 {{- end }}
 
 {{/*

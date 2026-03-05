@@ -10,7 +10,7 @@ data:
     {
       "database": {
         "hostname": "{{ include "cost-onprem.database.host" . }}",
-        "name": "{{ .Values.database.ros.name }}",
+        "name": "{{ include "cost-onprem.database.ros.name" . }}",
         "port": {{ .Values.database.server.port }},
         "sslMode": "{{ .Values.database.server.sslMode }}"
       },

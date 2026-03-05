@@ -31,6 +31,9 @@ If you need to install just the Helm chart:
 # Create namespace
 oc create namespace cost-onprem
 
+# Build subchart dependencies (required for local source installs)
+helm dependency build cost-onprem
+
 # Install with OpenShift values
 helm install cost-onprem ./cost-onprem \
   -n cost-onprem \
@@ -83,6 +86,7 @@ Preview what would be done without making changes:
 Label changes require fresh install:
 ```bash
 helm uninstall cost-onprem -n cost-onprem
+helm dependency build cost-onprem
 helm install cost-onprem ./cost-onprem -n cost-onprem -f openshift-values.yaml --wait
 ```
 

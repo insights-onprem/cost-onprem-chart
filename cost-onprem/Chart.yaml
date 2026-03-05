@@ -14,5 +14,13 @@ keywords:
 maintainers:
   - name: Insights On-Premise Team
 
-dependencies: []
+dependencies:
+  - name: cost-onprem-database
+    version: "0.1.0"
+    repository: "file://charts/cost-onprem-database"
+    condition: database.deploy
+  - name: cost-onprem-cache
+    version: "0.1.0"
+    repository: "file://charts/cost-onprem-cache"
+    condition: valkey.deploy
 

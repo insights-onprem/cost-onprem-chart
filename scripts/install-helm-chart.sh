@@ -107,7 +107,7 @@ parse_s3_namespace() {
 }
 
 # Read a value from the user-supplied Helm values file using yq
-# Usage: get_helm_value "database.deploy" "true"
+# Usage: get_helm_value "database.deploy" "false"
 # Returns the value from VALUES_FILE if set, otherwise returns the default
 get_helm_value() {
     local key="$1"
@@ -873,6 +873,13 @@ deploy_helm_chart() {
 
         chart_source="$LOCAL_CHART_PATH"
         echo_info "Using local chart: $chart_source"
+
+        echo_info "Building subchart dependencies..."
+        helm dependency build "$chart_source" >/dev/null 2>&1 || {
+            echo_error "Failed to build subchart dependencies. Run: helm dependency build $chart_source"
+            return 1
+        }
+        echo_info "Subchart dependencies built"
     else
         echo_info "Using Helm repository (USE_LOCAL_CHART=false)"
 
@@ -947,7 +954,7 @@ deploy_helm_chart() {
             local fs_group
             fs_group=$(echo "$supp_groups" | cut -d'/' -f1)
             if [ -n "$fs_group" ]; then
-                helm_cmd="$helm_cmd --set valkey.securityContext.fsGroup=$fs_group"
+                helm_cmd="$helm_cmd --set cost-onprem-cache.securityContext.fsGroup=$fs_group"
                 echo_info "Valkey fsGroup: $fs_group"
             fi
         fi
@@ -1867,12 +1874,15 @@ main() {
     echo_info "════════════════════════════════════════════════════════════"
     echo ""
 
-    # Create database credentials secret (skip when using external database)
-    local database_deploy
-    database_deploy=$(get_helm_value "database.deploy" "true")
-    if [ "$database_deploy" = "false" ]; then
-        echo_info "Skipping database credentials creation (database.deploy=false, using external database)"
-        echo_info "Ensure the database credentials secret already exists in namespace '$NAMESPACE'"
+    # Create database credentials secret
+    # Skip only when the user provides their own secret via database.secretName.
+    # The secret is needed by ALL application components (Koku, ROS, etc.)
+    # regardless of whether the database is bundled (database.deploy=true)
+    # or external (database.deploy=false / BYOI).
+    local db_secret_name
+    db_secret_name=$(get_helm_value "database.secretName" "")
+    if [ -n "$db_secret_name" ]; then
+        echo_info "Skipping database credentials creation (using user-provided secret: $db_secret_name)"
     else
         if ! create_database_credentials_secret; then
             echo_error "Failed to create database credentials. Cannot proceed with installation."
@@ -2087,10 +2097,17 @@ case "${1:-}" in
         echo "    CHART_VERSION=0.2.9 $0                                 # Install specific version"
         echo "    USE_LOCAL_CHART=true LOCAL_CHART_PATH=../cost-onprem $0"
         echo ""
+        echo "Database Options:"
+        echo "  By default, no database is deployed (BYOI — Bring Your Own Infrastructure)."
+        echo "  For dev/test, deploy the bundled PostgreSQL:"
+        echo "    $0 --set database.deploy=true"
+        echo "  Or use openshift-values.yaml which sets database.deploy=true for testing."
+        echo "  For production, set database.secretName to your pre-created credentials secret."
+        echo ""
         echo "Examples:"
-        echo "  # Complete fresh installation"
+        echo "  # Complete fresh installation (dev/test with bundled database)"
         echo "  ./deploy-kafka.sh                           # Install AMQ Streams and Kafka first"
-        echo "  USE_LOCAL_CHART=true LOCAL_CHART_PATH=../cost-onprem $0  # Then install Cost Management On Premise"
+        echo "  USE_LOCAL_CHART=true LOCAL_CHART_PATH=../cost-onprem $0 --set database.deploy=true"
         echo ""
         echo "  # Install from Helm repository (with AMQ Streams already deployed)"
         echo "  ./deploy-kafka.sh                           # Install prerequisites"
@@ -2105,7 +2122,7 @@ case "${1:-}" in
         echo ""
         echo "  # With custom overrides"
         echo "  USE_LOCAL_CHART=true LOCAL_CHART_PATH=../cost-onprem $0 \\"
-        echo "    --set database.ros.storage.size=200Gi"
+        echo "    --set cost-onprem-database.storage.size=200Gi"
         echo ""
         echo "  # Install latest from Helm repository"
         echo "  $0"

@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cost-onprem-cache.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-onprem-cache.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cache
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.port }}
+      targetPort: valkey
+      protocol: TCP
+      name: valkey
+  selector:
+    {{- include "cost-onprem-cache.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: cache

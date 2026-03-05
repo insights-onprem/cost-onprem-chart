@@ -7,9 +7,9 @@ Deploy Cost Management On-Premise in disconnected OpenShift environments using `
 In disconnected environments, clusters have no direct internet access. The `oc-mirror` tool mirrors Helm charts and container images from public registries to an internal mirror registry. The cost-onprem chart is designed to support offline templating -- `helm template` works with default values only (no `--set` flags required), which is exactly how `oc-mirror` discovers images.
 
 > **Important:** Some images used by the chart cannot be auto-discovered by
-> `oc-mirror` (for example, images referenced only in Helm hooks such as
-> `pre-install`/`pre-upgrade`). These **must** be listed explicitly in the
-> `additionalImages` section of the `ImageSetConfiguration`. See
+> `oc-mirror` (for example, images in conditional subcharts that are disabled
+> by default). These **must** be listed explicitly in the `additionalImages`
+> section of the `ImageSetConfiguration`. See
 > [Required Container Images](#required-container-images) for the full list
 > and [Step 1](#step-1-create-imagesetconfiguration) for the complete
 > configuration.
@@ -35,7 +35,7 @@ Images marked **additional** are not auto-discovered by `oc-mirror` and
 | `quay.io/insights-onprem/koku:sources` | Cost Management API, MASU, Celery, Listener, Migration | auto |
 | `quay.io/redhat-services-prod/kruize-autotune-tenant/autotune:d0b4337` | Kruize optimization engine | auto |
 | `quay.io/insights-onprem/insights-ingress-go:latest` | Ingress service | auto |
-| `quay.io/insights-onprem/postgresql:16` | PostgreSQL database (Helm hook) | **additional** |
+| `quay.io/insights-onprem/postgresql:16` | PostgreSQL database (conditional subchart, disabled by default) | **additional** |
 | `registry.redhat.io/rhel10/valkey-8:latest` | Valkey cache | auto |
 | `registry.redhat.io/openshift-service-mesh/proxyv2-rhel9:2.6` | Envoy gateway | auto |
 | `registry.redhat.io/rhceph/oauth2-proxy-rhel9:v7.6.0` | UI OAuth proxy | auto |
@@ -49,12 +49,11 @@ Images marked **additional** are not auto-discovered by `oc-mirror` and
 > use `SKIP_S3_SETUP=true`, this image is not required.
 
 > **Why are some images not auto-discovered?** `oc-mirror` discovers images
-> by running `helm template` internally. Kubernetes resources created via
-> [Helm hooks](https://helm.sh/docs/topics/charts_hooks/) (such as the
-> database `StatefulSet` with `helm.sh/hook: pre-install,pre-upgrade`) are
-> excluded from that rendering, so `oc-mirror` never sees the images they
-> reference. CI enforces parity between `helm template` and `oc-mirror`;
-> see `.github/workflows/lint-and-validate.yml`.
+> by running `helm template` internally. Conditional subcharts (like the
+> PostgreSQL database subchart, which is disabled by default via
+> `database.deploy: false`) are excluded from that rendering, so `oc-mirror`
+> never sees the images they reference. CI enforces parity between
+> `helm template` and `oc-mirror`; see `.github/workflows/lint-and-validate.yml`.
 
 ## Step 1: Create ImageSetConfiguration
 
@@ -74,8 +73,8 @@ mirror:
           - name: cost-onprem
             version: "0.2.10"
   # Images that oc-mirror cannot auto-discover from the Helm chart.
-  # These are used in Helm hooks (pre-install/pre-upgrade) which are
-  # not rendered during oc-mirror's image discovery pass.
+  # These are in conditional subcharts disabled by default (e.g.,
+  # database.deploy=false) and are not rendered during image discovery.
   # Keep in sync with the "Required Container Images" table above.
   additionalImages:
     - name: quay.io/insights-onprem/postgresql:16

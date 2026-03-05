@@ -46,7 +46,7 @@ spec:
             - name: DB_PORT
               value: {{ .Values.database.server.port | quote }}
             - name: DB_NAME
-              value: {{ .Values.database.ros.name | quote }}
+              value: {{ include "cost-onprem.database.ros.name" . | quote }}
             - name: DB_USER
               valueFrom:
                 secretKeyRef:

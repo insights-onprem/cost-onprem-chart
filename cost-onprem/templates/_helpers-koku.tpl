@@ -106,7 +106,7 @@ Koku database port
 Koku database name
 */}}
 {{- define "cost-onprem.koku.database.dbname" -}}
-{{- .Values.database.koku.name | default "costonprem_koku" -}}
+{{- include "cost-onprem.database.koku.name" . -}}
 {{- end -}}
 
 {{/*
