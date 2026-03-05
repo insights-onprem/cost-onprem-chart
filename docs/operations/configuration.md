@@ -812,7 +812,8 @@ The Helm chart does **not** deploy Kafka — it only configures applications to 
 ```yaml
 kafka:
   bootstrapServers: "cost-onprem-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
-  securityProtocol: "PLAINTEXT"
+  security:
+    protocol: "PLAINTEXT"
 ```
 
 The `install-helm-chart.sh` script auto-detects the bootstrap address from the deployed Kafka cluster. To override (e.g., for an external cluster):
@@ -827,28 +828,102 @@ Or set it in your values file directly.
 
 Use an existing Kafka cluster instead of the bundled AMQ Streams deployment.
 
-> **Known Limitation:** Only **PLAINTEXT** Kafka connections are currently supported. Both Koku and ROS backends do not read SASL/TLS configuration from environment variables in on-prem (non-Clowder) mode. Upstream application changes are required before chart-level SASL/TLS support can be added.
-
 **Prerequisites:**
 
-1. Apache Kafka 3.x or later accessible from the OpenShift cluster with a **PLAINTEXT** listener
+1. Apache Kafka 3.x or later accessible from the OpenShift cluster
 2. All five topics listed above must exist (or `auto.create.topics.enable` must be set to `true`)
 3. Bootstrap servers reachable from the `cost-onprem` namespace over the network
+4. For SASL/TLS: upstream Koku and ROS images with SASL/TLS environment variable support (see note below)
 
-**Configuration:**
+**PLAINTEXT Configuration (default):**
 
 ```yaml
 # values.yaml
 kafka:
   bootstrapServers: "my-kafka-broker1:9092,my-kafka-broker2:9092"
-  securityProtocol: "PLAINTEXT"
+  security:
+    protocol: "PLAINTEXT"
 ```
+
+**SASL_SSL Configuration (enterprise Kafka):**
+
+For Kafka brokers requiring SASL authentication and TLS encryption (e.g., AMQ Streams with SCRAM, Amazon MSK, Confluent Cloud):
+
+```yaml
+# values.yaml
+kafka:
+  bootstrapServers: "my-kafka-broker1:9093,my-kafka-broker2:9093"
+  security:
+    protocol: "SASL_SSL"
+    sasl:
+      mechanism: "SCRAM-SHA-512"        # or SCRAM-SHA-256, PLAIN
+      existingSecret: "kafka-sasl-credentials"
+    tls:
+      caCertSecret: "kafka-ca-cert"
+```
+
+Create the required secrets before installing the chart:
+
+```bash
+# SASL credentials
+kubectl create secret generic kafka-sasl-credentials \
+  --namespace cost-onprem \
+  --from-literal=username=my-kafka-user \
+  --from-literal=password=my-kafka-password
+
+# TLS CA certificate
+kubectl create secret generic kafka-ca-cert \
+  --namespace cost-onprem \
+  --from-file=ca.crt=/path/to/kafka-ca-certificate.pem
+```
+
+**Other security protocol combinations:**
+
+| Protocol | SASL | TLS | Use case |
+|----------|------|-----|----------|
+| `PLAINTEXT` | No | No | Development, internal clusters (default) |
+| `SSL` | No | Yes | Encryption only, no authentication |
+| `SASL_PLAINTEXT` | Yes | No | Authentication only, no encryption |
+| `SASL_SSL` | Yes | Yes | Production — authentication + encryption |
+
+For `SSL` (TLS without SASL):
+```yaml
+kafka:
+  bootstrapServers: "my-kafka-broker1:9093"
+  security:
+    protocol: "SSL"
+    tls:
+      caCertSecret: "kafka-ca-cert"
+```
+
+For `SASL_PLAINTEXT` (SASL without TLS):
+```yaml
+kafka:
+  bootstrapServers: "my-kafka-broker1:9092"
+  security:
+    protocol: "SASL_PLAINTEXT"
+    sasl:
+      mechanism: "SCRAM-SHA-512"
+      existingSecret: "kafka-sasl-credentials"
+```
+
+> **Note on upstream support:** SASL/TLS environment variables (`KAFKA_SASL_MECHANISM`, `KAFKA_SASL_USERNAME`, `KAFKA_SASL_PASSWORD`, `KAFKA_SECURITY_PROTOCOL`, `KAFKA_SSL_CA_LOCATION`) are wired into all Kafka-consuming pods by this chart. However, the upstream Koku and ROS application images must include support for reading these variables in on-prem (non-Clowder) mode. Verify that your Koku and ROS images include SASL/TLS support before enabling these settings.
 
 **Install script behavior:** Setting `KAFKA_BOOTSTRAP_SERVERS` tells the install script to skip AMQ Streams operator verification:
 
 ```bash
-KAFKA_BOOTSTRAP_SERVERS="my-kafka-broker1:9092" ./scripts/install-helm-chart.sh --namespace cost-onprem
+KAFKA_BOOTSTRAP_SERVERS="my-kafka-broker1:9093" ./scripts/install-helm-chart.sh --namespace cost-onprem
 ```
+
+**Environment variables injected into pods:**
+
+| Variable | Condition | Source |
+|----------|-----------|--------|
+| `KAFKA_SECURITY_PROTOCOL` | Always | `kafka.security.protocol` |
+| `KAFKA_SASL_MECHANISM` | When `kafka.security.sasl.mechanism` is set | `kafka.security.sasl.mechanism` |
+| `KAFKA_SASL_USERNAME` | When `kafka.security.sasl.mechanism` is set | Secret: `kafka.security.sasl.existingSecret` key `username` |
+| `KAFKA_SASL_PASSWORD` | When `kafka.security.sasl.mechanism` is set | Secret: `kafka.security.sasl.existingSecret` key `password` |
+| `KAFKA_SSL_CA_LOCATION` | When `kafka.security.tls.caCertSecret` is set | Mounted at `/etc/kafka/certs/ca.crt` |
 
 **Components that use Kafka:**
 

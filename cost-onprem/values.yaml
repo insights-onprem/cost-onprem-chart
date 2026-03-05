@@ -48,7 +48,7 @@ ros:
   # use the same image
   image:
     repository: quay.io/insights-onprem/ros-ocp-backend
-    tag: "latest"
+    tag: "kafka-sasl-tls"
     pullPolicy: Always
 
   # Service Account
@@ -147,7 +147,7 @@ costManagement:
 
     image:
       repository: quay.io/insights-onprem/koku
-      tag: "sources-3"
+      tag: "kafka-sasl-tls"
       pullPolicy: Always
 
     replicas: 1
@@ -499,7 +499,7 @@ kruize:
 ingress:
   image:
     repository: quay.io/insights-onprem/insights-ingress-go
-    tag: "latest"
+    tag: "kafka-sasl-tls"
     pullPolicy: Always
 
   # Server configuration
@@ -647,9 +647,55 @@ kafka:
   # This is auto-configured by the install script based on the Kafka cluster it creates
   bootstrapServers: "cost-onprem-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
 
-  # Security protocol — only PLAINTEXT is currently supported.
-  # SASL/TLS support requires upstream application changes (see docs/operations/configuration.md).
-  securityProtocol: "PLAINTEXT"
+  # ---------------------------------------------------------------------------
+  # Connection Security
+  # ---------------------------------------------------------------------------
+  # Groups the Kafka security protocol, SASL authentication, and TLS encryption
+  # settings. Mirrors Kafka's native property naming (security.protocol).
+  security:
+    # Security protocol for Kafka connections.
+    # Valid values: PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL
+    # Must match the listener type on the Kafka broker.
+    protocol: "PLAINTEXT"
+
+    # -------------------------------------------------------------------------
+    # SASL Authentication
+    # -------------------------------------------------------------------------
+    # Configure SASL when connecting to Kafka brokers that require authentication
+    # (e.g., MSK with IAM/SCRAM, Confluent Cloud, AMQ Streams with SCRAM).
+    # Requires protocol set to SASL_PLAINTEXT or SASL_SSL.
+    sasl:
+      # SASL mechanism. Leave empty to disable SASL authentication.
+      # Supported values: SCRAM-SHA-512, SCRAM-SHA-256, PLAIN
+      mechanism: ""
+
+      # Name of an existing Kubernetes Secret containing SASL credentials.
+      # Required when mechanism is set. The secret must contain keys:
+      #   username  - SASL username
+      #   password  - SASL password
+      #
+      # Example:
+      #   kubectl create secret generic kafka-sasl-credentials \
+      #     --from-literal=username=my-user \
+      #     --from-literal=password=my-password
+      existingSecret: ""
+
+    # -------------------------------------------------------------------------
+    # TLS Encryption
+    # -------------------------------------------------------------------------
+    # Configure TLS when connecting to Kafka brokers over encrypted channels.
+    # Requires protocol set to SSL or SASL_SSL.
+    tls:
+      # Name of an existing Kubernetes Secret containing the CA certificate.
+      # When set, the CA certificate is mounted into all Kafka-consuming pods
+      # at /etc/kafka/certs/ca.crt. Leave empty to disable TLS CA mounting.
+      # The secret must contain key:
+      #   ca.crt  - PEM-encoded CA certificate
+      #
+      # Example:
+      #   kubectl create secret generic kafka-ca-cert \
+      #     --from-file=ca.crt=/path/to/ca-certificate.pem
+      caCertSecret: ""
 
 # -----------------------------------------------------------------------------
 # Shared Infrastructure - Cache (Valkey)

@@ -79,9 +79,18 @@ spec:
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: {{ include "cost-onprem.kafka.bootstrapServers" . | quote }}
             - name: KAFKA_SECURITY_PROTOCOL
-              value: {{ include "cost-onprem.kafka.securityProtocol" . | quote }}
+              value: {{ .Values.kafka.security.protocol | quote }}
+            {{- include "cost-onprem.kafka.securityEnv" . | nindent 12 }}
             # Topic for source deletion events from Koku (matches hardcoded topic in Koku)
             - name: SOURCES_EVENT_TOPIC
               value: "platform.sources.event-stream"
+          {{- if eq (include "cost-onprem.kafka.tls.enabled" .) "true" }}
+          volumeMounts:
+            {{- include "cost-onprem.kafka.tls.volumeMount" . | nindent 12 }}
+          {{- end }}
           resources:
             {{- toYaml .Values.resources.application | nindent 12 }}
+      {{- if eq (include "cost-onprem.kafka.tls.enabled" .) "true" }}
+      volumes:
+        {{- include "cost-onprem.kafka.tls.volume" . | nindent 8 }}
+      {{- end }}
