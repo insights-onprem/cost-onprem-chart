@@ -43,7 +43,7 @@ spec:
                 - name: dbdriver
                   value: {{ .Values.kruize.env.dbDriver | quote }}
                 - name: database_name
-                  value: {{ .Values.database.kruize.name | quote }}
+                  value: {{ include "cost-onprem.database.kruize.name" . | quote }}
                 - name: clustertype
                   value: {{ .Values.kruize.env.clusterType | quote }}
                 - name: k8stype
