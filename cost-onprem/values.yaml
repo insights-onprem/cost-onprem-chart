@@ -499,7 +499,7 @@ kruize:
 ingress:
   image:
     repository: quay.io/insights-onprem/insights-ingress-go
-    tag: "latest"
+    tag: "kafka-sasl-tls"
     pullPolicy: Always
 
   # Server configuration

@@ -87,9 +87,26 @@ spec:
               value: {{ .Values.ingress.kafka.topic | quote }}
             - name: INGRESS_KAFKAGROUPID
               value: {{ .Values.ingress.kafka.groupId | default "ingress" | quote }}
-            - name: KAFKA_SECURITY_PROTOCOL
+            - name: INGRESS_KAFKASECURITYPROTOCOL
               value: {{ .Values.kafka.security.protocol | quote }}
-            {{- include "cost-onprem.kafka.securityEnv" . | nindent 12 }}
+            {{- if eq (include "cost-onprem.kafka.sasl.enabled" .) "true" }}
+            - name: INGRESS_SASLMECHANISM
+              value: {{ .Values.kafka.security.sasl.mechanism | quote }}
+            - name: INGRESS_KAFKAUSERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "kafka.security.sasl.existingSecret is required when kafka.security.sasl.mechanism is set" .Values.kafka.security.sasl.existingSecret }}
+                  key: username
+            - name: INGRESS_KAFKAPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.security.sasl.existingSecret }}
+                  key: password
+            {{- end }}
+            {{- if eq (include "cost-onprem.kafka.tls.enabled" .) "true" }}
+            - name: INGRESS_KAFKACA
+              value: "/etc/kafka/certs/ca.crt"
+            {{- end }}
 
             # Authentication configuration
             # JWT is handled by centralized gateway, backend trusts X-Rh-Identity header
