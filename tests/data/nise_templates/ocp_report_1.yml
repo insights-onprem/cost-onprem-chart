@@ -1,0 +1,39 @@
+---
+generators:
+  - OCPGenerator:
+      start_date: last_month
+      nodes:
+        - node:
+          node_name: test-ignos
+          cpu_cores: 5
+          memory_gig: 5
+          resource_id: 68958811
+          namespaces:
+            test_ignos:
+              pods:
+                - pod:
+                  pod_name: ignos
+                  cpu_request: 3
+                  mem_request_gig: 3
+                  cpu_limit: 4
+                  mem_limit_gig: 4
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 2
+                  mem_usage_gig:
+                    full_period: 2
+                  labels: label_app:ignos
+              volumes:
+                - volume:
+                  volume_name: pvc-volume_1
+                  storage_class: gp2
+                  volume_request_gig: 10
+                  labels: label_volume:ignos
+                  volume_claims:
+                  - volume_claim:
+                    volume_claim_name: data_ignos
+                    pod_name: ignos
+                    labels: label_volume:stor_ignos
+                    capacity_gig: 10
+                    volume_claim_usage_gig:
+                      full_period: 5

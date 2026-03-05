@@ -1,0 +1,191 @@
+---
+generators:
+
+  - OCPGenerator:
+      start_date: last_month
+      nodes:
+        - node:
+          node_name: ocp-node-1
+          node_labels: label_node_name:ocp-node-1|label_qe-source:cost_dist_cpu|label_tier:node
+          cpu_cores: 15
+          memory_gig: 8
+          namespaces:
+            ocp_prod_dist:
+              namespace_labels: label_project_name:ocp_prod_dist|label_tier:project|label_death_note:unmatched_value|label_last_of_us:Ellie
+              pods:
+                - pod:
+                  pod_name: nod
+                  cpu_request: 5
+                  mem_request_gig: 5
+                  cpu_limit: 6
+                  mem_limit_gig: 6
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 4
+                  mem_usage_gig:
+                    full_period: 4
+                  labels: label_app:nod|label_test:weak|label_git:status|label_stack:camp
+              volumes:
+                - volume:
+                  volume_name: pvc-volume_1
+                  storage_class: gp2
+                  volume_request_gig: 10
+                  labels: label_volume:nod
+                  volume_claims:
+                  - volume_claim:
+                    volume_claim_name: data_nod
+                    pod_name: nod
+                    labels: label_volume:stor_nod|label_test:weak|label_git:status|label_stack:camp|label_storageclass:st
+                    capacity_gig: 10
+                    volume_claim_usage_gig:
+                      full_period: 5
+  - OCPGenerator:
+      start_date: last_month
+      nodes:
+        - node:
+          node_name: ocp-node-2
+          node_labels: label_node_name:ocp-node-2|label_qe-source:cost_dist_cpu|label_tier:node
+          cpu_cores: 10
+          memory_gig: 8
+          namespaces:
+            ocp_prod_dist:
+              namespace_labels: label_project_name:ocp_prod_dist|label_tier:project|label_death_note:unmatched_value|label_last_of_us:Ellie
+              pods:
+                - pod:
+                  pod_name: nod
+                  cpu_request: 2
+                  mem_request_gig: 2
+                  cpu_limit: 4
+                  mem_limit_gig: 4
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 1
+                  mem_usage_gig:
+                    full_period: 1
+                  labels: label_app:nod|label_test:weak|label_git:status|label_stack:camp
+              volumes:
+                - volume:
+                  volume_name: pvc-volume_1
+                  storage_class: gp2
+                  volume_request_gig: 10
+                  labels: label_volume:nod
+                  volume_claims:
+                  - volume_claim:
+                    volume_claim_name: data_nod
+                    pod_name: nod
+                    labels: label_volume:stor_nod|label_test:weak|label_git:status|label_stack:camp|label_storageclass:st
+                    capacity_gig: 10
+                    volume_claim_usage_gig:
+                      full_period: 5
+  - OCPGenerator:
+      start_date: last_month
+      nodes:
+        - node:
+          node_name: ocp-node-3
+          node_labels: label_node_name:ocp-node-3|label_qe-source:cost_dist_cpu|label_tier:node
+          cpu_cores: 5
+          memory_gig: 4
+          namespaces:
+            ocp_stg_dist:
+              namespace_labels: label_project_name:ocp_stg_dist|label_death_note:riuk|label_last_of_us:Joel
+              pods:
+                - pod:
+                  pod_name: nod
+                  cpu_request: 3
+                  mem_request_gig: 3
+                  cpu_limit: 4
+                  mem_limit_gig: 4
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 3
+                  mem_usage_gig:
+                    full_period: 3
+                  labels: label_app:nod|label_test:weak|label_git:status|label_stack:camp
+              volumes:
+                - volume:
+                  volume_name: pvc-volume_2
+                  storage_class: gp2
+                  volume_request_gig: 10
+                  labels: label_volume:nod
+                  volume_claims:
+                  - volume_claim:
+                    volume_claim_name: data_nod
+                    pod_name: nod
+                    labels: label_volume:stor_nod|label_test:weak|label_git:status|label_stack:camp|label_storageclass:st
+                    capacity_gig: 10
+                    volume_claim_usage_gig:
+                      full_period: 5
+
+    # This node scheduled a non-AI workload
+    # No gpu cost (direct or distributed) must show up in the namespace non-ai-workload
+  - OCPGenerator:
+      start_date: last_month
+      nodes:
+        - node:
+          node_name: ai_training
+          node_labels: label_node_name:ai_training|label_qe-source:cost_dist_cpu|label_tier:node|nvidia_com_gpu_count:2|nvidia_com_gpu_product:L40S|nvidia_com_gpu_present:True|nvidia_com_gpu_replicas:2
+          cpu_cores: 20
+          memory_gig: 32
+          namespaces:
+            llm-training:
+              namespace_labels: label_project_name:llm_training
+              pods:
+                - pod:
+                  pod_name: llm_training_pod
+                  cpu_request: 15
+                  mem_request_gig: 7
+                  cpu_limit: 18
+                  mem_limit_gig: 10
+                  pod_seconds: 3000
+                  cpu_usage:
+                    full_period: 12
+                  mem_usage_gig:
+                    full_period: 9
+                  labels: label_app:ai_training
+                  gpus:
+                    - gpu_model: L40S
+                      gpu_memory_capacity_mib: 81920
+                    - gpu_model: L40S
+                      gpu_memory_capacity_mib: 81920
+            non-ai-workload:
+              namespace_labels: label_project_name:non-ai-workload
+              pods:
+                - pod:
+                  pod_name: non_ai_pod
+                  cpu_request: 4
+                  mem_request_gig: 3
+                  cpu_limit: 4
+                  mem_limit_gig: 4
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 2
+                  mem_usage_gig:
+                    full_period: 3
+                  labels: label_app:non_ai
+  - OCPGenerator:
+      start_date: last_month
+      nodes:
+        - node:
+          node_name: ai_learning
+          node_labels: label_node_name:ai_learning|label_qe-source:cost_dist_cpu|label_tier:node|nvidia_com_gpu_count:1|nvidia_com_gpu_product:L40S|nvidia_com_gpu_present:True|nvidia_com_gpu_replicas:1
+          cpu_cores: 20
+          memory_gig: 32
+          namespaces:
+            llm-learning:
+              namespace_labels: label_project_name:llm_learning
+              pods:
+                - pod:
+                  pod_name: llm_learning_pod
+                  cpu_request: 15
+                  mem_request_gig: 7
+                  cpu_limit: 18
+                  mem_limit_gig: 10
+                  pod_seconds: 2400
+                  cpu_usage:
+                    full_period: 12
+                  mem_usage_gig:
+                    full_period: 9
+                  labels: label_app:ai_learning
+                  gpus:
+                    - gpu_model: L40S
+                      gpu_memory_capacity_mib: 81920

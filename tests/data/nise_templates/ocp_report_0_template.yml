@@ -1,0 +1,142 @@
+---
+generators:
+  - OCPGenerator:
+      start_date: last_month
+      end_date: "{{ echo_orig_end }}"
+      nodes:
+        - node:
+          node_name: tests-echo
+          node_labels: label_node:asuna
+          cpu_cores: 5
+          memory_gig: 5
+          resource_id: 22225555
+          namespaces:
+            test_echo:
+              pods:
+                - pod:
+                  pod_name: echoinitial
+                  cpu_request: 5
+                  mem_request_gig: 5
+                  cpu_limit: 5
+                  mem_limit_gig: 5
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 5
+                  mem_usage_gig:
+                    full_period: 5
+                  labels: label_app:echo|label_qe:rock|label_vm_kubevirt_io_name:echovm
+              volumes:
+                - volume:
+                  volume_name: pvc-volume_1
+                  storage_class: gp2
+                  volume_request_gig: 5
+                  labels: label_volume:echo
+                  volume_claims:
+                  - volume_claim:
+                    volume_claim_name: data_echo
+                    pod_name: echoinitial
+                    labels: label_volume:stor_echo|label_volqe:stor_qe
+                    capacity_gig: 5
+                    volume_claim_usage_gig:
+                      full_period: 5
+  - OCPGenerator:
+      start_date: today
+      nodes:
+        - node:
+          node_name: tests-echo
+          node_labels: label_node:asuna
+          cpu_cores: 5
+          memory_gig: 5
+          resource_id: 22225555
+          namespaces:
+            test_echo:
+              pods:
+                - pod:
+                  pod_name: echochanged
+                  cpu_request: 5
+                  mem_request_gig: 5
+                  cpu_limit: 5
+                  mem_limit_gig: 5
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 5
+                  mem_usage_gig:
+                    full_period: 5
+                  labels: label_app:echo|label_qe:rock|label_vm_kubevirt_io_name:echovm
+              volumes:
+                - volume:
+                  volume_name: pvc-volume_1
+                  storage_class: gp2
+                  volume_request_gig: 5
+                  labels: label_volume:echo
+                  volume_claims:
+                  - volume_claim:
+                    volume_claim_name: data_echo
+                    pod_name: echochanged
+                    labels: label_volume:stor_echo|label_volqe:stor_qe
+                    capacity_gig: 5
+                    volume_claim_usage_gig:
+                      full_period: 5
+  - OCPGenerator:
+      start_date: last_month
+      nodes:
+        - node:
+          node_name: tests-indigo
+          node_labels: label_node:iwo
+          cpu_cores: 18
+          memory_gig: 16
+          resource_id: 22226666
+          namespaces:
+            test_indigo:
+              pods:
+                - pod:
+                  pod_name: indigo
+                  cpu_request: 6
+                  mem_request_gig: 6
+                  cpu_limit: 6
+                  mem_limit_gig: 6
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 6
+                  mem_usage_gig:
+                    full_period: 6
+                  labels: label_app:indigo|label_qe:stone|label_vm_kubevirt_io_name:indigovm
+                - pod:
+                  pod_name: zulu
+                  cpu_request: 6
+                  mem_request_gig: 6
+                  cpu_limit: 6
+                  mem_limit_gig: 6
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 6
+                  mem_usage_gig:
+                    full_period: 6
+                  labels: label_app:zulu|label_qe:stone|label_vm_kubevirt_io_name:zuluvm
+              volumes:
+                - volume:
+                  volume_name: pvc-volume_22
+                  storage_class: gp2
+                  volume_request_gig: 6
+                  labels: label_volume:indigo
+                  volume_claims:
+                  - volume_claim:
+                    volume_claim_name: data_indigo
+                    pod_name: indigo
+                    labels: label_volume:stor_indigo|label_volqe:stor_qe
+                    capacity_gig: 5
+                    volume_claim_usage_gig:
+                      full_period: 5
+                - volume:
+                  volume_name: pvc-volume_23
+                  storage_class: gp2
+                  volume_request_gig: 7
+                  labels: label_volume:indigo
+                  volume_claims:
+                    - volume_claim:
+                      volume_claim_name: data_indigo_2
+                      pod_name: indigo
+                      labels: label_volume:stor_indigo|label_volqe:stor_qe
+                      capacity_gig: 6
+                      volume_claim_usage_gig:
+                        full_period: 6

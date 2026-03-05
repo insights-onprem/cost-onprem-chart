@@ -1,0 +1,39 @@
+---
+generators:
+  - OCPGenerator:
+      start_date: today
+      nodes:
+        - node:
+          node_name: multi-tier-tests
+          cpu_cores: 4
+          memory_gig: 4
+          resource_id: 39954255
+          namespaces:
+            smoke_test:
+              pods:
+                - pod:
+                  pod_name: tiers-0
+                  cpu_request: 3
+                  mem_request_gig: 3
+                  cpu_limit: 4
+                  mem_limit_gig: 4
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 2
+                  mem_usage_gig:
+                    full_period: 2
+                  labels: label_app:tiers-0
+              volumes:
+                - volume:
+                  volume_name: pvc-volume_1
+                  storage_class: gp2
+                  volume_request_gig: 300
+                  labels: label_volume:tiers-0
+                  volume_claims:
+                  - volume_claim:
+                    volume_claim_name: tiers-0_data
+                    pod_name: tiers-0
+                    labels: label_volume:tiers-0
+                    capacity_gig: 290
+                    volume_claim_usage_gig:
+                      full_period: 290

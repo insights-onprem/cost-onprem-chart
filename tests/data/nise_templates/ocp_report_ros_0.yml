@@ -1,0 +1,84 @@
+---
+generators:
+  - OCPGenerator:
+      nodes:
+        - node:
+          node_name: node-ros-A
+          cpu_cores: 30
+          memory_gig: 25
+          resource_id: 29999910
+          namespaces:
+            project-ros-A1:
+              pods:
+                - pod:
+                  pod_name: pod-ros-A11
+                  cpu_request: 2
+                  mem_request_gig: 1
+                  cpu_limit: 3
+                  mem_limit_gig: 3
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 2
+                  mem_usage_gig:
+                    full_period: 3
+                  labels: label_ros:ros_A11
+                - pod:
+                  pod_name: pod-ros-A12
+                  cpu_request: 3
+                  mem_request_gig: 3
+                  cpu_limit: 3
+                  mem_limit_gig: 3
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 0.5
+                  mem_usage_gig:
+                    full_period: 1
+                  labels: label_ros:ros_A12
+            project-ros-A2:
+              pods:
+                - pod:
+                  pod_name: pod-ros-A21
+                  cpu_request: 10
+                  mem_request_gig: 4
+                  cpu_limit: 10
+                  mem_limit_gig: 5
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 3
+                  mem_usage_gig:
+                    full_period: 2
+                  labels: label_ros:ros_A21
+        - node:
+          node_name: node-ros-B
+          cpu_cores: 20
+          memory_gig: 16
+          resource_id: 29999911
+          namespaces:
+            project-ros-B1:
+              pods:
+                - pod:
+                  pod_name: pod-ros-B11
+                  cpu_request: 1
+                  mem_request_gig: 1
+                  cpu_limit: 5
+                  mem_limit_gig: 2
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 5
+                  mem_usage_gig:
+                    full_period: 1
+                  labels: label_ros:ros_B11
+            project-ros-B2:
+              pods:
+                - pod:
+                  pod_name: pod-ros-B21
+                  cpu_request: 5
+                  mem_request_gig: 2
+                  cpu_limit: 10
+                  mem_limit_gig: 4
+                  pod_seconds: 3600
+                  cpu_usage:
+                    full_period: 3
+                  mem_usage_gig:
+                    full_period: 3
+                  labels: label_ros:ros_B21

@@ -1,0 +1,46 @@
+---
+generators:
+  - OCPGenerator:
+      nodes:
+        - node:
+          node_name: worker1
+          node_labels: label_key1:label_value1|label_key2:label_value2
+          cpu_cores: 8
+          memory_gig: 16
+          resource_id: 55555555
+          namespaces:
+            eap-namespace:
+              namespace_labels: label_key1:label_value1|label_key2:label_value2
+              pods:
+                - pod:
+                  pod_name: eap8-1
+                  cpu_request: 2
+                  mem_request_gig: 2
+                  cpu_limit: 4
+                  mem_limit_gig: 2
+                  mem_usage_gig:
+                    full_period: 2
+                  labels: rht_comp:EAP
+              volumes:
+                - volume:
+                  volume_name: pvc-volume_1
+                  storage_class: gp2
+                  csi_driver:
+                  csi_volume_handle:
+                  volume_request_gig: 20
+                  labels: label_key3:label_value3|label_key4:label_value4|label_storageclass:gp2
+                  volume_claims:
+                    - volume_claim:
+                      volume_claim_name: pod_name1_data
+                      pod_name: pod_name1
+                      labels: vc_label_key2:label_value2
+                      capacity_gig: 5
+                      volume_claim_usage_gig:
+                        full_period: 3
+                - volume:
+                  volume_name: pvc-volume_claimless
+                  storage_class: gp3-csi
+                  csi_driver: ebs.csi.aws.com
+                  csi_volume_handle: vol-55555555
+                  volume_request_gig: 20
+                  labels: label_key5:label_value5|label_key6:label_value6|label_storageclass:gp3-csi
