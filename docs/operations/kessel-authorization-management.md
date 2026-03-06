@@ -148,7 +148,7 @@ kessel:
     enabled: true                # toggle the CronJob on/off
     schedule: "*/5 * * * *"      # cron schedule (default: every 5 minutes)
     defaultRole: cost-administrator  # role assigned to new users
-    image: quay.io/jordigilh/kessel-tools:latest
+    image: quay.io/insights-onprem/kessel-tools:latest
     keycloakSecretName: keycloak-initial-admin
     keycloakUsernameKey: username
     keycloakPasswordKey: password

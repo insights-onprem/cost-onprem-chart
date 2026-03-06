@@ -47,7 +47,7 @@ ros:
   # All ROS services (api, processor, recommendationPoller, housekeeper, partitionCleaner)
   # use the same image
   image:
-    repository: quay.io/jordigilh/ros-ocp-backend
+    repository: quay.io/insights-onprem/ros-ocp-backend
     tag: "kessel"
     pullPolicy: Always
 
@@ -156,7 +156,7 @@ costManagement:
     enabled: true
 
     image:
-      repository: quay.io/jordigilh/koku
+      repository: quay.io/insights-onprem/koku
       tag: "kessel"
       pullPolicy: Always
 
@@ -808,7 +808,7 @@ kessel:
     enabled: true
     schedule: "*/5 * * * *"
     defaultRole: cost-administrator
-    image: quay.io/jordigilh/kessel-tools:latest
+    image: quay.io/insights-onprem/kessel-tools:latest
     keycloakSecretName: keycloak-initial-admin
     keycloakUsernameKey: username
     keycloakPasswordKey: password

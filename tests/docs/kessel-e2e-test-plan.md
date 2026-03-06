@@ -75,7 +75,7 @@ verification and enhancing existing tests for Kessel awareness.
 
 | Item | Version | Source |
 |------|---------|--------|
-| Koku (ReBAC image) | `quay.io/jordigilh/koku:rebac` | `FLPATH-3294/kessel-rebac-integration` branch |
+| Koku (ReBAC image) | `quay.io/insights-onprem/koku:kessel` | `FLPATH-3294/kessel-rebac-integration` branch |
 | SpiceDB | `docker.io/authzed/spicedb:latest` | Deployed by `deploy-kessel.sh` |
 | Kessel Relations API | Deployed by `deploy-kessel.sh` | `kessel` namespace |
 | Kessel Inventory API | Deployed by `deploy-kessel.sh` | `kessel` namespace |
