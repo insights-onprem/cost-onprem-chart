@@ -9,6 +9,8 @@ Automation scripts for deploying, configuring, and testing the Cost Management O
 | `deploy-test-cost-onprem.sh` | **Full deployment + test orchestration** | OpenShift |
 | `run-pytest.sh` | Run pytest test suite | All environments |
 | `deploy-kafka.sh` | Deploy Kafka infrastructure | All environments |
+| `deploy-kessel.sh` | Deploy Kessel authorization stack (SpiceDB + Relations API + Inventory API) | OpenShift |
+| `kessel-admin.sh` | Manage Kessel authorization tuples (sync users, grant/revoke roles, check permissions) | OpenShift |
 | `install-helm-chart.sh` | Deploy CoP Helm chart | All environments |
 | `deploy-rhbk.sh` | Deploy Red Hat Build of Keycloak | OpenShift |
 | `setup-cost-mgmt-tls.sh` | Configure TLS certificates | OpenShift |
@@ -16,39 +18,50 @@ Automation scripts for deploying, configuring, and testing the Cost Management O
 
 ## 🚀 Quick Start
 
-### Standard OpenShift Deployment
+### Full Deployment (Recommended)
+
+Kessel (ReBAC authorization) and Keycloak (JWT authentication) are **required** for all on-premise deployments. Use the orchestration script or follow the manual steps below.
+
+**Automated deployment:**
 ```bash
-# 1. Deploy Cost Management Operator with TLS support
-./setup-cost-mgmt-tls.sh
+# Deploy all infrastructure + Helm chart + run tests
+./deploy-test-cost-onprem.sh
 
-# 2. Deploy Kafka infrastructure
-./deploy-kafka.sh
-
-# 3. Deploy Cost Management
-./install-helm-chart.sh
-
-# 4. Validate the deployment (E2E test)
-NAMESPACE=cost-onprem ./run-pytest.sh
+# IMPORTANT: After the script completes, sync Keycloak users to Kessel.
+# The orchestration script does not do this automatically.
+./kessel-admin.sh sync
 ```
 
-
-### JWT Authentication Setup
+**Manual step-by-step:**
 ```bash
-# 1. Deploy Red Hat Build of Keycloak
+# 1. Create the Cost Management namespace (required before deploy-kessel.sh)
+oc create namespace cost-onprem 2>/dev/null || true
+
+# 2. Deploy Red Hat Build of Keycloak (identity provider)
 ./deploy-rhbk.sh
 
-# 2. Deploy Kafka infrastructure
+# 3. Deploy Kessel authorization stack (SpiceDB, Relations API, Inventory API)
+#    Creates kessel-config secret in cost-onprem namespace
+./deploy-kessel.sh
+
+# 4. Deploy Kafka infrastructure
 ./deploy-kafka.sh
 
-# 3. Deploy CoP with JWT authentication
-export JWT_AUTH_ENABLED=true
+# 5. Deploy CoP Helm chart (Koku migration seeds Kessel roles automatically)
 ./install-helm-chart.sh
 
-# 4. Configure TLS certificates
+# 6. Configure TLS certificates
 ./setup-cost-mgmt-tls.sh
 
-# 5. Test JWT flow through centralized gateway
-NAMESPACE=cost-onprem ./run-pytest.sh --auth
+# 7. Sync Keycloak users to Kessel (creates principals, role_bindings, tenants)
+./kessel-admin.sh sync
+
+# 8. Verify authorization is working
+./kessel-admin.sh check <username> cost_management_openshift_cluster_read <org_id>
+./kessel-admin.sh status
+
+# 9. Run E2E validation
+NAMESPACE=cost-onprem ./run-pytest.sh
 ```
 
 ## 📖 Script Documentation
@@ -194,6 +207,107 @@ KAFKA_BOOTSTRAP_SERVERS=my-kafka:9092 ./deploy-kafka.sh
 
 ---
 
+### `deploy-kessel.sh`
+Deploy the Kessel authorization stack required by Cost Management's ReBAC integration.
+
+**What it creates:**
+- PostgreSQL instance (dedicated for SpiceDB + Inventory)
+- SpiceDB (relationship store, gRPC on port 50051)
+- Kessel Relations API (gRPC on port 9000)
+- Kessel Inventory API (HTTP on port 8000, gRPC on port 9000)
+- `kessel-schema` ConfigMap with the ZED schema
+- `kessel-config` secret in the Cost Management namespace
+
+**Schema vs Role seeding:** This script provisions the ZED schema to SpiceDB. Role seeding (creating role tuples with permissions) is handled separately by Koku's migration job (`kessel_seed_roles` Django management command), which runs during `helm install`.
+
+**Usage:**
+```bash
+# Basic deployment
+./deploy-kessel.sh
+
+# With verbose output
+LOG_LEVEL=INFO ./deploy-kessel.sh
+
+# Custom namespaces
+KESSEL_NAMESPACE=my-kessel COST_MGMT_NAMESPACE=my-cost ./deploy-kessel.sh
+```
+
+**Environment variables:**
+- `KESSEL_NAMESPACE`: Namespace for Kessel components (default: `kessel`)
+- `SPICEDB_PRESHARED_KEY`: Pre-shared key for SpiceDB gRPC (default: auto-generated)
+- `COST_MGMT_NAMESPACE`: Namespace where Cost Management runs (default: `cost-onprem`)
+- `STORAGE_CLASS`: PVC storage class (default: auto-detect)
+- `LOG_LEVEL`: Output verbosity: `ERROR`, `WARN`, `INFO`, `DEBUG` (default: `WARN`)
+
+---
+
+### `kessel-admin.sh`
+Manage the authorization layer that bridges Keycloak (identity) and Kessel (authorization).
+
+This script creates the tuple chain that connects Keycloak users to Kessel roles:
+```
+tenant:{org_id}  --t_binding-->  role_binding:{rb_id}
+role_binding:{rb_id}  --t_granted-->  role:{role_slug}
+role_binding:{rb_id}  --t_subject-->  principal:{username}
+```
+
+**Run AFTER:** `deploy-kessel.sh` + `deploy-rhbk.sh` + `helm install` (which runs `kessel_seed_roles`)
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `sync` | Sync all Keycloak users to Kessel with `DEFAULT_ROLE` |
+| `grant <user> <role> <org_id>` | Grant a specific role to a user in an org |
+| `revoke <user> <role> <org_id>` | Revoke a role from a user |
+| `check <user> <perm> <org_id>` | Check if user has a specific permission |
+| `list-users` | List Keycloak users with their org_id and account attributes |
+| `status` | Show current Kessel tuple counts by resource type |
+
+**Available roles** (seeded by Koku's `kessel_seed_roles`):
+- `cost-administrator` -- Full read + write for all resource types
+- `cost-cloud-viewer` -- Read-only for AWS, GCP, Azure
+- `cost-openshift-viewer` -- Read-only for OpenShift cluster/node/project
+- `cost-price-list-administrator` -- Read + write for cost models
+- `cost-price-list-viewer` -- Read-only for cost models
+
+**Usage:**
+```bash
+# Sync all Keycloak users (assigns DEFAULT_ROLE to each)
+./kessel-admin.sh sync
+
+# Grant a specific role
+./kessel-admin.sh grant alice cost-openshift-viewer org1234567
+
+# Verify a permission
+./kessel-admin.sh check alice cost_management_openshift_cluster_read org1234567
+
+# Revoke a role
+./kessel-admin.sh revoke alice cost-openshift-viewer org1234567
+
+# List users and their org assignments
+./kessel-admin.sh list-users
+
+# Show tuple counts
+./kessel-admin.sh status
+```
+
+**Environment variables:**
+- `RELATIONS_URL`: Relations API gRPC endpoint (default: auto port-forward to `kessel-relations`)
+- `KEYCLOAK_URL`: Keycloak admin URL (default: auto-detect from route)
+- `KEYCLOAK_REALM`: Realm name (default: `kubernetes`)
+- `KEYCLOAK_ADMIN`: Admin username (default: `admin`)
+- `KEYCLOAK_PASSWORD`: Admin password (default: auto-detect from secret)
+- `KESSEL_NAMESPACE`: Namespace where Kessel runs (default: `kessel`)
+- `KEYCLOAK_NAMESPACE`: Namespace where Keycloak runs (default: `keycloak`)
+- `DEFAULT_ROLE`: Default role slug for `sync` (default: `cost-administrator`)
+
+**Prerequisites:**
+- `grpcurl` ([github.com/fullstorydev/grpcurl](https://github.com/fullstorydev/grpcurl))
+- `jq`
+- `oc` (logged into the cluster)
+
+---
+
 ### `deploy-test-cost-onprem.sh`
 Complete orchestration script for deploying and testing Cost On-Prem with JWT authentication.
 
@@ -207,11 +321,12 @@ release/ci-operator/step-registry/insights-onprem/cost-onprem-chart/e2e/
 
 **What it does:**
 1. Deploys Red Hat Build of Keycloak (RHBK)
-2. Deploys Kafka/AMQ Streams infrastructure
-3. Installs Cost On-Prem Helm chart
-4. Configures TLS certificates
-5. **Runs pytest via `scripts/run-pytest.sh`** (CI mode - excludes extended tests)
-6. Optionally saves deployment version info
+2. Deploys Kessel authorization stack (SpiceDB, Relations API, Inventory API)
+3. Deploys Kafka/AMQ Streams infrastructure
+4. Installs Cost On-Prem Helm chart (Koku migration seeds Kessel roles)
+5. Configures TLS certificates
+6. **Runs pytest via `scripts/run-pytest.sh`** (CI mode - excludes extended tests)
+7. Optionally saves deployment version info
 
 **Usage:**
 ```bash
@@ -465,6 +580,7 @@ For detailed troubleshooting, see [Troubleshooting Guide](../docs/operations/tro
 - `jq` (JSON processor)
 - `curl` (HTTP client)
 - `openssl` (Certificate tools)
+- `grpcurl` (gRPC CLI - required for `kessel-admin.sh`)
 - `python3` (Python 3 interpreter - required for pytest tests)
 - `python3-venv` (Virtual environment module - required for pytest tests)
 
@@ -477,7 +593,7 @@ All scripts use color-coded output:
 
 ---
 
-**Last Updated**: January 2026
+**Last Updated**: March 2026
 **Maintainer**: CoP Engineering Team
 **Supported Platform**: OpenShift 4.18+
 **Tested With**: OpenShift 4.18.24
