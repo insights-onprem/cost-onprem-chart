@@ -550,6 +550,98 @@ download_openshift_values() {
     fi
 }
 
+bootstrap_kessel() {
+    log_step "Bootstrapping Kessel authorization"
+
+    local KEYCLOAK_NS="${KEYCLOAK_NAMESPACE:-keycloak}"
+    local KEYCLOAK_HOST
+    KEYCLOAK_HOST=$(oc get route keycloak -n "$KEYCLOAK_NS" -o jsonpath='{.spec.host}' 2>/dev/null || true)
+    if [[ -z "$KEYCLOAK_HOST" ]]; then
+        log_warning "Keycloak route not found, skipping Kessel bootstrap"
+        return 0
+    fi
+    local KEYCLOAK_URL="https://$KEYCLOAK_HOST"
+    local REALM="kubernetes"
+
+    local ADMIN_PASSWORD
+    ADMIN_PASSWORD=$(oc get secret keycloak-initial-admin -n "$KEYCLOAK_NS" \
+        -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+    if [[ -z "$ADMIN_PASSWORD" ]]; then
+        log_warning "Keycloak admin password not found, skipping Kessel bootstrap"
+        return 0
+    fi
+
+    local KC_TOKEN
+    KC_TOKEN=$(curl -sk -X POST "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
+        -d "username=admin" -d "password=$ADMIN_PASSWORD" \
+        -d "grant_type=password" -d "client_id=admin-cli" 2>/dev/null \
+        | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null || true)
+    if [[ -z "$KC_TOKEN" ]]; then
+        log_warning "Could not obtain Keycloak admin token, skipping Kessel bootstrap"
+        return 0
+    fi
+
+    # --- Create 'admin' user in Keycloak (same org as 'test') ---
+    log_info "Creating 'admin' user in Keycloak..."
+    local HTTP_CODE
+    HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" -X POST \
+        "$KEYCLOAK_URL/admin/realms/$REALM/users" \
+        -H "Authorization: Bearer $KC_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "username": "admin",
+            "email": "admin@test.com",
+            "emailVerified": true,
+            "enabled": true,
+            "firstName": "Admin",
+            "lastName": "User",
+            "attributes": {
+                "org_id": ["org1234567"],
+                "account_number": ["7890123"]
+            }
+        }' 2>/dev/null)
+
+    if [[ "$HTTP_CODE" == "201" ]]; then
+        log_success "User 'admin' created"
+    elif [[ "$HTTP_CODE" == "409" ]]; then
+        log_info "User 'admin' already exists"
+    else
+        log_warning "Unexpected response creating 'admin' user: HTTP $HTTP_CODE"
+    fi
+
+    # Set admin password
+    local ADMIN_USER_ID
+    ADMIN_USER_ID=$(curl -sk "$KEYCLOAK_URL/admin/realms/$REALM/users?username=admin&exact=true" \
+        -H "Authorization: Bearer $KC_TOKEN" 2>/dev/null \
+        | python3 -c "import sys,json; users=json.load(sys.stdin); print(users[0]['id'] if users else '')" 2>/dev/null || true)
+
+    if [[ -n "$ADMIN_USER_ID" ]]; then
+        curl -sk -X PUT "$KEYCLOAK_URL/admin/realms/$REALM/users/$ADMIN_USER_ID/reset-password" \
+            -H "Authorization: Bearer $KC_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"type":"password","value":"admin","temporary":false}' 2>/dev/null
+        log_success "Password set for 'admin' user"
+    fi
+
+    # --- Run kessel-admin.sh bootstrap (seed roles + sync all users as cost-administrator) ---
+    log_info "Running kessel-admin.sh bootstrap (seed roles + sync users)..."
+    if bash "${LOCAL_SCRIPTS_DIR}/kessel-admin.sh" bootstrap; then
+        log_success "Kessel bootstrap completed"
+    else
+        log_error "kessel-admin.sh bootstrap failed"
+        return 1
+    fi
+
+    # --- Adjust viewer role: test user gets cost-openshift-viewer instead of cost-administrator ---
+    log_info "Adjusting 'test' user role to cost-openshift-viewer..."
+    bash "${LOCAL_SCRIPTS_DIR}/kessel-admin.sh" revoke test cost-administrator org1234567 2>/dev/null || true
+    bash "${LOCAL_SCRIPTS_DIR}/kessel-admin.sh" grant test cost-openshift-viewer org1234567
+
+    log_success "Kessel authorization bootstrap complete"
+    log_info "  admin → cost-administrator"
+    log_info "  test  → cost-openshift-viewer"
+}
+
 setup_tls() {
     if [[ "${SKIP_TLS}" == "true" ]]; then
         log_warning "Skipping TLS certificate setup (--skip-tls)"
@@ -819,6 +911,7 @@ main() {
 
     deploy_rhbk
     deploy_kessel
+    bootstrap_kessel
     deploy_kafka
     deploy_s4
 
