@@ -1,0 +1,94 @@
+{{- if .Values.kessel.sync.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "cost-onprem.fullname" . }}-kessel-sync
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-onprem.koku.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kessel-sync
+spec:
+  schedule: {{ .Values.kessel.sync.schedule | default "*/5 * * * *" | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 120
+      template:
+        metadata:
+          labels:
+            {{- include "cost-onprem.koku.labels" . | nindent 12 }}
+            app.kubernetes.io/component: kessel-sync
+        spec:
+          serviceAccountName: {{ include "cost-onprem.koku.serviceAccountName" . }}
+          restartPolicy: Never
+          securityContext:
+            {{- include "cost-onprem.securityContext.pod" . | nindent 12 }}
+          containers:
+          - name: sync
+            image: {{ .Values.kessel.sync.image | default "quay.io/jordigilh/kessel-tools:latest" | quote }}
+            imagePullPolicy: Always
+            command:
+              - bash
+              - -c
+              - |
+                set -euo pipefail
+                echo "=== Kessel User Sync ($(date -u +%Y-%m-%dT%H:%M:%SZ)) ==="
+
+                SCRIPT="/scripts/kessel-admin.sh"
+                if [ ! -f "$SCRIPT" ]; then
+                  echo "ERROR: $SCRIPT not found"
+                  exit 1
+                fi
+                chmod +x "$SCRIPT"
+
+                "$SCRIPT" sync
+
+                echo "=== Sync complete ==="
+            env:
+            - name: SPICEDB_HOST
+              value: {{ printf "spicedb.%s.svc.cluster.local" (.Values.kessel.namespace | default "kessel") | quote }}
+            - name: SPICEDB_PORT
+              value: {{ .Values.kessel.spicedb.port | default "50051" | toString | quote }}
+            - name: SPICEDB_PRESHARED_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: kessel-config
+                  key: preshared-key
+            - name: KEYCLOAK_URL
+              value: {{ include "cost-onprem.keycloak.url" . | quote }}
+            - name: KEYCLOAK_REALM
+              value: {{ .Values.jwtAuth.keycloak.realm | default "kubernetes" | quote }}
+            - name: KEYCLOAK_ADMIN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kessel.sync.keycloakSecretName | default "keycloak-initial-admin" }}
+                  key: {{ .Values.kessel.sync.keycloakUsernameKey | default "username" }}
+            - name: KEYCLOAK_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kessel.sync.keycloakSecretName | default "keycloak-initial-admin" }}
+                  key: {{ .Values.kessel.sync.keycloakPasswordKey | default "password" }}
+            - name: DEFAULT_ROLE
+              value: {{ .Values.kessel.sync.defaultRole | default "cost-administrator" | quote }}
+            volumeMounts:
+            - name: kessel-admin-script
+              mountPath: /scripts
+              readOnly: true
+            securityContext:
+              {{- include "cost-onprem.securityContext.container" . | nindent 14 }}
+            resources:
+              requests:
+                cpu: 50m
+                memory: 64Mi
+              limits:
+                cpu: 200m
+                memory: 128Mi
+          volumes:
+          - name: kessel-admin-script
+            configMap:
+              name: {{ include "cost-onprem.fullname" . }}-kessel-admin
+              defaultMode: 0755
+{{- end }}

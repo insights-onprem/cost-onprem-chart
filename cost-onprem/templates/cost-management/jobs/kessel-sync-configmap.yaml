@@ -1,0 +1,13 @@
+{{- if .Values.kessel.sync.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cost-onprem.fullname" . }}-kessel-admin
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-onprem.koku.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kessel-sync
+data:
+  kessel-admin.sh: |
+    {{- .Files.Get "files/kessel-admin.sh" | nindent 4 }}
+{{- end }}

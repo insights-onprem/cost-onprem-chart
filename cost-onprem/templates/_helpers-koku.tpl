@@ -269,6 +269,47 @@ Koku service account name
 
 {{/*
 =============================================================================
+Kessel (ReBAC) Helpers
+=============================================================================
+*/}}
+
+{{/*
+Kessel Relations API host.
+Uses explicit value from values.yaml, or constructs the in-cluster FQDN
+from the kessel namespace.
+*/}}
+{{- define "cost-onprem.kessel.relationsHost" -}}
+{{- if .Values.kessel.relations.host -}}
+  {{- .Values.kessel.relations.host -}}
+{{- else -}}
+  {{- printf "kessel-relations.%s.svc.cluster.local" (.Values.kessel.namespace | default "kessel") -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+SpiceDB host for direct schema management.
+*/}}
+{{- define "cost-onprem.kessel.spicedbHost" -}}
+{{- if .Values.kessel.spicedb.host -}}
+  {{- .Values.kessel.spicedb.host -}}
+{{- else -}}
+  {{- printf "spicedb.%s.svc.cluster.local" (.Values.kessel.namespace | default "kessel") -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Kessel Inventory API host.
+*/}}
+{{- define "cost-onprem.kessel.inventoryHost" -}}
+{{- if .Values.kessel.inventory.host -}}
+  {{- .Values.kessel.inventory.host -}}
+{{- else -}}
+  {{- printf "kessel-inventory.%s.svc.cluster.local" (.Values.kessel.namespace | default "kessel") -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+=============================================================================
 Environment Variable Helpers
 =============================================================================
 */}}
@@ -362,6 +403,51 @@ Common environment variables for Koku API and Celery
   value: {{ .Values.costManagement.reportDownloadSchedule | default "*/5 * * * *" | quote }}
 - name: POLLING_TIMER
   value: {{ .Values.costManagement.celery.pollingTimer | default "86400" | quote }}
+# Kessel (ReBAC) connectivity -- required for on-prem authorization
+- name: KESSEL_RELATIONS_HOST
+  value: {{ include "cost-onprem.kessel.relationsHost" . | quote }}
+- name: KESSEL_RELATIONS_PORT
+  value: {{ .Values.kessel.relations.port | default "9000" | quote }}
+- name: KESSEL_RELATIONS_TLS
+  value: {{ .Values.kessel.relations.tls | default "false" | quote }}
+- name: KESSEL_RELATIONS_URL
+  value: {{ printf "http://%s:%s" (include "cost-onprem.kessel.relationsHost" .) (.Values.kessel.relations.httpPort | default "8000" | toString) | quote }}
+- name: KESSEL_INVENTORY_HOST
+  value: {{ include "cost-onprem.kessel.inventoryHost" . | quote }}
+- name: KESSEL_INVENTORY_PORT
+  value: {{ .Values.kessel.inventory.port | default "9000" | quote }}
+- name: KESSEL_INVENTORY_TLS
+  value: {{ .Values.kessel.inventory.tls | default "false" | quote }}
+# SpiceDB -- direct connection for schema management (kessel_update_schema command)
+- name: SPICEDB_HOST
+  value: {{ include "cost-onprem.kessel.spicedbHost" . | quote }}
+- name: SPICEDB_PORT
+  value: {{ .Values.kessel.spicedb.port | default "50051" | quote }}
+- name: SPICEDB_PRESHARED_KEY
+  valueFrom:
+    secretKeyRef:
+      name: kessel-config
+      key: spicedb-preshared-key
+- name: SPICEDB_TLS
+  value: {{ .Values.kessel.spicedb.tls | default "false" | quote }}
+# Kessel API authentication (JWT via Keycloak service account)
+- name: KESSEL_AUTH_ENABLED
+  value: "True"
+- name: KESSEL_AUTH_CLIENT_ID
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.kessel.auth.secretName | default "kessel-koku-client" }}
+      key: client-id
+- name: KESSEL_AUTH_CLIENT_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.kessel.auth.secretName | default "kessel-koku-client" }}
+      key: client-secret
+- name: KESSEL_AUTH_OIDC_ISSUER
+  value: {{ printf "http://keycloak-service.%s.svc.cluster.local:8080/realms/%s" (.Values.jwtAuth.keycloak.namespace | default "keycloak") (.Values.jwtAuth.keycloak.realm | default "kubernetes") | quote }}
+# Shared cost-management application type ID (aligns Koku + housekeeper)
+- name: COST_APPLICATION_TYPE_ID
+  value: {{ .Values.costManagement.costApplicationTypeId | default "0" | quote }}
 {{- end -}}
 
 {{/*

@@ -210,11 +210,12 @@ data:
                       -- =============================================================================
                       -- This function constructs the X-Rh-Identity header required by Koku.
                       --
-                      -- Authentication Mode: ENHANCED_ORG_ADMIN
+                      -- Authentication Mode: Kessel ReBAC
                       -- -----------------------------------------
-                      -- Koku is configured with DEVELOPMENT=false and ENHANCED_ORG_ADMIN=true.
-                      -- When is_org_admin=true in the identity header, Koku bypasses RBAC service
-                      -- calls and grants full access to all resources within the user's org.
+                      -- Koku is configured with AUTHORIZATION_BACKEND=rebac (on-prem default).
+                      -- Authorization is delegated to Kessel (Relations/Inventory APIs).
+                      -- is_org_admin is omitted from the identity header so Koku's
+                      -- middleware calls the Kessel access provider for every request.
                       --
                       -- Required fields:
                       --   org_id: Tenant/schema lookup. Koku prepends "org" to create schema name.
@@ -222,19 +223,11 @@ data:
                       --           workaround for Koku middleware compatibility.
                       --   account_number: Customer account identifier (required by identity schema)
                       --   type: Identity type, always "User" for interactive users
-                      --   user.username: For logging/audit purposes
-                      --   user.is_org_admin: TRUE - Required for ENHANCED_ORG_ADMIN mode to bypass
-                      --           RBAC service calls. All users are treated as org admins.
+                      --   user.username: Used as the Kessel principal ID for authorization lookups
                       --
                       -- Hardcoded fields:
                       --   entitlements.cost_management.is_entitled: REQUIRED - Koku checks this in
                       --           middleware and returns 403 if not "True". No bypass exists.
-                      --
-                      -- Limitations of ENHANCED_ORG_ADMIN mode:
-                      --   - All authenticated users have full admin access within their org
-                      --   - No granular RBAC (e.g., "user A sees only cluster X") within same org
-                      --   - Multi-tenancy IS preserved: users only see their own org's data
-                      --   - Suitable for single-tenant or trusted-user deployments
                       -- =============================================================================
                       local function build_xrhid_json(org_id, account_number, user_type, username, email)
                         -- Properly escape JSON special characters
@@ -258,11 +251,10 @@ data:
                         username = escape_json(username or "user")
                         email = escape_json(email or (username .. "@noreply.local"))
 
-                        -- is_org_admin=true triggers ENHANCED_ORG_ADMIN bypass in Koku
-                        -- This grants full access without calling external RBAC service
                         -- Note: email is REQUIRED by Koku's middleware for user creation
+                        -- is_org_admin is intentionally omitted so Koku delegates authz to Kessel
                         return string.format(
-                          '{"org_id":"%s","identity":{"org_id":"%s","account_number":"%s","type":"%s","user":{"username":"%s","email":"%s","is_org_admin":true}},"entitlements":{"cost_management":{"is_entitled":true}}}',
+                          '{"org_id":"%s","identity":{"org_id":"%s","account_number":"%s","type":"%s","user":{"username":"%s","email":"%s"}},"entitlements":{"cost_management":{"is_entitled":true}}}',
                           org_id, org_id, account_number, user_type, username, email
                         )
                       end
@@ -355,7 +347,7 @@ data:
                           end
 
                           -- Build and encode X-Rh-Identity header
-                          -- Note: is_org_admin=true is hardcoded for ENHANCED_ORG_ADMIN mode
+                          -- is_org_admin omitted; authorization delegated to Kessel
                           local xrhid_json = build_xrhid_json(org_id, account_number, "User", username, email)
                           local xrhid_b64 = request_handle:base64Escape(xrhid_json)
 
