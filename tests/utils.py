@@ -444,15 +444,25 @@ def execute_db_query(
 # =============================================================================
 
 
-def create_rh_identity_header(org_id: str, account_number: str = None) -> str:
+def create_rh_identity_header(
+    org_id: str,
+    account_number: str = None,
+    username: str = "admin",
+) -> str:
     """Create X-Rh-Identity header value for Koku authentication.
 
     The X-Rh-Identity header is a base64-encoded JSON structure required by
     Koku middleware for tenant identification and authorization.
 
+    With Kessel ReBAC, the ``username`` field maps to the SpiceDB principal
+    ``redhat/{username}``. The default is ``admin`` (cost-administrator role)
+    which has full permissions for source creation, cost-model writes, etc.
+
     Args:
         org_id: Organization ID for the tenant
         account_number: Account number (defaults to org_id if not provided)
+        username: Keycloak username that maps to a SpiceDB principal
+                  (default "admin" = cost-administrator)
 
     Returns:
         Base64-encoded identity JSON string
@@ -467,9 +477,9 @@ def create_rh_identity_header(org_id: str, account_number: str = None) -> str:
             "account_number": account_number,
             "type": "User",
             "user": {
-                "username": "test",
-                "email": "test@example.com",
-                "is_org_admin": True,
+                "username": username,
+                "email": f"{username}@example.com",
+                "is_org_admin": False,
             },
         },
         "entitlements": {
@@ -488,6 +498,7 @@ def create_identity_header_custom(
     email: Optional[str] = "test@example.com",
     entitlements: Optional[dict] = None,
     account_number: Optional[str] = None,
+    username: str = "test",
 ) -> str:
     """Create X-Rh-Identity header with customizable fields for error testing.
 
@@ -500,6 +511,7 @@ def create_identity_header_custom(
         email: User email address (set to None to omit the field)
         entitlements: Custom entitlements dict (default: cost_management is_entitled=True)
         account_number: Account number (defaults to org_id if not provided)
+        username: Username for the identity (default: "test")
 
     Returns:
         Base64-encoded identity JSON string
@@ -515,7 +527,7 @@ def create_identity_header_custom(
         }
 
     user_dict: dict[str, Any] = {
-        "username": "test",
+        "username": username,
         "is_org_admin": is_org_admin,
     }
     if email is not None:
