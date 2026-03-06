@@ -820,6 +820,7 @@ main() {
     deploy_rhbk
     deploy_kessel
     deploy_kafka
+    deploy_s4
 
     # Run Helm sanity test before deploying complex chart
     log_info "Running Helm sanity test to verify basic functionality..."
