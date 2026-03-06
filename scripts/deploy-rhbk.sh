@@ -38,6 +38,8 @@ STORAGE_CLASS=${STORAGE_CLASS:-}  # Auto-detect if empty
 REALM_NAME=${REALM_NAME:-kubernetes}
 COST_MGMT_OPERATOR_CLIENT_ID=${COST_MGMT_OPERATOR_CLIENT_ID:-cost-management-operator}
 COST_MGMT_UI_CLIENT_ID=${COST_MGMT_UI_CLIENT_ID:-cost-management-ui}
+COST_MGMT_KOKU_CLIENT_ID=${COST_MGMT_KOKU_CLIENT_ID:-cost-management-koku}
+COST_MGMT_INVENTORY_CLIENT_ID=${COST_MGMT_INVENTORY_CLIENT_ID:-cost-management-inventory}
 COST_MGMT_NAMESPACE=${COST_MGMT_NAMESPACE:-cost-onprem}
 COST_MGMT_RELEASE_NAME=${COST_MGMT_RELEASE_NAME:-cost-onprem}
 KEYCLOAK_INSTANCES=${KEYCLOAK_INSTANCES:-1}
@@ -862,8 +864,33 @@ spec:
               id.token.claim: "true"
               jsonType.label: String
               userinfo.token.claim: "false"
-          # Note: "access" attribute mapper removed - using ENHANCED_ORG_ADMIN mode
-          # All authenticated users are org admins with full access within their org
+          # Note: "access" attribute is not needed -- Kessel ReBAC handles authorization
+      - clientId: $COST_MGMT_KOKU_CLIENT_ID
+        name: "Cost Management Koku Service Account"
+        description: "Service account for Koku backend to authenticate to Kessel APIs"
+        enabled: true
+        clientAuthenticatorType: client-secret
+        serviceAccountsEnabled: true
+        standardFlowEnabled: false
+        directAccessGrantsEnabled: false
+        implicitFlowEnabled: false
+        publicClient: false
+        protocol: openid-connect
+        defaultClientScopes:
+          - openid
+      - clientId: $COST_MGMT_INVENTORY_CLIENT_ID
+        name: "Cost Management Inventory Service Account"
+        description: "Service account for Kessel Inventory API to authenticate to Relations API"
+        enabled: true
+        clientAuthenticatorType: client-secret
+        serviceAccountsEnabled: true
+        standardFlowEnabled: false
+        directAccessGrantsEnabled: false
+        implicitFlowEnabled: false
+        publicClient: false
+        protocol: openid-connect
+        defaultClientScopes:
+          - openid
 EOF
         echo_success "✓ Kubernetes realm import created"
     fi
@@ -915,21 +942,17 @@ EOF
             local client_data=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/clients" \
                 -H "Authorization: Bearer $access_token" 2>/dev/null)
 
-            # Check if both clients are in the list
-            local operator_client_found=false
-            local ui_client_found=false
+            # Check if all four clients are in the list
+            local all_found=true
+            for cid in "$COST_MGMT_OPERATOR_CLIENT_ID" "$COST_MGMT_UI_CLIENT_ID" "$COST_MGMT_KOKU_CLIENT_ID" "$COST_MGMT_INVENTORY_CLIENT_ID"; do
+                if echo "$client_data" | grep -q "\"clientId\":\"$cid\""; then
+                    echo_success "✓ Client '$cid' is available via admin API"
+                else
+                    all_found=false
+                fi
+            done
 
-            if echo "$client_data" | grep -q "\"clientId\":\"$COST_MGMT_OPERATOR_CLIENT_ID\""; then
-                echo_success "✓ Client '$COST_MGMT_OPERATOR_CLIENT_ID' is available via admin API"
-                operator_client_found=true
-            fi
-
-            if echo "$client_data" | grep -q "\"clientId\":\"$COST_MGMT_UI_CLIENT_ID\""; then
-                echo_success "✓ Client '$COST_MGMT_UI_CLIENT_ID' is available via admin API"
-                ui_client_found=true
-            fi
-
-            if [ "$operator_client_found" = true ] && [ "$ui_client_found" = true ]; then
+            if [ "$all_found" = true ]; then
                 clients_available=true
                 break
             fi
@@ -1226,6 +1249,12 @@ extract_client_secret() {
     # Extract UI client secret
     extract_single_client_secret "$COST_MGMT_UI_CLIENT_ID" "keycloak-client-secret-cost-management-ui" || echo_warning "Failed to extract UI client secret"
 
+    # Extract Koku-to-Kessel service account secret
+    extract_single_client_secret "$COST_MGMT_KOKU_CLIENT_ID" "keycloak-client-secret-cost-management-koku" || echo_warning "Failed to extract Koku Kessel client secret"
+
+    # Extract Inventory API service account secret
+    extract_single_client_secret "$COST_MGMT_INVENTORY_CLIENT_ID" "keycloak-client-secret-cost-management-inventory" || echo_warning "Failed to extract Inventory Kessel client secret"
+
     echo ""
 }
 
@@ -1283,10 +1312,8 @@ create_test_user() {
     #   - org_id: Tenant identifier (maps to database schema)
     #   - account_number: Customer account identifier
     #
-    # Note: "access" attribute is NOT required when using ENHANCED_ORG_ADMIN mode.
-    # All authenticated users are treated as org admins with full access within their org.
-    # This simplifies setup but means no granular RBAC within an org.
-    # Multi-tenancy is preserved: users only see data for their own org_id.
+    # Note: "access" attribute is not needed -- Kessel ReBAC handles authorization.
+    # After Helm install, run `kessel-admin.sh bootstrap` to sync these users to Kessel.
 
     echo_info "Creating user 'test' with org_id and account_number attributes..."
     local USER_HTTP_CODE=$(curl -sk -o /tmp/user_response.txt -w "%{http_code}" -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users" \
@@ -1417,6 +1444,20 @@ display_summary() {
     echo_info "  Default Scopes: api.console, profile, email"
     echo_info "  Optional Scopes: offline_access"
     echo_info "  Secret stored in: keycloak-client-secret-cost-management-ui"
+    echo ""
+
+    echo_info "Cost Management Koku Client (Kessel Auth):"
+    echo_info "  Client ID: $COST_MGMT_KOKU_CLIENT_ID"
+    echo_info "  Client Type: Service Account (client_credentials flow)"
+    echo_info "  Purpose: Koku backend → Kessel Relations/Inventory API auth"
+    echo_info "  Secret stored in: keycloak-client-secret-cost-management-koku"
+    echo ""
+
+    echo_info "Cost Management Inventory Client (Kessel Auth):"
+    echo_info "  Client ID: $COST_MGMT_INVENTORY_CLIENT_ID"
+    echo_info "  Client Type: Service Account (client_credentials flow)"
+    echo_info "  Purpose: Kessel Inventory API → Relations API auth"
+    echo_info "  Secret stored in: keycloak-client-secret-cost-management-inventory"
     echo ""
 
     echo_info "Test User Information:"

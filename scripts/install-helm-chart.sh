@@ -967,6 +967,15 @@ deploy_helm_chart() {
         echo_warning "RHBK not detected — Keycloak values will use chart defaults"
     fi
 
+    # Kessel (ReBAC) values -- detected earlier in main(), exports are available
+    helm_cmd="$helm_cmd --set kessel.relations.host=\"$KESSEL_RELATIONS_HOST\""
+    helm_cmd="$helm_cmd --set kessel.relations.port=\"$KESSEL_RELATIONS_PORT\""
+    helm_cmd="$helm_cmd --set kessel.inventory.host=\"$KESSEL_INVENTORY_HOST\""
+    helm_cmd="$helm_cmd --set kessel.inventory.port=\"$KESSEL_INVENTORY_PORT\""
+    helm_cmd="$helm_cmd --set kessel.spicedb.host=\"$KESSEL_SPICEDB_HOST\""
+    helm_cmd="$helm_cmd --set kessel.spicedb.port=\"$KESSEL_SPICEDB_PORT\""
+    echo_info "Kessel: namespace=$KESSEL_NAMESPACE relations=$KESSEL_RELATIONS_HOST:$KESSEL_RELATIONS_PORT"
+
     # S3 endpoint configuration for Helm:
     # If user pre-configured S3 in values.yaml, skip all --set overrides
     # (the values file already has the right config).
@@ -1428,6 +1437,57 @@ detect_keycloak() {
     fi
 }
 
+# Function to detect Kessel (SpiceDB + Relations API + Inventory API)
+# Deployed by deploy-kessel.sh into its own namespace
+detect_kessel() {
+    echo_info "Detecting Kessel (ReBAC authorization stack)..."
+
+    local kessel_found=false
+    local kessel_namespace=""
+    local relations_host=""
+    local relations_port="9000"
+    local inventory_host=""
+    local inventory_port="9000"
+    local spicedb_host=""
+    local spicedb_port="50051"
+
+    for ns in kessel kessel-system; do
+        if kubectl get namespace "$ns" >/dev/null 2>&1; then
+            if kubectl get service kessel-relations -n "$ns" >/dev/null 2>&1; then
+                kessel_namespace="$ns"
+                kessel_found=true
+                relations_host="kessel-relations.${ns}.svc.cluster.local"
+                inventory_host="kessel-inventory.${ns}.svc.cluster.local"
+                spicedb_host="spicedb.${ns}.svc.cluster.local"
+                echo_success "Kessel services found in namespace: $ns"
+                break
+            fi
+        fi
+    done
+
+    export KESSEL_FOUND="$kessel_found"
+    export KESSEL_NAMESPACE="$kessel_namespace"
+    export KESSEL_RELATIONS_HOST="$relations_host"
+    export KESSEL_RELATIONS_PORT="$relations_port"
+    export KESSEL_INVENTORY_HOST="$inventory_host"
+    export KESSEL_INVENTORY_PORT="$inventory_port"
+    export KESSEL_SPICEDB_HOST="$spicedb_host"
+    export KESSEL_SPICEDB_PORT="$spicedb_port"
+
+    if [ "$kessel_found" = true ]; then
+        echo_success "Kessel detected successfully"
+        echo_info "  Namespace: $kessel_namespace"
+        echo_info "  Relations: $relations_host:$relations_port"
+        echo_info "  Inventory: $inventory_host:$inventory_port"
+        echo_info "  SpiceDB:   $spicedb_host:$spicedb_port"
+        return 0
+    else
+        echo_error "Kessel not detected in any expected namespace (kessel, kessel-system)"
+        echo_info "  Deploy Kessel first:  ./deploy-kessel.sh"
+        return 1
+    fi
+}
+
 # Function to verify Keycloak client secret exists
 # NOTE: Simplified - deploy-rhbk.sh now handles secret creation automatically
 # This function only verifies the secret exists
@@ -1544,6 +1604,71 @@ create_ui_secrets() {
         echo_error "Failed to create OAuth client secret"
         return 1
     fi
+
+    # 3. Create Koku-to-Kessel service account secret (mandatory)
+    local koku_kessel_secret="kessel-koku-client"
+    local keycloak_koku_secret="keycloak-client-secret-cost-management-koku"
+
+    if kubectl get secret "$koku_kessel_secret" -n "$NAMESPACE" >/dev/null 2>&1; then
+        echo_info "Koku Kessel client secret '$koku_kessel_secret' already exists"
+    else
+        if ! kubectl get secret "$keycloak_koku_secret" -n "$KEYCLOAK_NAMESPACE" >/dev/null 2>&1; then
+            echo_error "Keycloak Koku client secret '$keycloak_koku_secret' not found in '$KEYCLOAK_NAMESPACE'"
+            echo_info "  Run deploy-rhbk.sh first to create Keycloak service account clients"
+            return 1
+        fi
+        local koku_client_id koku_client_secret
+        koku_client_id=$(kubectl get secret "$keycloak_koku_secret" -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.CLIENT_ID}' 2>/dev/null | base64 -d)
+        koku_client_secret=$(kubectl get secret "$keycloak_koku_secret" -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.CLIENT_SECRET}' 2>/dev/null | base64 -d)
+        if [ -z "$koku_client_id" ] || [ -z "$koku_client_secret" ]; then
+            echo_error "Failed to extract Koku Kessel credentials from Keycloak"
+            return 1
+        fi
+        kubectl create secret generic "$koku_kessel_secret" \
+            -n "$NAMESPACE" \
+            --from-literal=client-id="$koku_client_id" \
+            --from-literal=client-secret="$koku_client_secret" \
+            >/dev/null 2>&1
+        if [ $? -eq 0 ]; then
+            echo_success "✓ Created Koku Kessel client secret '$koku_kessel_secret'"
+        else
+            echo_error "Failed to create Koku Kessel client secret"
+            return 1
+        fi
+    fi
+
+    # 4. Create Inventory-to-Relations service account secret (mandatory, in Kessel namespace)
+    local inv_kessel_secret="kessel-inventory-client"
+    local keycloak_inv_secret="keycloak-client-secret-cost-management-inventory"
+    local kessel_ns="${KESSEL_NAMESPACE:-kessel}"
+
+    if kubectl get secret "$inv_kessel_secret" -n "$kessel_ns" >/dev/null 2>&1; then
+        echo_info "Inventory Kessel client secret '$inv_kessel_secret' already exists in $kessel_ns"
+    else
+        if ! kubectl get secret "$keycloak_inv_secret" -n "$KEYCLOAK_NAMESPACE" >/dev/null 2>&1; then
+            echo_error "Keycloak Inventory client secret '$keycloak_inv_secret' not found in '$KEYCLOAK_NAMESPACE'"
+            echo_info "  Run deploy-rhbk.sh first to create Keycloak service account clients"
+            return 1
+        fi
+        local inv_client_id inv_client_secret
+        inv_client_id=$(kubectl get secret "$keycloak_inv_secret" -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.CLIENT_ID}' 2>/dev/null | base64 -d)
+        inv_client_secret=$(kubectl get secret "$keycloak_inv_secret" -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.CLIENT_SECRET}' 2>/dev/null | base64 -d)
+        if [ -z "$inv_client_id" ] || [ -z "$inv_client_secret" ]; then
+            echo_error "Failed to extract Inventory Kessel credentials from Keycloak"
+            return 1
+        fi
+        kubectl create secret generic "$inv_kessel_secret" \
+            -n "$kessel_ns" \
+            --from-literal=client-id="$inv_client_id" \
+            --from-literal=client-secret="$inv_client_secret" \
+            >/dev/null 2>&1
+        if [ $? -eq 0 ]; then
+            echo_success "✓ Created Inventory Kessel client secret '$inv_kessel_secret' in $kessel_ns"
+        else
+            echo_error "Failed to create Inventory Kessel client secret"
+            return 1
+        fi
+    fi
 }
 
 # Function to create Django secret for Koku
@@ -1578,6 +1703,51 @@ create_django_secret() {
         return 0
     else
         echo_error "Failed to create Django secret"
+        return 1
+    fi
+}
+
+# Function to create Kessel config secret for Koku
+# Extracts the SpiceDB preshared key from the kessel namespace and creates
+# the kessel-config secret in the cost-onprem namespace so Koku pods can
+# authenticate to SpiceDB. Only the preshared key lives in the secret;
+# host/port values come from Helm values.
+create_kessel_secret() {
+    echo_info "Creating Kessel config secret..."
+
+    local secret_name="kessel-config"
+
+    if kubectl get secret "$secret_name" -n "$NAMESPACE" >/dev/null 2>&1; then
+        echo_info "Kessel secret '$secret_name' already exists in namespace '$NAMESPACE'"
+        return 0
+    fi
+
+    if [ -z "$KESSEL_NAMESPACE" ]; then
+        echo_warning "Kessel namespace not set, skipping kessel-config secret creation"
+        return 1
+    fi
+
+    # Extract SpiceDB preshared key from the kessel namespace
+    echo_info "Extracting SpiceDB preshared key from namespace '$KESSEL_NAMESPACE'..."
+    local spicedb_key
+    spicedb_key=$(kubectl get secret spicedb-config -n "$KESSEL_NAMESPACE" -o jsonpath='{.data.preshared-key}' 2>/dev/null | base64 -d)
+
+    if [ -z "$spicedb_key" ]; then
+        echo_error "Failed to extract SpiceDB preshared key from secret spicedb-config in $KESSEL_NAMESPACE"
+        echo_info "  Ensure deploy-kessel.sh has been run first"
+        return 1
+    fi
+
+    echo_info "Creating secret '$secret_name' in namespace '$NAMESPACE'..."
+    kubectl create secret generic "$secret_name" \
+        --from-literal=spicedb-preshared-key="$spicedb_key" \
+        --namespace="$NAMESPACE"
+
+    if [ $? -eq 0 ]; then
+        echo_success "✓ Created Kessel secret '$secret_name'"
+        return 0
+    else
+        echo_error "Failed to create Kessel secret"
         return 1
     fi
 }
@@ -1942,6 +2112,20 @@ main() {
     # Create Django secret for Koku (if costManagement is enabled)
     if ! create_django_secret; then
         echo_warning "Failed to create Django secret. Koku may not start correctly."
+    fi
+
+    # Detect Kessel (mandatory prerequisite) and create its config secret.
+    # This must happen before deploy_helm_chart which uses the KESSEL_* exports
+    # to set Helm values, and the secret must exist before the migration hook runs.
+    detect_kessel
+    if [ "$KESSEL_FOUND" != "true" ]; then
+        echo_error "Kessel (ReBAC authorization stack) is required but was not detected."
+        echo_error "Run deploy-kessel.sh first to deploy SpiceDB, Relations API, and Inventory API."
+        exit 1
+    fi
+    if ! create_kessel_secret; then
+        echo_error "Failed to create Kessel secret. Cannot proceed without SpiceDB authentication."
+        exit 1
     fi
 
     # Verify AMQ Streams operator and Kafka cluster are available

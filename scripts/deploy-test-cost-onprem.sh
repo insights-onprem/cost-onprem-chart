@@ -99,6 +99,7 @@ SHARED_DIR="${SHARED_DIR:-}"
 # Local scripts directory (this script sits alongside the other scripts)
 LOCAL_SCRIPTS_DIR="${SCRIPT_DIR}"
 SCRIPT_DEPLOY_RHBK="deploy-rhbk.sh"  # Red Hat Build of Keycloak (RHBK)
+SCRIPT_DEPLOY_KESSEL="deploy-kessel.sh"  # Kessel (SpiceDB + Relations + Inventory)
 SCRIPT_DEPLOY_KAFKA="deploy-kafka.sh"
 SCRIPT_DEPLOY_S4="deploy-s4-test.sh"  # S4 (Super Simple Storage Service)
 SCRIPT_INSTALL_HELM="install-helm-chart.sh"
@@ -384,6 +385,21 @@ deploy_rhbk() {
     fi
 
     log_success "Red Hat Build of Keycloak (RHBK) deployment completed"
+}
+
+deploy_kessel() {
+    log_step "Deploying Kessel (SpiceDB + Relations API + Inventory API)"
+
+    if [[ "${VERBOSE}" == "true" ]]; then
+        export LOG_LEVEL="INFO"
+    fi
+
+    if ! execute_script "${SCRIPT_DEPLOY_KESSEL}"; then
+        log_error "Kessel deployment failed"
+        exit 1
+    fi
+
+    log_success "Kessel deployment completed"
 }
 
 deploy_kafka() {
@@ -802,8 +818,8 @@ main() {
     fi
 
     deploy_rhbk
+    deploy_kessel
     deploy_kafka
-    deploy_s4
 
     # Run Helm sanity test before deploying complex chart
     log_info "Running Helm sanity test to verify basic functionality..."
