@@ -94,12 +94,15 @@ detect_relations_url() {
     if [ -n "$RELATIONS_URL" ]; then
         return
     fi
-    local in_cluster="http://kessel-relations.${KESSEL_NAMESPACE}.svc.cluster.local:8000"
-    if curl -s --max-time 2 --connect-timeout 2 -o /dev/null "${in_cluster}/v1beta1/tuples?filter.resource_namespace=_probe" 2>/dev/null; then
-        RELATIONS_URL="$in_cluster"
+    # In-cluster: check if the kessel-relations service DNS resolves
+    local in_cluster_host="kessel-relations.${KESSEL_NAMESPACE}.svc.cluster.local"
+    if getent hosts "$in_cluster_host" >/dev/null 2>&1 || \
+       nslookup "$in_cluster_host" >/dev/null 2>&1; then
+        RELATIONS_URL="http://${in_cluster_host}:8000"
         log_success "Using in-cluster Relations API: $RELATIONS_URL"
         return
     fi
+    # Local development: port-forward
     log_info "No RELATIONS_URL set, starting port-forward to Relations API (HTTP)..."
     oc port-forward -n "$KESSEL_NAMESPACE" svc/kessel-relations 8000:8000 &>/dev/null &
     PORT_FORWARD_PID=$!
@@ -171,40 +174,58 @@ keycloak_list_users() {
 #   DELETE /v1beta1/tuples   - DeleteTuples  (query: filter.*)
 #   POST   /v1beta1/check    - Check         (body: {resource, relation, subject})
 # ---------------------------------------------------------------------------
+relations_api_call() {
+    local method="$1"; shift
+    local url="$1"; shift
+    local tmpfile
+    tmpfile=$(mktemp)
+    local http_code
+    http_code=$(curl -s -o "$tmpfile" -w "%{http_code}" -X "$method" "$url" "$@" 2>&1)
+    local body
+    body=$(cat "$tmpfile")
+    rm -f "$tmpfile"
+    if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+        echo "$body"
+        return 0
+    fi
+    log_error "Relations API ${method} ${url} returned HTTP ${http_code}"
+    log_error "Response: ${body}"
+    return 1
+}
+
 relations_create_tuples() {
     local payload="$1"
-    curl -sf -X POST "${RELATIONS_URL}/v1beta1/tuples" \
+    relations_api_call POST "${RELATIONS_URL}/v1beta1/tuples" \
         -H "Content-Type: application/json" \
-        -d "$payload" 2>/dev/null
+        -d "$payload"
 }
 
 relations_delete_tuple() {
     local res_ns="$1" res_type="$2" res_id="$3" relation="$4"
     local subj_ns="$5" subj_type="$6" subj_id="$7"
-    curl -sf -G -X DELETE "${RELATIONS_URL}/v1beta1/tuples" \
+    local url="${RELATIONS_URL}/v1beta1/tuples"
+    relations_api_call DELETE "$url" -G \
         --data-urlencode "filter.resource_namespace=${res_ns}" \
         --data-urlencode "filter.resource_type=${res_type}" \
         --data-urlencode "filter.resource_id=${res_id}" \
         --data-urlencode "filter.relation=${relation}" \
         --data-urlencode "filter.subject_filter.subject_namespace=${subj_ns}" \
         --data-urlencode "filter.subject_filter.subject_type=${subj_type}" \
-        --data-urlencode "filter.subject_filter.subject_id=${subj_id}" \
-        2>/dev/null
+        --data-urlencode "filter.subject_filter.subject_id=${subj_id}"
 }
 
 relations_read_tuples() {
     local ns="$1" name="$2"
-    curl -sf -G "${RELATIONS_URL}/v1beta1/tuples" \
+    relations_api_call GET "${RELATIONS_URL}/v1beta1/tuples" -G \
         --data-urlencode "filter.resource_namespace=${ns}" \
-        --data-urlencode "filter.resource_type=${name}" \
-        2>/dev/null
+        --data-urlencode "filter.resource_type=${name}"
 }
 
 relations_check() {
     local payload="$1"
-    curl -sf -X POST "${RELATIONS_URL}/v1beta1/check" \
+    relations_api_call POST "${RELATIONS_URL}/v1beta1/check" \
         -H "Content-Type: application/json" \
-        -d "$payload" 2>/dev/null
+        -d "$payload"
 }
 
 # ---------------------------------------------------------------------------
