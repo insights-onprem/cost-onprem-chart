@@ -213,7 +213,7 @@ Deploy the Kessel authorization stack required by Cost Management's ReBAC integr
 **What it creates:**
 - PostgreSQL instance (dedicated for SpiceDB + Inventory)
 - SpiceDB (relationship store, gRPC on port 50051)
-- Kessel Relations API (gRPC on port 9000)
+- Kessel Relations API (HTTP on port 8000 at /api/authz, gRPC on port 9000)
 - Kessel Inventory API (HTTP on port 8000, gRPC on port 9000)
 - `kessel-schema` ConfigMap with the ZED schema
 - `kessel-config` secret in the Cost Management namespace

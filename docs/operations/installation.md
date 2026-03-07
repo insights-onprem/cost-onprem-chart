@@ -743,7 +743,7 @@ oc get pods -n kessel
 
 # Verify Relations API is reachable (via port-forward)
 oc port-forward -n kessel svc/kessel-relations 8000:8000 &
-curl -s http://localhost:8000/v1beta1/tuples?filter.resource_namespace=rbac | jq .
+curl -s 'http://localhost:8000/api/authz/v1beta1/tuples?filter.resourceNamespace=rbac' | jq .
 
 # Check tuple counts
 ./scripts/kessel-admin.sh status
@@ -1158,7 +1158,7 @@ oc get configmap kessel-schema -n kessel
 
 # Test REST connectivity via port-forward
 oc port-forward -n kessel svc/kessel-relations 8000:8000 &
-curl -s http://localhost:8000/v1beta1/tuples?filter.resource_namespace=rbac | jq .
+curl -s 'http://localhost:8000/api/authz/v1beta1/tuples?filter.resourceNamespace=rbac' | jq .
 ```
 
 ### Network Issues

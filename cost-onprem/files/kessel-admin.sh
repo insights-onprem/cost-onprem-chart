@@ -55,6 +55,7 @@ KEYCLOAK_PASSWORD=${KEYCLOAK_PASSWORD:-}
 RELATIONS_URL=${RELATIONS_URL:-}
 KEYCLOAK_URL=${KEYCLOAK_URL:-}
 DEFAULT_ROLE=${DEFAULT_ROLE:-cost-administrator}
+RELATIONS_API_PREFIX="/api/authz"
 
 log_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
@@ -168,11 +169,15 @@ keycloak_list_users() {
 # ---------------------------------------------------------------------------
 # Kessel Relations API REST helpers (HTTP, no auth required)
 #
+# The Relations API applies a path prefix from its config (default /api/authz).
 # Endpoints (gRPC-Gateway on port 8000):
-#   POST   /v1beta1/tuples   - CreateTuples  (body: {upsert, tuples})
-#   GET    /v1beta1/tuples   - ReadTuples    (query: filter.*)
-#   DELETE /v1beta1/tuples   - DeleteTuples  (query: filter.*)
-#   POST   /v1beta1/check    - Check         (body: {resource, relation, subject})
+#   POST   /api/authz/v1beta1/tuples   - CreateTuples  (body: {upsert, tuples})
+#   DELETE /api/authz/v1beta1/tuples   - DeleteTuples  (query: filter.*)
+#   POST   /api/authz/v1beta1/check    - Check         (body: {resource, relation, subject})
+#   GET    /api/authz/readyz            - Health check
+#
+# NOTE: ReadTuples (GET /v1beta1/tuples) is a streaming RPC -- the Kratos
+#       HTTP layer does not register a route for it, so it always 404s.
 # ---------------------------------------------------------------------------
 relations_api_call() {
     local method="$1"; shift
@@ -195,7 +200,7 @@ relations_api_call() {
 
 relations_create_tuples() {
     local payload="$1"
-    relations_api_call POST "${RELATIONS_URL}/v1beta1/tuples" \
+    relations_api_call POST "${RELATIONS_URL}${RELATIONS_API_PREFIX}/v1beta1/tuples" \
         -H "Content-Type: application/json" \
         -d "$payload"
 }
@@ -203,27 +208,30 @@ relations_create_tuples() {
 relations_delete_tuple() {
     local res_ns="$1" res_type="$2" res_id="$3" relation="$4"
     local subj_ns="$5" subj_type="$6" subj_id="$7"
-    local url="${RELATIONS_URL}/v1beta1/tuples"
+    local url="${RELATIONS_URL}${RELATIONS_API_PREFIX}/v1beta1/tuples"
     relations_api_call DELETE "$url" -G \
-        --data-urlencode "filter.resource_namespace=${res_ns}" \
-        --data-urlencode "filter.resource_type=${res_type}" \
-        --data-urlencode "filter.resource_id=${res_id}" \
+        --data-urlencode "filter.resourceNamespace=${res_ns}" \
+        --data-urlencode "filter.resourceType=${res_type}" \
+        --data-urlencode "filter.resourceId=${res_id}" \
         --data-urlencode "filter.relation=${relation}" \
-        --data-urlencode "filter.subject_filter.subject_namespace=${subj_ns}" \
-        --data-urlencode "filter.subject_filter.subject_type=${subj_type}" \
-        --data-urlencode "filter.subject_filter.subject_id=${subj_id}"
+        --data-urlencode "filter.subjectFilter.subjectNamespace=${subj_ns}" \
+        --data-urlencode "filter.subjectFilter.subjectType=${subj_type}" \
+        --data-urlencode "filter.subjectFilter.subjectId=${subj_id}"
 }
 
 relations_read_tuples() {
+    # ReadTuples is a streaming RPC -- no HTTP route is registered by the
+    # Kratos gRPC-Gateway, so this will always 404 over REST.  Callers
+    # must tolerate failure (do_status already suppresses errors).
     local ns="$1" name="$2"
-    relations_api_call GET "${RELATIONS_URL}/v1beta1/tuples" -G \
-        --data-urlencode "filter.resource_namespace=${ns}" \
-        --data-urlencode "filter.resource_type=${name}"
+    relations_api_call GET "${RELATIONS_URL}${RELATIONS_API_PREFIX}/v1beta1/tuples" -G \
+        --data-urlencode "filter.resourceNamespace=${ns}" \
+        --data-urlencode "filter.resourceType=${name}"
 }
 
 relations_check() {
     local payload="$1"
-    relations_api_call POST "${RELATIONS_URL}/v1beta1/check" \
+    relations_api_call POST "${RELATIONS_URL}${RELATIONS_API_PREFIX}/v1beta1/check" \
         -H "Content-Type: application/json" \
         -d "$payload"
 }
@@ -574,41 +582,48 @@ do_list_users() {
 }
 
 # ---------------------------------------------------------------------------
-# Status: show tuple counts
+# Status: health check + connectivity probe
+#
+# ReadTuples is a streaming RPC with no HTTP route, so we cannot enumerate
+# tuples via REST.  Instead we verify connectivity and run a sample check.
 # ---------------------------------------------------------------------------
 do_status() {
-    log_info "Kessel tuple status:"
+    log_info "Kessel Relations API status:"
     echo ""
 
-    for resource in "rbac/role" "rbac/role_binding" "rbac/tenant" "rbac/workspace" "rbac/group" \
-                     "cost_management/openshift_cluster" "cost_management/openshift_project" \
-                     "cost_management/openshift_node" "cost_management/integration"; do
-        local ns name count
-        ns="${resource%%/*}"
-        name="${resource##*/}"
-        count=$(relations_read_tuples "$ns" "$name" 2>/dev/null | grep -c '"tuple"' 2>/dev/null || echo "0")
-        if [ "$count" -gt 0 ] 2>/dev/null; then
-            printf "  %-45s %s tuples\n" "$resource" "$count"
-        fi
-    done
+    local health_url="${RELATIONS_URL}${RELATIONS_API_PREFIX}/readyz"
+    local health
+    if health=$(relations_api_call GET "$health_url" 2>&1); then
+        local status_str
+        status_str=$(echo "$health" | jq -r '.status // "unknown"' 2>/dev/null)
+        log_success "Health: $status_str ($health_url)"
+    else
+        log_error "Health check failed: $health"
+    fi
 
     echo ""
-    log_info "Role permission tuples (rbac/role):"
-    relations_read_tuples "rbac" "role" 2>/dev/null | jq -r '
-        select(.result.tuple) | .result.tuple.resource.id + " → " + .result.tuple.relation
-    ' 2>/dev/null | sort | while IFS= read -r line; do
-        printf "    %s\n" "$line"
-    done
+    log_info "Sample permission check (cost_management_openshift_cluster_read for test/org1234567):"
+    local payload
+    payload=$(cat <<EOF
+{
+    "resource": {"type": {"namespace": "rbac", "name": "workspace"}, "id": "org1234567"},
+    "relation": "cost_management_openshift_cluster_read",
+    "subject": {"subject": {"type": {"namespace": "rbac", "name": "principal"}, "id": "redhat/test"}}
+}
+EOF
+    )
+    local result
+    if result=$(relations_check "$payload" 2>&1); then
+        local allowed
+        allowed=$(echo "$result" | jq -r '.allowed // "ALLOWED_UNSPECIFIED"' 2>/dev/null)
+        log_success "Check result: $allowed"
+    else
+        log_warning "Check failed (this is expected if no tuples are seeded yet)"
+    fi
 
     echo ""
-    log_info "User role bindings (rbac/role_binding):"
-    relations_read_tuples "rbac" "role_binding" 2>/dev/null | jq -r '
-        select(.result.tuple) |
-        .result.tuple.resource.id + " #" + .result.tuple.relation + " → " +
-        .result.tuple.subject.subject.type.name + ":" + .result.tuple.subject.subject.id
-    ' 2>/dev/null | sort | while IFS= read -r line; do
-        printf "    %s\n" "$line"
-    done
+    log_info "Note: tuple enumeration requires gRPC (ReadTuples is a streaming RPC)."
+    log_info "Use 'grpcurl' or the SpiceDB CLI for full tuple listing."
     echo ""
 }
 
