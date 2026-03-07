@@ -549,7 +549,7 @@ collect_service_account_tuples() {
             org_id="${DEFAULT_ORG_ID:-org1234567}"
         fi
 
-        log_info "  Queued service account '$sa_username' (org: $org_id)"
+        log_info "  Queued service account '$sa_username' (org: $org_id)" >&2
         local user_tuples
         user_tuples=$(build_grant_tuples "$sa_username" "$DEFAULT_ROLE" "$org_id")
         sa_tuples=$(echo "$sa_tuples" | jq --argjson t "$user_tuples" '. + $t')
