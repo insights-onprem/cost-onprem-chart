@@ -114,6 +114,11 @@ def invalid_identity_headers(org_id: str) -> Dict[str, str]:
             org_id=org_id,
             is_org_admin=False,
         ),
+        "unprivileged": create_identity_header_custom(
+            org_id=org_id,
+            is_org_admin=False,
+            username="unprivileged-user-no-kessel-role",
+        ),
         "no_email": create_identity_header_custom(
             org_id=org_id,
             email=None,  # Omit email field
