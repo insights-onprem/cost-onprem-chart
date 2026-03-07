@@ -1,0 +1,96 @@
+---
+alwaysApply: false
+---
+# IQE Integration Testing
+
+IQE (Insights QE) tests provide comprehensive integration testing for cost-management functionality.
+These are separate from the pytest tests in this repository.
+
+## Prerequisites
+
+### Network Access
+- **Red Hat VPN required** for:
+  - Cloning IQE repositories from `gitlab.cee.redhat.com`
+  - Accessing internal PyPI (`nexus.corp.redhat.com`)
+  - Pulling IQE container images
+
+### Quay.io Access (Containerized Tests)
+To pull `quay.io/cloudservices/iqe-tests:cost-management`:
+1. Create user file in `app-interface` repo: `data/teams/insights/users/<username>.yml`
+2. Include roles: `hccm`, `hccm-qe`, `insights-qe`
+3. Submit MR and wait for merge
+
+### Local Repository Setup
+For local tests, clone these adjacent to cost-onprem-chart:
+```
+../iqe-core/                      # IQE framework
+../iqe-cost-management-plugin/    # Cost management tests
+```
+
+## Running Tests
+
+### Containerized (on cluster)
+```bash
+./scripts/run-iqe-tests.sh --timeout 3600
+```
+
+### Local (from your workstation)
+```bash
+# First time setup (this can take a while if it's your first time running this)
+./scripts/run-iqe-tests-local.sh --setup
+
+# Run tests
+./scripts/run-iqe-tests-local.sh --clean-sources
+```
+
+## Test Duration Expectations
+
+| Cluster Config | Expected Duration |
+|----------------|-------------------|
+| 3 control plane only | 1-2+ hours (may timeout) |
+| 3 CP + 2 workers | 30-60 minutes |
+
+Tests are **backend I/O bound**, not compute bound. They wait for:
+- Data ingestion (up to 10 min per source)
+- Celery worker processing
+- Database queries
+
+## Known Issues
+
+Default filters skip problematic tests:
+- `ai_workloads`, `distro` - Not applicable to on-prem
+- `test_api_cost_model_rates_update_to_tag_based` - Backend timeout with lightweight clusters
+- Source update IntegrityError - Potential backend issue (PATCH creates instead of updates)
+
+## IMPORTANT: Test Parallelization
+
+IQE cost-management tests are **NOT parallelizable** by default:
+- No tests have `@pytest.mark.parallel` marker
+- Tests share database state
+- Running with `-n` may cause flaky failures
+
+## IMPORTANT: Don't Modify IQE Plugin Unless Instructed To
+
+When troubleshooting IQE test failures:
+1. **First** check if it's a backend/deployment issue
+2. **Prefer** skipping problematic tests via `--filter` in the script
+3. **Avoid** modifying the IQE plugin unless absolutely necessary
+4. **Review** any temporary plugin changes before committing
+
+## Troubleshooting
+
+### Tests stuck on "Line item summary update not complete"
+Backend is slow. Options:
+1. Wait (can take 10+ minutes)
+2. Use cluster with worker nodes
+3. Skip test: `--filter "not test_name"`
+
+### "Failed to pull image"
+Missing Quay.io access. Check app-interface user file.
+
+### Connection refused to gitlab
+Not on Red Hat network. Connect to VPN.
+
+## See Also
+- Full setup guide: `docs/development/iqe-testing-setup.md`
+- Cursor prompt: `.cursor/prompts/run-iqe-tests.md`

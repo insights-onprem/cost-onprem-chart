@@ -25,11 +25,12 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 NAMESPACE="${NAMESPACE:-cost-onprem}"
 HELM_RELEASE_NAME="${HELM_RELEASE_NAME:-cost-onprem}"
 IQE_MARKER="${IQE_MARKER:-cost_ocp_on_prem}"
+IQE_FILTER="${IQE_FILTER:-}"
 IQE_TIMEOUT="${IQE_TIMEOUT:-1800}"
 IQE_IMAGE="${IQE_IMAGE:-quay.io/cloudservices/iqe-tests:cost-management}"
 KEEP_POD=false
 KEYCLOAK_SECRET_NS="${KEYCLOAK_SECRET_NS:-keycloak}"
-KEYCLOAK_SECRET_NAME="${KEYCLOAK_SECRET_NAME:-cost-management-auth-secret}"
+KEYCLOAK_SECRET_NAME="${KEYCLOAK_SECRET_NAME:-keycloak-client-secret-cost-management-operator}"
 SYNC_PULL_SECRET=false
 
 show_help() {
@@ -41,6 +42,7 @@ Usage: $(basename "$0") [OPTIONS]
 Options:
     --namespace NAME     Target namespace (default: cost-onprem)
     --marker EXPR        Pytest marker expression (default: cost_ocp_on_prem)
+    --filter EXPR        Pytest -k filter expression to select/deselect tests
     --timeout SECONDS    Test timeout (default: 1800)
     --keep-pod           Don't delete the IQE pod after tests
     --sync-pull-secret   Sync local container registry credentials to cluster
@@ -58,6 +60,9 @@ Examples:
     # Run specific marker with custom namespace
     ./scripts/run-iqe-tests.sh --namespace my-ns --marker "cost_ocp_on_prem and not slow"
 
+    # Exclude specific tests by name
+    ./scripts/run-iqe-tests.sh --filter "not ai_workloads"
+
     # Keep pod for debugging
     ./scripts/run-iqe-tests.sh --keep-pod
 
@@ -71,6 +76,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --namespace) NAMESPACE="$2"; shift 2 ;;
         --marker) IQE_MARKER="$2"; shift 2 ;;
+        --filter) IQE_FILTER="$2"; shift 2 ;;
         --timeout) IQE_TIMEOUT="$2"; shift 2 ;;
         --keep-pod) KEEP_POD=true; shift ;;
         --sync-pull-secret) SYNC_PULL_SECRET=true; shift ;;
@@ -82,6 +88,9 @@ done
 echo "========== Running IQE Cost Management Tests =========="
 echo "Namespace: ${NAMESPACE}"
 echo "Marker: ${IQE_MARKER}"
+if [ -n "${IQE_FILTER}" ]; then
+    echo "Filter: ${IQE_FILTER}"
+fi
 echo "Timeout: ${IQE_TIMEOUT}s"
 echo "Image: ${IQE_IMAGE}"
 
@@ -169,12 +178,41 @@ S3_SECRET_KEY=$(kubectl get secret "$S3_SECRET_NAME" -n "$NAMESPACE" -o jsonpath
 S3_ENDPOINT=$(kubectl exec -n "$NAMESPACE" deploy/${HELM_RELEASE_NAME}-koku-masu -c masu -- printenv S3_ENDPOINT 2>/dev/null || echo "")
 
 # Get Keycloak credentials from the auth secret
-KEYCLOAK_CLIENT_ID=$(kubectl get secret "$KEYCLOAK_SECRET_NAME" -n "$KEYCLOAK_SECRET_NS" -o jsonpath='{.data.client_id}' 2>/dev/null | base64 -d || echo "cost-management")
-KEYCLOAK_CLIENT_SECRET=$(kubectl get secret "$KEYCLOAK_SECRET_NAME" -n "$KEYCLOAK_SECRET_NS" -o jsonpath='{.data.client_secret}' 2>/dev/null | base64 -d || echo "")
+# Try uppercase keys first (keycloak-client-secret-*), then lowercase (cost-management-auth-secret)
+KEYCLOAK_CLIENT_ID=$(kubectl get secret "$KEYCLOAK_SECRET_NAME" -n "$KEYCLOAK_SECRET_NS" -o jsonpath='{.data.CLIENT_ID}' 2>/dev/null | base64 -d || \
+                     kubectl get secret "$KEYCLOAK_SECRET_NAME" -n "$KEYCLOAK_SECRET_NS" -o jsonpath='{.data.client_id}' 2>/dev/null | base64 -d || \
+                     echo "cost-management-operator")
+KEYCLOAK_CLIENT_SECRET=$(kubectl get secret "$KEYCLOAK_SECRET_NAME" -n "$KEYCLOAK_SECRET_NS" -o jsonpath='{.data.CLIENT_SECRET}' 2>/dev/null | base64 -d || \
+                         kubectl get secret "$KEYCLOAK_SECRET_NAME" -n "$KEYCLOAK_SECRET_NS" -o jsonpath='{.data.client_secret}' 2>/dev/null | base64 -d || \
+                         echo "")
 
 # Get Keycloak route for OAuth URL
 KEYCLOAK_HOST=$(kubectl get route keycloak -n keycloak -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
 OAUTH_URL="https://${KEYCLOAK_HOST}/realms/kubernetes/protocol/openid-connect"
+
+# Get org_id from Keycloak test user (or use default)
+ORG_ID="org1234567"  # Default value
+if [ -n "$KEYCLOAK_HOST" ]; then
+    # Get admin password
+    KEYCLOAK_ADMIN_PASS=$(kubectl get secret keycloak-initial-admin -n keycloak -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || echo "")
+    if [ -n "$KEYCLOAK_ADMIN_PASS" ]; then
+        # Get admin token
+        ADMIN_TOKEN=$(curl -sk -X POST "https://${KEYCLOAK_HOST}/realms/master/protocol/openid-connect/token" \
+            -d "client_id=admin-cli" \
+            -d "grant_type=password" \
+            -d "username=admin" \
+            -d "password=${KEYCLOAK_ADMIN_PASS}" 2>/dev/null | jq -r '.access_token // empty')
+        
+        if [ -n "$ADMIN_TOKEN" ]; then
+            # Get test user's org_id
+            USER_ORG_ID=$(curl -sk "https://${KEYCLOAK_HOST}/admin/realms/kubernetes/users?username=test&exact=true" \
+                -H "Authorization: Bearer ${ADMIN_TOKEN}" 2>/dev/null | jq -r '.[0].attributes.org_id[0] // empty')
+            if [ -n "$USER_ORG_ID" ]; then
+                ORG_ID="$USER_ORG_ID"
+            fi
+        fi
+    fi
+fi
 
 # Get Koku API route hostname (external access)
 KOKU_ROUTE_HOST=$(kubectl get route ${HELM_RELEASE_NAME}-api -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
@@ -269,46 +307,108 @@ if kubectl get secret -n "${NAMESPACE}" -o name 2>/dev/null | grep -q "pull-secr
     PULL_SECRET_EXISTS=true
 fi
 
-# Check global pull secret (OpenShift)
-CLUSTER_HAS_REGISTRY_CREDS=false
-if kubectl get secret pull-secret -n openshift-config &>/dev/null; then
-    # Verify the registry is in the global pull secret
-    if kubectl get secret pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | base64 -d | grep -q "${IQE_REGISTRY}"; then
-        echo "✓ Cluster has pull credentials for ${IQE_REGISTRY} (global pull-secret)"
-        CLUSTER_HAS_REGISTRY_CREDS=true
+# Check namespace-scoped secret first
+NAMESPACE_HAS_PULL_SECRET=false
+if kubectl get secret iqe-pull-secret -n "${NAMESPACE}" &>/dev/null; then
+    echo "✓ Found iqe-pull-secret in namespace ${NAMESPACE}"
+    NAMESPACE_HAS_PULL_SECRET=true
+fi
+
+# If no namespace secret, try to create one from local credentials first (most reliable)
+if [ "$NAMESPACE_HAS_PULL_SECRET" = "false" ]; then
+    # Try local container auth files (podman/docker)
+    local_auth_file=""
+    for auth_path in "${XDG_RUNTIME_DIR:-/nonexistent}/containers/auth.json" \
+                     "${HOME}/.config/containers/auth.json" \
+                     "${HOME}/.docker/config.json"; do
+        if [ -f "$auth_path" ] && grep -q "${IQE_REGISTRY}" "$auth_path" 2>/dev/null; then
+            local_auth_file="$auth_path"
+            break
+        fi
+    done
+    
+    if [ -n "$local_auth_file" ]; then
+        echo "Found local ${IQE_REGISTRY} credentials, creating iqe-pull-secret..."
+        kubectl create secret generic iqe-pull-secret \
+            --from-file=.dockerconfigjson="$local_auth_file" \
+            --type=kubernetes.io/dockerconfigjson \
+            -n "${NAMESPACE}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+        echo "✓ Created iqe-pull-secret from local credentials"
+        NAMESPACE_HAS_PULL_SECRET=true
     fi
 fi
 
-# Check namespace-scoped secret
-if [ "$CLUSTER_HAS_REGISTRY_CREDS" = "false" ] && kubectl get secret iqe-pull-secret -n "${NAMESPACE}" &>/dev/null; then
-    echo "✓ Found iqe-pull-secret in namespace ${NAMESPACE}"
-    CLUSTER_HAS_REGISTRY_CREDS=true
+# If still no secret, try global pull-secret as fallback
+if [ "$NAMESPACE_HAS_PULL_SECRET" = "false" ]; then
+    if kubectl get secret pull-secret -n openshift-config &>/dev/null; then
+        # Check if global pull secret has quay.io credentials
+        if kubectl get secret pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | base64 -d | grep -q "${IQE_REGISTRY}"; then
+            echo "Found ${IQE_REGISTRY} credentials in global pull-secret, copying to namespace..."
+            kubectl get secret pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d > /tmp/iqe-pull-secret.json
+            kubectl create secret generic iqe-pull-secret \
+                --from-file=.dockerconfigjson=/tmp/iqe-pull-secret.json \
+                --type=kubernetes.io/dockerconfigjson \
+                -n "${NAMESPACE}" \
+                --dry-run=client -o yaml | kubectl apply -f -
+            rm -f /tmp/iqe-pull-secret.json
+            echo "✓ Copied global pull-secret to iqe-pull-secret in namespace ${NAMESPACE}"
+            NAMESPACE_HAS_PULL_SECRET=true
+        fi
+    fi
 fi
 
 # Handle missing credentials
-if [ "$CLUSTER_HAS_REGISTRY_CREDS" = "false" ]; then
-    if [ "$SYNC_PULL_SECRET" = "true" ]; then
-        echo "Syncing local credentials to cluster (--sync-pull-secret)..."
-        if ! sync_local_credentials; then
-            exit 1
-        fi
-    else
-        echo ""
-        echo "WARNING: Cluster may not have pull credentials for ${IQE_REGISTRY}"
-        echo ""
-        echo "  If the pod fails with ImagePullBackOff, re-run with --sync-pull-secret"
-        echo "  to sync your local credentials to the cluster:"
-        echo ""
-        echo "    $0 --sync-pull-secret"
-        echo ""
-        echo "  This will create a namespace-scoped pull secret from your local"
-        echo "  podman/docker credentials."
-        echo ""
-    fi
+if [ "$NAMESPACE_HAS_PULL_SECRET" = "false" ]; then
+    echo ""
+    echo "WARNING: Could not find pull credentials for ${IQE_REGISTRY}"
+    echo ""
+    echo "  Please authenticate to quay.io first:"
+    echo "    podman login quay.io"
+    echo "    # or"
+    echo "    docker login quay.io"
+    echo ""
+    echo "  Then re-run this script."
+    echo ""
 fi
 
 # Delete existing pod if present
 kubectl delete pod iqe-cost-tests -n "${NAMESPACE}" --ignore-not-found=true 2>/dev/null || true
+
+# Create ConfigMap with cluster CA certificates for SSL verification
+echo ""
+echo "Creating CA certificate bundle for SSL verification..."
+
+# Extract ingress CA (used by routes like Keycloak)
+INGRESS_CA=$(kubectl get secret router-ca -n openshift-ingress-operator -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d || echo "")
+
+# Extract service CA (used by internal services)
+SERVICE_CA=$(kubectl get configmap openshift-service-ca.crt -n openshift-config-managed -o jsonpath='{.data.service-ca\.crt}' 2>/dev/null || echo "")
+
+# Combine CAs into a bundle
+CA_BUNDLE=""
+if [ -n "$INGRESS_CA" ]; then
+    CA_BUNDLE="${INGRESS_CA}"
+fi
+if [ -n "$SERVICE_CA" ]; then
+    if [ -n "$CA_BUNDLE" ]; then
+        CA_BUNDLE="${CA_BUNDLE}
+${SERVICE_CA}"
+    else
+        CA_BUNDLE="${SERVICE_CA}"
+    fi
+fi
+
+if [ -n "$CA_BUNDLE" ]; then
+    # Create or update the CA bundle ConfigMap
+    kubectl create configmap iqe-ca-bundle \
+        --from-literal=ca-bundle.crt="${CA_BUNDLE}" \
+        -n "${NAMESPACE}" \
+        --dry-run=client -o yaml | kubectl apply -f -
+    echo "✓ CA certificate bundle created"
+else
+    echo "WARNING: Could not extract cluster CA certificates"
+fi
 
 echo ""
 echo "Creating IQE test pod..."
@@ -324,6 +424,8 @@ metadata:
     test-type: cost-management
 spec:
   restartPolicy: Never
+  imagePullSecrets:
+  - name: iqe-pull-secret
   securityContext:
     runAsNonRoot: true
     seccompProfile:
@@ -337,15 +439,26 @@ spec:
       echo "========== IQE Test Pod Started =========="
       echo "ENV_FOR_DYNACONF: \${ENV_FOR_DYNACONF}"
       echo "DYNACONF_ONPREM_KOKU_HOSTNAME: \${DYNACONF_ONPREM_KOKU_HOSTNAME}"
-      echo "DYNACONF_SERVICE_OBJECTS__MASU__CONFIG__HOSTNAME: \${DYNACONF_SERVICE_OBJECTS__MASU__CONFIG__HOSTNAME}"
+      echo "DYNACONF_ONPREM_CLIENT_ID: \${DYNACONF_ONPREM_CLIENT_ID}"
+      echo "DYNACONF_ONPREM_OAUTH_URL: \${DYNACONF_ONPREM_OAUTH_URL}"
       echo ""
       
       echo "Running IQE tests with marker: ${IQE_MARKER}"
-      iqe tests plugin cost_management \
-        -m "${IQE_MARKER}" \
-        -vv \
-        --junitxml=/results/junit.xml \
-        2>&1 | tee /results/test-output.log
+      if [ -n "\${IQE_FILTER}" ]; then
+        echo "Filter expression: \${IQE_FILTER}"
+        iqe tests plugin cost_management \
+          -m "${IQE_MARKER}" \
+          -k "\${IQE_FILTER}" \
+          -vv \
+          --junitxml=/results/junit.xml \
+          2>&1 | tee /results/test-output.log
+      else
+        iqe tests plugin cost_management \
+          -m "${IQE_MARKER}" \
+          -vv \
+          --junitxml=/results/junit.xml \
+          2>&1 | tee /results/test-output.log
+      fi
       
       EXIT_CODE=\$?
       echo ""
@@ -360,8 +473,18 @@ spec:
       value: "cost_onprem"
     - name: IQE_PLUGINS
       value: "cost-management"
+    - name: IQE_FILTER
+      value: "${IQE_FILTER}"
     
-    # DYNACONF variables (used by Jinja templates in cost_management.default.yaml)
+    # Disable vault - on-prem uses inline credentials, not vault secrets
+    - name: DYNACONF_IQE_VAULT_LOADER_ENABLED
+      value: "false"
+    - name: DYNACONF_IQE_VAULT_OIDC_AUTH
+      value: "false"
+    
+    # DYNACONF variables for cost_onprem environment
+    # Source values - these SHOULD feed Jinja templates like main.get('ONPREM_*')
+    # but Jinja evaluation happens before env vars are merged, so we also set targets
     - name: DYNACONF_ONPREM_KOKU_HOSTNAME
       value: "${KOKU_HOSTNAME}"
     - name: DYNACONF_ONPREM_CLIENT_ID
@@ -370,14 +493,66 @@ spec:
       value: "${KEYCLOAK_CLIENT_SECRET}"
     - name: DYNACONF_ONPREM_OAUTH_URL
       value: "${OAUTH_URL}"
+    - name: DYNACONF_ONPREM_MASU_HOSTNAME
+      value: "${MASU_HOSTNAME}"
+    - name: DYNACONF_ONPREM_MASU_PORT
+      value: "${MASU_PORT}"
     
-    # Override MASU config (default uses localhost for port-forward)
+    # Direct target values - bypass Jinja templates that don't evaluate correctly
+    - name: DYNACONF_MAIN__HOSTNAME
+      value: "${KOKU_HOSTNAME}"
+    - name: DYNACONF_MAIN__SCHEME
+      value: "https"
+    - name: DYNACONF_MAIN__SSL_VERIFY
+      value: "false"
+    - name: DYNACONF_HTTP__DEFAULT_AUTH_TYPE
+      value: "jwt-auth"
+    - name: DYNACONF_HTTP__OAUTH_CLIENT_ID
+      value: "${KEYCLOAK_CLIENT_ID}"
+    - name: DYNACONF_HTTP__OAUTH_BASE_URL
+      value: "${OAUTH_URL}"
+    - name: DYNACONF_HTTP__SSL_VERIFY
+      value: "false"
+    
+    # Service objects configuration
+    - name: DYNACONF_SERVICE_OBJECTS__KOKU__CONFIG__HOSTNAME
+      value: "${KOKU_HOSTNAME}"
+    - name: DYNACONF_SERVICE_OBJECTS__KOKU__CONFIG__SCHEME
+      value: "https"
+    - name: DYNACONF_SERVICE_OBJECTS__KOKU__CONFIG__PORT
+      value: ""
     - name: DYNACONF_SERVICE_OBJECTS__MASU__CONFIG__HOSTNAME
       value: "${MASU_HOSTNAME}"
     - name: DYNACONF_SERVICE_OBJECTS__MASU__CONFIG__PORT
       value: "${MASU_PORT}"
     - name: DYNACONF_SERVICE_OBJECTS__MASU__CONFIG__SCHEME
       value: "http"
+    
+    # User configuration
+    - name: DYNACONF_DEFAULT_USER
+      value: "cost_onprem_user"
+    - name: DYNACONF_USERS__COST_ONPREM_USER__AUTH__USERNAME
+      value: "test"
+    - name: DYNACONF_USERS__COST_ONPREM_USER__AUTH__PASSWORD
+      value: "test"
+    - name: DYNACONF_USERS__COST_ONPREM_USER__AUTH__JWT_GRANT_TYPE
+      value: "client_credentials"
+    - name: DYNACONF_USERS__COST_ONPREM_USER__AUTH__CLIENT_ID
+      value: "${KEYCLOAK_CLIENT_ID}"
+    - name: DYNACONF_USERS__COST_ONPREM_USER__AUTH__CLIENT_SECRET
+      value: "${KEYCLOAK_CLIENT_SECRET}"
+    - name: DYNACONF_USERS__COST_ONPREM_USER__IDENTITY__ACCOUNT_NUMBER
+      value: "7890123"
+    - name: DYNACONF_USERS__COST_ONPREM_USER__IDENTITY__ORG_ID
+      value: "${ORG_ID}"
+    
+    # SSL CA bundle for cluster certificates
+    - name: REQUESTS_CA_BUNDLE
+      value: "/etc/pki/tls/certs/ca-bundle.crt"
+    - name: SSL_CERT_FILE
+      value: "/etc/pki/tls/certs/ca-bundle.crt"
+    - name: CURL_CA_BUNDLE
+      value: "/etc/pki/tls/certs/ca-bundle.crt"
     
     # S3 Configuration
     - name: S3_ENDPOINT
@@ -403,9 +578,17 @@ spec:
     volumeMounts:
     - name: results
       mountPath: /results
+    - name: ca-bundle
+      mountPath: /etc/pki/tls/certs/ca-bundle.crt
+      subPath: ca-bundle.crt
+      readOnly: true
   volumes:
   - name: results
     emptyDir: {}
+  - name: ca-bundle
+    configMap:
+      name: iqe-ca-bundle
+      optional: true
 EOF
 
 echo "Waiting for IQE pod to start..."

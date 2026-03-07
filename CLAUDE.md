@@ -297,3 +297,46 @@ kubectl logs -n cost-onprem -l app.kubernetes.io/component=ros-processor | grep 
 ```
 
 **Note:** Downloaded artifacts are saved to `ci-artifacts-pr<PR>-<BUILD_ID>/` and should NOT be deleted unless explicitly requested by the user.
+
+---
+
+## IQE Integration Testing
+
+IQE (Insights QE) tests provide comprehensive integration testing for cost-management functionality.
+
+### Prerequisites
+
+1. **Red Hat Network**: Must be on VPN for repository access
+2. **Quay.io Access**: For containerized tests, need access to `quay.io/cloudservices/iqe-tests`
+   - Requires user file in `app-interface` repo: `data/teams/insights/users/<username>.yml`
+3. **Local Repositories**: For local tests, clone adjacent to this repo:
+   ```
+   ../iqe-core/
+   ../iqe-cost-management-plugin/
+   ```
+
+### Running IQE Tests
+
+```bash
+# Containerized (requires Quay access)
+./scripts/run-iqe-tests.sh --timeout 3600
+
+# Local (requires VPN + local repos)
+./scripts/run-iqe-tests-local.sh --setup      # First time
+./scripts/run-iqe-tests-local.sh --clean-sources  # Run tests
+```
+
+### Test Duration
+
+- **3 control plane only**: 1-2+ hours (backend bottleneck)
+- **3 CP + 2 workers**: 30-60 minutes (recommended)
+
+Tests are I/O-bound waiting for backend data processing, not compute-bound.
+
+### Known Issues
+
+Default filters skip problematic tests:
+- `ai_workloads`, `distro` - Not applicable to on-prem
+- `test_api_cost_model_rates_update_to_tag_based` - Backend timeout
+
+See `docs/development/iqe-testing-setup.md` for full setup guide.

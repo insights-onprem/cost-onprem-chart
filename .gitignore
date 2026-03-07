@@ -4,10 +4,8 @@ __pycache__/
 *$py.class
 
 # Virtual environments
-venv/
-env/
-ENV/
-.venv/
+*[Vv][Ee][Nn][Vv]*/ 
+.venv-*/
 cost-mgmt-venv/
 *-venv/
 
@@ -36,3 +34,4 @@ ci-artifacts-*/
 version_info.json
 .digest-cache/*.digest
 reports/junit.xml
+**/*.json.gz

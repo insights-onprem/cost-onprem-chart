@@ -1,0 +1,719 @@
+#!/bin/bash
+# Run IQE cost-management tests locally against a deployed cost-onprem chart
+#
+# This script runs tests directly from local iqe-core and iqe-cost-management-plugin
+# repositories, providing more control over dependencies and faster iteration.
+#
+# Usage:
+#   ./scripts/run-iqe-tests-local.sh [OPTIONS]
+#
+# Prerequisites:
+#   - Python 3.12+
+#   - Access to Red Hat internal PyPI (nexus.corp.redhat.com)
+#   - Local clones of iqe-core and iqe-cost-management-plugin
+#   - Logged into OpenShift cluster with cost-onprem deployed
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# Defaults
+NAMESPACE="${NAMESPACE:-cost-onprem}"
+HELM_RELEASE_NAME="${HELM_RELEASE_NAME:-cost-onprem}"
+IQE_MARKER="${IQE_MARKER:-cost_ocp_on_prem}"
+IQE_FILTER="${IQE_FILTER:-not ai_workloads and not distro and not test_api_cost_model_rates_update_to_tag_based and not test_api_ocp_all_validate_items_date_range_monthly and not test_api_ocp_ingest_source_static and not test_api_ocp_ingest_source_eur and not test_api_ocp_for_aws and not test_api_ocp_all_bucketing}"
+KEYCLOAK_NS="${KEYCLOAK_NS:-keycloak}"
+KEYCLOAK_SECRET_NAME="${KEYCLOAK_SECRET_NAME:-keycloak-client-secret-cost-management-operator}"
+MASU_LOCAL_PORT="${MASU_LOCAL_PORT:-8002}"
+
+# Local repository paths (can be overridden via env vars)
+IQE_CORE_PATH="${IQE_CORE_PATH:-${PROJECT_ROOT}/../iqe-core}"
+IQE_PLUGIN_PATH="${IQE_PLUGIN_PATH:-${PROJECT_ROOT}/../iqe-cost-management-plugin}"
+VENV_PATH="${VENV_PATH:-${PROJECT_ROOT}/.venv-iqe}"
+
+# PyPI configuration for Red Hat internal packages
+PYPI_INDEX_URL="${PYPI_INDEX_URL:-https://nexus.corp.redhat.com/repository/cqt-pypi/simple}"
+
+# Feature flags
+DO_SETUP=false
+SKIP_PORTFORWARD=false
+CLEAN_SOURCES=false
+NISE_VERSION=""
+VERBOSE=false
+DRY_RUN=false
+PYTHON_BIN="${PYTHON_BIN:-python3.12}"
+
+# Port-forward PID tracking
+PORTFORWARD_PID=""
+
+show_help() {
+    cat << EOF
+Run IQE cost-management tests locally against a deployed cost-onprem chart
+
+This script runs tests directly from local iqe-core and iqe-cost-management-plugin
+repositories instead of using the container image. This provides:
+  - Control over koku-nise version (useful for GPU/MIG schema issues)
+  - Faster iteration (edit tests and re-run immediately)
+  - Full debugging capability with local IDE
+
+Usage: $(basename "$0") [OPTIONS]
+
+Options:
+    --setup              Create/update virtual environment and install dependencies
+    --namespace NAME     Target namespace (default: cost-onprem)
+    --marker EXPR        Pytest marker expression (default: cost_ocp_on_prem)
+    --filter EXPR        Pytest -k filter expression to select/deselect tests
+    --nise-version VER   Override koku-nise version (e.g., 5.2.0 for pre-MIG)
+    --skip-portforward   Don't start masu port-forward (if already running)
+    --masu-port PORT     Local port for masu port-forward (default: 8002)
+    --clean-sources      Delete all sources before running tests
+    --verbose            Enable verbose output
+    --dry-run            Show what would be done without executing
+    --help               Show this help message
+
+Environment Variables:
+    IQE_CORE_PATH        Path to iqe-core repo (default: ../iqe-core)
+    IQE_PLUGIN_PATH      Path to iqe-cost-management-plugin repo (default: ../iqe-cost-management-plugin)
+    VENV_PATH            Path to virtual environment (default: .venv-iqe)
+    PYTHON_BIN           Python binary to use (default: python3.12)
+    PYPI_INDEX_URL       PyPI index URL for Red Hat packages
+
+Examples:
+    # First time setup
+    ./scripts/run-iqe-tests-local.sh --setup
+
+    # Run all on-prem tests (uses default filter to skip known problematic tests)
+    ./scripts/run-iqe-tests-local.sh
+
+    # Run with custom filter
+    ./scripts/run-iqe-tests-local.sh --filter "not ai_workloads"
+
+    # Use older NISE version without MIG support
+    ./scripts/run-iqe-tests-local.sh --setup --nise-version 5.2.0
+
+    # Skip port-forward if already running
+    ./scripts/run-iqe-tests-local.sh --skip-portforward
+
+    # Dry run to see configuration
+    ./scripts/run-iqe-tests-local.sh --dry-run
+EOF
+}
+
+log() {
+    echo "[$(date '+%H:%M:%S')] $*"
+}
+
+log_verbose() {
+    if [ "$VERBOSE" = true ]; then
+        log "$@"
+    fi
+}
+
+error() {
+    echo "[ERROR] $*" >&2
+}
+
+cleanup() {
+    log "Cleaning up..."
+    if [ -n "$PORTFORWARD_PID" ] && kill -0 "$PORTFORWARD_PID" 2>/dev/null; then
+        log "Stopping masu port-forward (PID: $PORTFORWARD_PID)"
+        kill "$PORTFORWARD_PID" 2>/dev/null || true
+    fi
+    # Clean up temp files
+    rm -f /tmp/iqe-ca-bundle-*.crt 2>/dev/null || true
+}
+
+trap cleanup EXIT
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --setup) DO_SETUP=true; shift ;;
+        --namespace) NAMESPACE="$2"; shift 2 ;;
+        --marker) IQE_MARKER="$2"; shift 2 ;;
+        --filter) IQE_FILTER="$2"; shift 2 ;;
+        --nise-version) NISE_VERSION="$2"; shift 2 ;;
+        --skip-portforward) SKIP_PORTFORWARD=true; shift ;;
+        --masu-port) MASU_LOCAL_PORT="$2"; shift 2 ;;
+        --clean-sources) CLEAN_SOURCES=true; shift ;;
+        --verbose) VERBOSE=true; shift ;;
+        --dry-run) DRY_RUN=true; shift ;;
+        --help) show_help; exit 0 ;;
+        *) error "Unknown option: $1"; show_help; exit 1 ;;
+    esac
+done
+
+# =============================================================================
+# Validation
+# =============================================================================
+
+validate_prerequisites() {
+    log "Validating prerequisites..."
+    
+    # Check Python version
+    if ! command -v "$PYTHON_BIN" &>/dev/null; then
+        error "Python binary not found: $PYTHON_BIN"
+        error "Please install Python 3.12+ or set PYTHON_BIN environment variable"
+        exit 1
+    fi
+    
+    local python_version
+    python_version=$("$PYTHON_BIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+    log_verbose "Python version: $python_version"
+    
+    if [[ ! "$python_version" =~ ^3\.(1[2-9]|[2-9][0-9])$ ]]; then
+        error "Python 3.12+ required, found: $python_version"
+        exit 1
+    fi
+    
+    # Check iqe-core repo
+    if [ ! -d "$IQE_CORE_PATH" ]; then
+        error "iqe-core repository not found at: $IQE_CORE_PATH"
+        error "Please clone it or set IQE_CORE_PATH environment variable"
+        error "  git clone https://gitlab.cee.redhat.com/insights-qe/iqe-core.git $IQE_CORE_PATH"
+        exit 1
+    fi
+    
+    if [ ! -f "$IQE_CORE_PATH/pyproject.toml" ]; then
+        error "Invalid iqe-core repository (missing pyproject.toml): $IQE_CORE_PATH"
+        exit 1
+    fi
+    
+    # Check iqe-cost-management-plugin repo
+    if [ ! -d "$IQE_PLUGIN_PATH" ]; then
+        error "iqe-cost-management-plugin repository not found at: $IQE_PLUGIN_PATH"
+        error "Please clone it or set IQE_PLUGIN_PATH environment variable"
+        error "  git clone https://gitlab.cee.redhat.com/insights-qe/iqe-cost-management-plugin.git $IQE_PLUGIN_PATH"
+        exit 1
+    fi
+    
+    if [ ! -f "$IQE_PLUGIN_PATH/pyproject.toml" ]; then
+        error "Invalid iqe-cost-management-plugin repository (missing pyproject.toml): $IQE_PLUGIN_PATH"
+        exit 1
+    fi
+    
+    # Check kubectl/oc
+    if ! command -v kubectl &>/dev/null && ! command -v oc &>/dev/null; then
+        error "kubectl or oc command not found"
+        exit 1
+    fi
+    
+    # Check cluster connectivity
+    if ! kubectl cluster-info &>/dev/null; then
+        error "Not connected to a Kubernetes cluster"
+        error "Please run: oc login <cluster-url>"
+        exit 1
+    fi
+    
+    log "✓ Prerequisites validated"
+}
+
+# =============================================================================
+# Virtual Environment Setup
+# =============================================================================
+
+setup_venv() {
+    log "Setting up virtual environment at: $VENV_PATH"
+    
+    if [ "$DRY_RUN" = true ]; then
+        log "[DRY RUN] Would create venv and install dependencies"
+        return
+    fi
+    
+    # Create venv if it doesn't exist
+    if [ ! -d "$VENV_PATH" ]; then
+        log "Creating virtual environment..."
+        "$PYTHON_BIN" -m venv "$VENV_PATH"
+    fi
+    
+    # Activate venv
+    # shellcheck source=/dev/null
+    source "$VENV_PATH/bin/activate"
+    
+    # Upgrade pip
+    log "Upgrading pip..."
+    pip install --upgrade pip --quiet
+    
+    # Check if uv is available for faster installs
+    local use_uv=false
+    if command -v uv &>/dev/null; then
+        use_uv=true
+        log "Using uv for faster package installation"
+    fi
+    
+    # Configure PyPI index
+    export PIP_INDEX_URL="$PYPI_INDEX_URL"
+    export UV_INDEX_URL="$PYPI_INDEX_URL"
+    
+    # Install iqe-core in editable mode
+    log "Installing iqe-core (editable)..."
+    if [ "$use_uv" = true ]; then
+        uv pip install -e "$IQE_CORE_PATH"
+    else
+        pip install -e "$IQE_CORE_PATH"
+    fi
+    
+    # Install iqe-cost-management-plugin in editable mode
+    log "Installing iqe-cost-management-plugin (editable)..."
+    if [ "$use_uv" = true ]; then
+        uv pip install -e "$IQE_PLUGIN_PATH"
+    else
+        pip install -e "$IQE_PLUGIN_PATH"
+    fi
+    
+    # Override NISE version if specified
+    if [ -n "$NISE_VERSION" ]; then
+        log "Installing koku-nise version: $NISE_VERSION"
+        if [ "$use_uv" = true ]; then
+            uv pip install "koku-nise==$NISE_VERSION"
+        else
+            pip install "koku-nise==$NISE_VERSION"
+        fi
+    fi
+    
+    # Verify installation
+    log "Verifying installation..."
+    if ! python -c "import iqe; import iqe_cost_management" 2>/dev/null; then
+        error "Failed to import IQE modules"
+        exit 1
+    fi
+    
+    local nise_ver
+    nise_ver=$(pip show koku-nise 2>/dev/null | grep "^Version:" | cut -d' ' -f2)
+    log "✓ Virtual environment ready"
+    log "  - iqe-core: installed (editable)"
+    log "  - iqe-cost-management-plugin: installed (editable)"
+    log "  - koku-nise: $nise_ver"
+}
+
+activate_venv() {
+    if [ ! -d "$VENV_PATH" ]; then
+        error "Virtual environment not found at: $VENV_PATH"
+        error "Run with --setup first: ./scripts/run-iqe-tests-local.sh --setup"
+        exit 1
+    fi
+    
+    # shellcheck source=/dev/null
+    source "$VENV_PATH/bin/activate"
+    log_verbose "Activated virtual environment: $VENV_PATH"
+}
+
+# =============================================================================
+# Cluster Configuration Extraction
+# =============================================================================
+
+extract_cluster_config() {
+    log "Extracting cluster configuration..."
+    
+    # Get Keycloak client credentials
+    if ! kubectl get secret "$KEYCLOAK_SECRET_NAME" -n "$KEYCLOAK_NS" &>/dev/null; then
+        error "Keycloak secret not found: $KEYCLOAK_SECRET_NAME in namespace $KEYCLOAK_NS"
+        exit 1
+    fi
+    
+    export DYNACONF_ONPREM_CLIENT_ID
+    export DYNACONF_ONPREM_CLIENT_SECRET
+    DYNACONF_ONPREM_CLIENT_ID=$(kubectl get secret "$KEYCLOAK_SECRET_NAME" -n "$KEYCLOAK_NS" \
+        -o jsonpath='{.data.CLIENT_ID}' | base64 -d)
+    DYNACONF_ONPREM_CLIENT_SECRET=$(kubectl get secret "$KEYCLOAK_SECRET_NAME" -n "$KEYCLOAK_NS" \
+        -o jsonpath='{.data.CLIENT_SECRET}' | base64 -d)
+    
+    if [ -z "$DYNACONF_ONPREM_CLIENT_ID" ] || [ -z "$DYNACONF_ONPREM_CLIENT_SECRET" ]; then
+        error "Failed to extract Keycloak credentials"
+        exit 1
+    fi
+    
+    # Get Koku API hostname from route
+    export DYNACONF_ONPREM_KOKU_HOSTNAME
+    DYNACONF_ONPREM_KOKU_HOSTNAME=$(kubectl get route "${HELM_RELEASE_NAME}-api" -n "$NAMESPACE" \
+        -o jsonpath='{.spec.host}' 2>/dev/null || \
+        kubectl get route "${HELM_RELEASE_NAME}-gateway" -n "$NAMESPACE" \
+        -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+    
+    if [ -z "$DYNACONF_ONPREM_KOKU_HOSTNAME" ]; then
+        error "Failed to get Koku API route"
+        error "Tried: ${HELM_RELEASE_NAME}-api, ${HELM_RELEASE_NAME}-gateway"
+        exit 1
+    fi
+    
+    # Get Keycloak OAuth URL
+    local keycloak_host
+    keycloak_host=$(kubectl get route keycloak -n "$KEYCLOAK_NS" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+    if [ -z "$keycloak_host" ]; then
+        error "Failed to get Keycloak route"
+        exit 1
+    fi
+    export DYNACONF_ONPREM_OAUTH_URL="https://${keycloak_host}/realms/kubernetes/protocol/openid-connect"
+    
+    # Masu configuration (via port-forward)
+    export DYNACONF_ONPREM_MASU_HOSTNAME="localhost"
+    export DYNACONF_ONPREM_MASU_PORT="$MASU_LOCAL_PORT"
+    
+    # Direct target values - bypass Jinja templates that don't evaluate correctly
+    # These match what the containerized tests use in run-iqe-tests.sh
+    export DYNACONF_MAIN__HOSTNAME="$DYNACONF_ONPREM_KOKU_HOSTNAME"
+    export DYNACONF_MAIN__SCHEME="https"
+    export DYNACONF_MAIN__SSL_VERIFY="false"
+    export DYNACONF_HTTP__DEFAULT_AUTH_TYPE="jwt-auth"
+    export DYNACONF_HTTP__OAUTH_CLIENT_ID="$DYNACONF_ONPREM_CLIENT_ID"
+    export DYNACONF_HTTP__OAUTH_BASE_URL="$DYNACONF_ONPREM_OAUTH_URL"
+    export DYNACONF_HTTP__SSL_VERIFY="false"
+    
+    # Service objects configuration
+    export DYNACONF_SERVICE_OBJECTS__KOKU__CONFIG__HOSTNAME="$DYNACONF_ONPREM_KOKU_HOSTNAME"
+    export DYNACONF_SERVICE_OBJECTS__KOKU__CONFIG__SCHEME="https"
+    export DYNACONF_SERVICE_OBJECTS__KOKU__CONFIG__PORT=""
+    export DYNACONF_SERVICE_OBJECTS__MASU__CONFIG__HOSTNAME="$DYNACONF_ONPREM_MASU_HOSTNAME"
+    export DYNACONF_SERVICE_OBJECTS__MASU__CONFIG__PORT="$DYNACONF_ONPREM_MASU_PORT"
+    export DYNACONF_SERVICE_OBJECTS__MASU__CONFIG__SCHEME="http"
+    
+    # User configuration
+    export DYNACONF_DEFAULT_USER="cost_onprem_user"
+    export DYNACONF_USERS__COST_ONPREM_USER__AUTH__USERNAME="test"
+    export DYNACONF_USERS__COST_ONPREM_USER__AUTH__PASSWORD="test"
+    export DYNACONF_USERS__COST_ONPREM_USER__AUTH__JWT_GRANT_TYPE="client_credentials"
+    export DYNACONF_USERS__COST_ONPREM_USER__AUTH__CLIENT_ID="$DYNACONF_ONPREM_CLIENT_ID"
+    export DYNACONF_USERS__COST_ONPREM_USER__AUTH__CLIENT_SECRET="$DYNACONF_ONPREM_CLIENT_SECRET"
+    export DYNACONF_USERS__COST_ONPREM_USER__IDENTITY__ACCOUNT_NUMBER="7890123"
+    export DYNACONF_USERS__COST_ONPREM_USER__IDENTITY__ORG_ID="org1234567"
+    
+    if [ "$DRY_RUN" = true ]; then
+        log "[DRY RUN] Cluster configuration:"
+        log "  DYNACONF_ONPREM_CLIENT_ID: $DYNACONF_ONPREM_CLIENT_ID"
+        log "  DYNACONF_ONPREM_CLIENT_SECRET: [HIDDEN]"
+        log "  DYNACONF_ONPREM_KOKU_HOSTNAME: $DYNACONF_ONPREM_KOKU_HOSTNAME"
+        log "  DYNACONF_ONPREM_OAUTH_URL: $DYNACONF_ONPREM_OAUTH_URL"
+        log "  DYNACONF_ONPREM_MASU_HOSTNAME: $DYNACONF_ONPREM_MASU_HOSTNAME"
+        log "  DYNACONF_ONPREM_MASU_PORT: $DYNACONF_ONPREM_MASU_PORT"
+    fi
+    
+    log "✓ Cluster configuration extracted"
+    log "  - Koku API: https://$DYNACONF_ONPREM_KOKU_HOSTNAME"
+    log "  - Keycloak: $DYNACONF_ONPREM_OAUTH_URL"
+    log "  - Masu: http://localhost:$MASU_LOCAL_PORT (via port-forward)"
+}
+
+# =============================================================================
+# SSL Certificate Setup
+# =============================================================================
+
+setup_ssl_certs() {
+    log "Setting up SSL certificates..."
+    
+    local ca_bundle_file="/tmp/iqe-ca-bundle-$$.crt"
+    
+    if [ "$DRY_RUN" = true ]; then
+        log "[DRY RUN] Would extract and configure cluster CA certificates"
+        return
+    fi
+    
+    # Extract ingress CA certificate
+    local ingress_ca=""
+    if kubectl get secret router-ca -n openshift-ingress-operator &>/dev/null; then
+        ingress_ca=$(kubectl get secret router-ca -n openshift-ingress-operator \
+            -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d || echo "")
+    fi
+    
+    # Extract service CA certificate
+    local service_ca=""
+    if kubectl get configmap openshift-service-ca.crt -n openshift-config-managed &>/dev/null; then
+        service_ca=$(kubectl get configmap openshift-service-ca.crt -n openshift-config-managed \
+            -o jsonpath='{.data.service-ca\.crt}' 2>/dev/null || echo "")
+    fi
+    
+    # Combine certificates
+    {
+        if [ -n "$ingress_ca" ]; then
+            echo "# OpenShift Ingress CA"
+            echo "$ingress_ca"
+        fi
+        if [ -n "$service_ca" ]; then
+            echo "# OpenShift Service CA"
+            echo "$service_ca"
+        fi
+        # Include system CA bundle if available
+        if [ -f /etc/pki/tls/certs/ca-bundle.crt ]; then
+            echo "# System CA Bundle"
+            cat /etc/pki/tls/certs/ca-bundle.crt
+        elif [ -f /etc/ssl/certs/ca-certificates.crt ]; then
+            echo "# System CA Bundle"
+            cat /etc/ssl/certs/ca-certificates.crt
+        fi
+    } > "$ca_bundle_file"
+    
+    # Set environment variables for SSL
+    export REQUESTS_CA_BUNDLE="$ca_bundle_file"
+    export SSL_CERT_FILE="$ca_bundle_file"
+    export CURL_CA_BUNDLE="$ca_bundle_file"
+    
+    log "✓ SSL certificates configured"
+    log_verbose "  CA bundle: $ca_bundle_file"
+}
+
+# =============================================================================
+# Port Forward Management
+# =============================================================================
+
+start_masu_portforward() {
+    if [ "$SKIP_PORTFORWARD" = true ]; then
+        log "Skipping masu port-forward (--skip-portforward)"
+        return
+    fi
+    
+    log "Starting masu port-forward..."
+    
+    if [ "$DRY_RUN" = true ]; then
+        log "[DRY RUN] Would start: kubectl port-forward svc/${HELM_RELEASE_NAME}-masu $MASU_LOCAL_PORT:8000 -n $NAMESPACE"
+        return
+    fi
+    
+    # Check if port is already in use
+    if lsof -i ":$MASU_LOCAL_PORT" &>/dev/null; then
+        log "Port $MASU_LOCAL_PORT already in use, assuming masu port-forward is running"
+        return
+    fi
+    
+    # Find the masu service (try multiple naming patterns)
+    local masu_svc=""
+    for svc_name in "${HELM_RELEASE_NAME}-koku-masu" "${HELM_RELEASE_NAME}-masu" "koku-masu" "masu"; do
+        if kubectl get svc "$svc_name" -n "$NAMESPACE" &>/dev/null; then
+            masu_svc="$svc_name"
+            break
+        fi
+    done
+    
+    if [ -z "$masu_svc" ]; then
+        error "Masu service not found in namespace $NAMESPACE"
+        error "Available services:"
+        kubectl get svc -n "$NAMESPACE" | grep -i masu || echo "  (none matching 'masu')"
+        exit 1
+    fi
+    
+    # Start port-forward in background
+    kubectl port-forward "svc/$masu_svc" "$MASU_LOCAL_PORT:8000" -n "$NAMESPACE" &>/dev/null &
+    PORTFORWARD_PID=$!
+    
+    # Wait for port-forward to be ready
+    local retries=10
+    while [ $retries -gt 0 ]; do
+        if lsof -i ":$MASU_LOCAL_PORT" &>/dev/null; then
+            log "✓ Masu port-forward ready (localhost:$MASU_LOCAL_PORT -> $masu_svc:8000)"
+            return
+        fi
+        sleep 1
+        ((retries--))
+    done
+    
+    error "Failed to start masu port-forward"
+    exit 1
+}
+
+# =============================================================================
+# Source Cleanup
+# =============================================================================
+
+clean_sources() {
+    if [ "$CLEAN_SOURCES" != true ]; then
+        return
+    fi
+    
+    log "Cleaning up existing sources..."
+    
+    if [ "$DRY_RUN" = true ]; then
+        log "[DRY RUN] Would delete all sources via API"
+        return
+    fi
+    
+    # Get OAuth token
+    local token_url="${DYNACONF_ONPREM_OAUTH_URL}/token"
+    local token_response
+    token_response=$(curl -sk -X POST "$token_url" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -d "grant_type=client_credentials" \
+        -d "client_id=${DYNACONF_ONPREM_CLIENT_ID}" \
+        -d "client_secret=${DYNACONF_ONPREM_CLIENT_SECRET}" 2>/dev/null)
+    
+    local access_token
+    access_token=$(echo "$token_response" | jq -r '.access_token // empty')
+    
+    if [ -z "$access_token" ]; then
+        error "Failed to get OAuth token for cleanup"
+        return 1
+    fi
+    
+    # Get list of sources
+    local api_url="https://${DYNACONF_ONPREM_KOKU_HOSTNAME}/api/cost-management/v1/sources/"
+    local sources_response
+    sources_response=$(curl -sk -X GET "$api_url" \
+        -H "Authorization: Bearer ${access_token}" \
+        -H "Content-Type: application/json" 2>/dev/null)
+    
+    local source_count
+    source_count=$(echo "$sources_response" | jq -r '.meta.count // 0')
+    
+    if [ "$source_count" -eq 0 ]; then
+        log "No sources to clean up"
+        return
+    fi
+    
+    log "Found $source_count sources to delete"
+    
+    # Delete each source
+    local deleted=0
+    for uuid in $(echo "$sources_response" | jq -r '.data[].uuid // empty'); do
+        log_verbose "Deleting source: $uuid"
+        local delete_response
+        delete_response=$(curl -sk -X DELETE "${api_url}${uuid}/" \
+            -H "Authorization: Bearer ${access_token}" \
+            -H "Content-Type: application/json" \
+            -w "%{http_code}" -o /dev/null 2>/dev/null)
+        
+        if [ "$delete_response" = "204" ] || [ "$delete_response" = "200" ]; then
+            ((deleted++))
+        else
+            log_verbose "Warning: Failed to delete source $uuid (HTTP $delete_response)"
+        fi
+    done
+    
+    log "✓ Deleted $deleted sources"
+    
+    # Also clean up cost models
+    local cost_models_url="https://${DYNACONF_ONPREM_KOKU_HOSTNAME}/api/cost-management/v1/cost-models/"
+    local cost_models_response
+    cost_models_response=$(curl -sk -X GET "$cost_models_url?limit=500" \
+        -H "Authorization: Bearer ${access_token}" \
+        -H "Content-Type: application/json" 2>/dev/null)
+    
+    local cm_count
+    cm_count=$(echo "$cost_models_response" | jq -r '.meta.count // 0')
+    
+    if [ "$cm_count" -gt 0 ]; then
+        log "Found $cm_count cost models to delete"
+        local cm_deleted=0
+        for cm_uuid in $(echo "$cost_models_response" | jq -r '.data[].uuid // empty'); do
+            log_verbose "Deleting cost model: $cm_uuid"
+            local cm_delete_response
+            cm_delete_response=$(curl -sk -X DELETE "${cost_models_url}${cm_uuid}/" \
+                -H "Authorization: Bearer ${access_token}" \
+                -H "Content-Type: application/json" \
+                -w "%{http_code}" -o /dev/null 2>/dev/null)
+            
+            if [ "$cm_delete_response" = "204" ] || [ "$cm_delete_response" = "200" ]; then
+                ((cm_deleted++))
+            fi
+        done
+        log "✓ Deleted $cm_deleted cost models"
+    fi
+}
+
+# =============================================================================
+# Test Execution
+# =============================================================================
+
+run_tests() {
+    log "Running IQE tests..."
+    
+    # Set DYNACONF environment
+    export ENV_FOR_DYNACONF="cost_onprem"
+    
+    # Disable Vault (not accessible from local)
+    export DYNACONF_IQE_VAULT_LOADER_ENABLED="false"
+    export DYNACONF_IQE_VAULT_OIDC_AUTH="false"
+    
+    # Build test command
+    local test_cmd="iqe tests plugin cost_management"
+    test_cmd+=" -m \"$IQE_MARKER\""
+    
+    if [ -n "$IQE_FILTER" ]; then
+        test_cmd+=" -k \"$IQE_FILTER\""
+    fi
+    
+    test_cmd+=" -vv"
+    
+    if [ "$DRY_RUN" = true ]; then
+        log "[DRY RUN] Would execute:"
+        log "  ENV_FOR_DYNACONF=cost_onprem"
+        log "  DYNACONF_IQE_VAULT_LOADER_ENABLED=false"
+        log "  DYNACONF_IQE_VAULT_OIDC_AUTH=false"
+        log "  $test_cmd"
+        return
+    fi
+    
+    log "Test command: $test_cmd"
+    log ""
+    log "========== Test Output =========="
+    
+    # Execute tests
+    eval "$test_cmd"
+    local exit_code=$?
+    
+    log "========== End Test Output =========="
+    log ""
+    
+    if [ $exit_code -eq 0 ]; then
+        log "✓ Tests passed"
+    else
+        log "✗ Tests failed (exit code: $exit_code)"
+    fi
+    
+    return $exit_code
+}
+
+# =============================================================================
+# Main
+# =============================================================================
+
+main() {
+    echo "========== IQE Local Test Runner =========="
+    echo "Namespace: ${NAMESPACE}"
+    echo "Marker: ${IQE_MARKER}"
+    if [ -n "${IQE_FILTER}" ]; then
+        echo "Filter: ${IQE_FILTER}"
+    fi
+    echo "IQE Core: ${IQE_CORE_PATH}"
+    echo "IQE Plugin: ${IQE_PLUGIN_PATH}"
+    echo "Venv: ${VENV_PATH}"
+    if [ -n "$NISE_VERSION" ]; then
+        echo "NISE Version Override: ${NISE_VERSION}"
+    fi
+    echo ""
+    
+    # Validate prerequisites
+    validate_prerequisites
+    
+    # Setup or activate venv
+    if [ "$DO_SETUP" = true ]; then
+        setup_venv
+    else
+        activate_venv
+    fi
+    
+    # If only doing setup, exit here
+    if [ "$DO_SETUP" = true ] && [ "$DRY_RUN" != true ]; then
+        log ""
+        log "Setup complete. Run tests with:"
+        log "  ./scripts/run-iqe-tests-local.sh"
+        log ""
+        log "Or with GPU test filter:"
+        log "  ./scripts/run-iqe-tests-local.sh --filter \"not ai_workloads and not distro\""
+        exit 0
+    fi
+    
+    # Extract cluster configuration
+    extract_cluster_config
+    
+    # Setup SSL certificates
+    setup_ssl_certs
+    
+    # Clean sources if requested
+    clean_sources
+    
+    # Start masu port-forward
+    start_masu_portforward
+    
+    # Run tests
+    run_tests
+}
+
+main "$@"
