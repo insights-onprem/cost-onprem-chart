@@ -48,15 +48,8 @@ spec:
 
                 echo "=== Sync complete ==="
             env:
-            - name: SPICEDB_HOST
-              value: {{ printf "spicedb.%s.svc.cluster.local" (.Values.kessel.namespace | default "kessel") | quote }}
-            - name: SPICEDB_PORT
-              value: {{ .Values.kessel.spicedb.port | default "50051" | toString | quote }}
-            - name: SPICEDB_PRESHARED_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: kessel-config
-                  key: preshared-key
+            - name: RELATIONS_URL
+              value: {{ printf "http://kessel-relations.%s.svc.cluster.local:8000" (.Values.kessel.namespace | default "kessel") | quote }}
             - name: KEYCLOAK_URL
               value: {{ include "cost-onprem.keycloak.url" . | quote }}
             - name: KEYCLOAK_REALM

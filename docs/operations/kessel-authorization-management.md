@@ -45,9 +45,8 @@ The management plane scripts bridge Keycloak and SpiceDB — they read users fro
 | Tool | Purpose |
 |---|---|
 | `oc` | OpenShift CLI, logged in with cluster-admin |
-| `grpcurl` | gRPC CLI for SpiceDB communication ([install](https://github.com/fullstorydev/grpcurl)) |
 | `jq` | JSON processor |
-| `curl` | HTTP client |
+| `curl` | HTTP client (used by `kessel-admin.sh` for Relations API REST calls) |
 
 All scripts are in the `scripts/` directory of the ros-helm-chart repository.
 
@@ -505,9 +504,9 @@ oc exec -n cost-onprem deployment/cost-onprem-valkey -- valkey-cli FLUSHALL
    oc get secret spicedb-config -n kessel -o jsonpath='{.data.preshared_key}' | base64 -d
    ```
 
-3. **Ensure grpcurl is installed:**
+3. **Ensure curl and jq are installed:**
    ```bash
-   which grpcurl || echo "Install from https://github.com/fullstorydev/grpcurl"
+   which curl jq || echo "Install curl and jq"
    ```
 
 ## Related Documentation

@@ -36,9 +36,6 @@ oc      # OpenShift CLI (for OpenShift deployments)
 jq      # For JSON processing
 openssl # For certificate and secret generation
 
-# Required for Kessel authorization management
-grpcurl # For gRPC API calls to Kessel Relations API (kessel-admin.sh)
-
 # Required for E2E Testing
 python3      # Python 3 interpreter (for NISE data generation)
 python3-venv # Virtual environment module (for NISE isolation)
@@ -55,19 +52,10 @@ sudo apt-get install jq python3 python3-venv
 sudo dnf install jq python3 python3-venv
 
 # macOS
-brew install jq grpcurl
+brew install jq
 
 # Install Helm (all platforms)
 curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-
-# Install grpcurl (Linux/RHEL - required for kessel-admin.sh)
-# Option A: Download pre-built binary
-GRPCURL_VERSION=1.9.1
-curl -sSL "https://github.com/fullstorydev/grpcurl/releases/download/v${GRPCURL_VERSION}/grpcurl_${GRPCURL_VERSION}_linux_x86_64.tar.gz" \
-  | sudo tar -xz -C /usr/local/bin grpcurl
-
-# Option B: Install via Go toolchain (if Go is available)
-go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
 ```
 
 ### Cluster Access
@@ -754,8 +742,8 @@ LOG_LEVEL=INFO ./scripts/deploy-kessel.sh
 oc get pods -n kessel
 
 # Verify Relations API is reachable (via port-forward)
-oc port-forward -n kessel svc/kessel-relations 9000:9000 &
-grpcurl -plaintext localhost:9000 list
+oc port-forward -n kessel svc/kessel-relations 8000:8000 &
+curl -s http://localhost:8000/v1beta1/tuples?filter.resource_namespace=rbac | jq .
 
 # Check tuple counts
 ./scripts/kessel-admin.sh status
@@ -1168,9 +1156,9 @@ oc logs -n kessel deployment/kessel-relations --tail=20
 # Verify the schema ConfigMap exists
 oc get configmap kessel-schema -n kessel
 
-# Test gRPC connectivity via port-forward
-oc port-forward -n kessel svc/kessel-relations 9000:9000 &
-grpcurl -plaintext localhost:9000 list
+# Test REST connectivity via port-forward
+oc port-forward -n kessel svc/kessel-relations 8000:8000 &
+curl -s http://localhost:8000/v1beta1/tuples?filter.resource_namespace=rbac | jq .
 ```
 
 ### Network Issues

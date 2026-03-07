@@ -2,7 +2,7 @@
 
 # kessel-admin.sh - Kessel authorization management for Cost Management
 #
-# Bridges identity (Keycloak) and authorization (Kessel/SpiceDB) by creating
+# Bridges identity (Keycloak) and authorization (Kessel) by creating
 # the tuples that connect principals to roles via role_bindings and tenants.
 #
 # Resource-level tuples (clusters, projects, integrations) are created
@@ -20,13 +20,12 @@
 #   status      Show current Kessel tuple counts
 #
 # Prerequisites:
-#   - grpcurl (https://github.com/fullstorydev/grpcurl)
-#   - jq, python3 (with PyYAML for seed-roles)
-#   - oc (logged into the cluster)
-#   - Port-forward to Relations API or RELATIONS_URL set
+#   - curl, jq, python3 (with PyYAML for seed-roles)
+#   - oc (logged into the cluster, only for auto-detection when env vars are not set)
 #
 # Environment Variables:
-#   RELATIONS_URL       Relations API gRPC endpoint (default: localhost:9000)
+#   RELATIONS_URL       Relations API HTTP base URL (default: auto-detect)
+#                       e.g. http://kessel-relations.kessel.svc.cluster.local:8000
 #   KEYCLOAK_URL        Keycloak admin URL (default: auto-detect from route)
 #   KEYCLOAK_REALM      Realm name (default: kubernetes)
 #   KEYCLOAK_ADMIN      Admin username (default: admin)
@@ -56,9 +55,6 @@ KEYCLOAK_PASSWORD=${KEYCLOAK_PASSWORD:-}
 RELATIONS_URL=${RELATIONS_URL:-}
 KEYCLOAK_URL=${KEYCLOAK_URL:-}
 DEFAULT_ROLE=${DEFAULT_ROLE:-cost-administrator}
-SPICEDB_HOST=${SPICEDB_HOST:-}
-SPICEDB_PORT=${SPICEDB_PORT:-50051}
-SPICEDB_PRESHARED_KEY=${SPICEDB_PRESHARED_KEY:-}
 
 log_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
@@ -70,23 +66,20 @@ log_error()   { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 # ---------------------------------------------------------------------------
 check_tools() {
     local missing=()
-    for tool in grpcurl jq curl; do
+    for tool in jq curl; do
         if ! command -v "$tool" >/dev/null 2>&1; then
             missing+=("$tool")
         fi
     done
-    # oc is only required when auto-detecting endpoints (env vars not set)
     local need_oc=false
     if [ -z "$KEYCLOAK_URL" ] || [ -z "$KEYCLOAK_PASSWORD" ]; then
         need_oc=true
     fi
-    if [ -z "$SPICEDB_HOST" ] || [ -z "$SPICEDB_PRESHARED_KEY" ]; then
-        if [ -z "$RELATIONS_URL" ]; then
-            need_oc=true
-        fi
+    if [ -z "$RELATIONS_URL" ]; then
+        need_oc=true
     fi
     if $need_oc && ! command -v oc >/dev/null 2>&1; then
-        missing+=("oc (or set SPICEDB_HOST+SPICEDB_PRESHARED_KEY, KEYCLOAK_URL, KEYCLOAK_PASSWORD)")
+        missing+=("oc (or set RELATIONS_URL, KEYCLOAK_URL, KEYCLOAK_PASSWORD)")
     fi
     if [ ${#missing[@]} -gt 0 ]; then
         log_error "Missing required tools: ${missing[*]}"
@@ -101,15 +94,21 @@ detect_relations_url() {
     if [ -n "$RELATIONS_URL" ]; then
         return
     fi
-    log_info "No RELATIONS_URL set, starting port-forward to Relations API..."
-    oc port-forward -n "$KESSEL_NAMESPACE" svc/kessel-relations 9000:9000 &>/dev/null &
+    local in_cluster="http://kessel-relations.${KESSEL_NAMESPACE}.svc.cluster.local:8000"
+    if curl -s --max-time 2 --connect-timeout 2 -o /dev/null "${in_cluster}/v1beta1/tuples?filter.resource_namespace=_probe" 2>/dev/null; then
+        RELATIONS_URL="$in_cluster"
+        log_success "Using in-cluster Relations API: $RELATIONS_URL"
+        return
+    fi
+    log_info "No RELATIONS_URL set, starting port-forward to Relations API (HTTP)..."
+    oc port-forward -n "$KESSEL_NAMESPACE" svc/kessel-relations 8000:8000 &>/dev/null &
     PORT_FORWARD_PID=$!
     sleep 2
     if ! kill -0 "$PORT_FORWARD_PID" 2>/dev/null; then
         log_error "Failed to port-forward to kessel-relations"
         exit 1
     fi
-    RELATIONS_URL="localhost:9000"
+    RELATIONS_URL="http://localhost:8000"
     trap 'kill $PORT_FORWARD_PID 2>/dev/null || true' EXIT
     log_success "Port-forward active: $RELATIONS_URL (PID $PORT_FORWARD_PID)"
 }
@@ -164,103 +163,70 @@ keycloak_list_users() {
 }
 
 # ---------------------------------------------------------------------------
-# SpiceDB direct helpers (authenticated via preshared key)
+# Kessel Relations API REST helpers (HTTP, no auth required)
+#
+# Endpoints (gRPC-Gateway on port 8000):
+#   POST   /v1beta1/tuples   - CreateTuples  (body: {upsert, tuples})
+#   GET    /v1beta1/tuples   - ReadTuples    (query: filter.*)
+#   DELETE /v1beta1/tuples   - DeleteTuples  (query: filter.*)
+#   POST   /v1beta1/check    - Check         (body: {resource, relation, subject})
 # ---------------------------------------------------------------------------
-SPICEDB_URL=""  # resolved lazily
-
-_spicedb_url() {
-    if [ -n "$SPICEDB_URL" ]; then
-        echo "$SPICEDB_URL"
-        return
-    fi
-    if [ -n "$SPICEDB_HOST" ]; then
-        SPICEDB_URL="${SPICEDB_HOST}:${SPICEDB_PORT}"
-    fi
-    echo "$SPICEDB_URL"
-}
-
-detect_spicedb() {
-    if [ -n "$SPICEDB_HOST" ] && [ -n "$SPICEDB_PRESHARED_KEY" ]; then
-        return
-    fi
-    if [ -z "$SPICEDB_HOST" ]; then
-        SPICEDB_HOST="spicedb.${KESSEL_NAMESPACE}.svc.cluster.local"
-        log_info "Using default SpiceDB host: $SPICEDB_HOST"
-    fi
-    if [ -z "$SPICEDB_PRESHARED_KEY" ]; then
-        SPICEDB_PRESHARED_KEY=$(oc get secret spicedb-config -n "$KESSEL_NAMESPACE" \
-            -o jsonpath='{.data.preshared-key}' 2>/dev/null | base64 -d 2>/dev/null || true)
-        if [ -z "$SPICEDB_PRESHARED_KEY" ]; then
-            log_error "Cannot detect SpiceDB preshared key. Set SPICEDB_PRESHARED_KEY."
-            exit 1
-        fi
-    fi
-}
-
-spicedb_grpcurl() {
-    grpcurl -plaintext \
-        -H "authorization: Bearer ${SPICEDB_PRESHARED_KEY}" \
-        "$@"
-}
-
-spicedb_write_relationships() {
+relations_create_tuples() {
     local payload="$1"
-    spicedb_grpcurl -d "$payload" \
-        "$(_spicedb_url)" \
-        authzed.api.v1.PermissionsService/WriteRelationships 2>/dev/null
+    curl -sf -X POST "${RELATIONS_URL}/v1beta1/tuples" \
+        -H "Content-Type: application/json" \
+        -d "$payload" 2>/dev/null
 }
 
-spicedb_read_relationships() {
-    local filter="$1"
-    spicedb_grpcurl -d "$filter" \
-        "$(_spicedb_url)" \
-        authzed.api.v1.PermissionsService/ReadRelationships 2>/dev/null
+relations_delete_tuple() {
+    local res_ns="$1" res_type="$2" res_id="$3" relation="$4"
+    local subj_ns="$5" subj_type="$6" subj_id="$7"
+    curl -sf -G -X DELETE "${RELATIONS_URL}/v1beta1/tuples" \
+        --data-urlencode "filter.resource_namespace=${res_ns}" \
+        --data-urlencode "filter.resource_type=${res_type}" \
+        --data-urlencode "filter.resource_id=${res_id}" \
+        --data-urlencode "filter.relation=${relation}" \
+        --data-urlencode "filter.subject_filter.subject_namespace=${subj_ns}" \
+        --data-urlencode "filter.subject_filter.subject_type=${subj_type}" \
+        --data-urlencode "filter.subject_filter.subject_id=${subj_id}" \
+        2>/dev/null
 }
 
-# ---------------------------------------------------------------------------
-# Kessel Relations API helpers (no auth, used for grant/revoke/check)
-# ---------------------------------------------------------------------------
-create_tuples() {
-    local tuples_json="$1"
-    grpcurl -plaintext -d "$tuples_json" \
-        "$RELATIONS_URL" \
-        kessel.relations.v1beta1.KesselTupleService/CreateTuples 2>/dev/null
-}
-
-delete_tuples() {
-    local tuples_json="$1"
-    grpcurl -plaintext -d "$tuples_json" \
-        "$RELATIONS_URL" \
-        kessel.relations.v1beta1.KesselTupleService/DeleteTuples 2>/dev/null
-}
-
-check_permission() {
-    local resource_type="$1" resource_id="$2" relation="$3" principal="$4"
-    grpcurl -plaintext -d "{
-        \"resource\": {
-            \"type\": {\"namespace\": \"rbac\", \"name\": \"$resource_type\"},
-            \"id\": \"$resource_id\"
-        },
-        \"relation\": \"$relation\",
-        \"subject\": {
-            \"subject\": {
-                \"type\": {\"namespace\": \"rbac\", \"name\": \"principal\"},
-                \"id\": \"$principal\"
-            }
-        }
-    }" "$RELATIONS_URL" \
-        kessel.relations.v1beta1.KesselCheckService/Check 2>/dev/null
-}
-
-read_tuples() {
+relations_read_tuples() {
     local ns="$1" name="$2"
-    grpcurl -plaintext -d "{
-        \"filter\": {
-            \"resource_namespace\": \"$ns\",
-            \"resource_type\": \"$name\"
-        }
-    }" "$RELATIONS_URL" \
-        kessel.relations.v1beta1.KesselTupleService/ReadTuples 2>/dev/null
+    curl -sf -G "${RELATIONS_URL}/v1beta1/tuples" \
+        --data-urlencode "filter.resource_namespace=${ns}" \
+        --data-urlencode "filter.resource_type=${name}" \
+        2>/dev/null
+}
+
+relations_check() {
+    local payload="$1"
+    curl -sf -X POST "${RELATIONS_URL}/v1beta1/check" \
+        -H "Content-Type: application/json" \
+        -d "$payload" 2>/dev/null
+}
+
+# ---------------------------------------------------------------------------
+# Build grant tuples in Relations API format.
+#
+# Returns a JSON array of Relationship objects suitable for CreateTuples.
+# Relation names match the schema.zed definitions exactly (t_ prefix is
+# already part of the schema relation names, NOT added by Relations API).
+# ---------------------------------------------------------------------------
+build_grant_tuples() {
+    local username="$1" role_slug="$2" org_id="$3"
+    local rb_id="${org_id}--${username}--${role_slug}"
+
+    cat <<EOF
+[
+  {"resource":{"type":{"namespace":"rbac","name":"role_binding"},"id":"$rb_id"},"relation":"t_granted","subject":{"subject":{"type":{"namespace":"rbac","name":"role"},"id":"$role_slug"}}},
+  {"resource":{"type":{"namespace":"rbac","name":"role_binding"},"id":"$rb_id"},"relation":"t_subject","subject":{"subject":{"type":{"namespace":"rbac","name":"principal"},"id":"redhat/$username"}}},
+  {"resource":{"type":{"namespace":"rbac","name":"workspace"},"id":"$org_id"},"relation":"t_parent","subject":{"subject":{"type":{"namespace":"rbac","name":"tenant"},"id":"$org_id"}}},
+  {"resource":{"type":{"namespace":"rbac","name":"workspace"},"id":"$org_id"},"relation":"t_binding","subject":{"subject":{"type":{"namespace":"rbac","name":"role_binding"},"id":"$rb_id"}}},
+  {"resource":{"type":{"namespace":"rbac","name":"tenant"},"id":"$org_id"},"relation":"t_binding","subject":{"subject":{"type":{"namespace":"rbac","name":"role_binding"},"id":"$rb_id"}}}
+]
+EOF
 }
 
 # ---------------------------------------------------------------------------
@@ -273,7 +239,6 @@ read_tuples() {
 # this command provides a standalone fallback using the Relations API.
 # ---------------------------------------------------------------------------
 do_seed_roles() {
-    detect_spicedb
     local seed_file=""
     local script_dir
     script_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -293,9 +258,9 @@ do_seed_roles() {
         exit 1
     fi
 
-    log_info "Seeding roles from $seed_file (SpiceDB direct)"
+    log_info "Seeding roles from $seed_file via Relations API"
 
-    local updates="[]"
+    local tuples="[]"
     local role_count=0
 
     while IFS= read -r slug; do
@@ -316,16 +281,12 @@ for role in data['roles']:
             continue
         fi
 
-        # kessel_relation values in seed-roles.yaml already include the t_ prefix
         while IFS= read -r relation; do
-            updates=$(echo "$updates" | jq --arg slug "$slug" --arg rel "${relation}" \
+            tuples=$(echo "$tuples" | jq --arg slug "$slug" --arg rel "${relation}" \
                 '. + [{
-                    "operation": "OPERATION_TOUCH",
-                    "relationship": {
-                        "resource": {"objectType": "rbac/role", "objectId": $slug},
-                        "relation": $rel,
-                        "subject": {"object": {"objectType": "rbac/principal", "objectId": "*"}}
-                    }
+                    "resource": {"type": {"namespace": "rbac", "name": "role"}, "id": $slug},
+                    "relation": $rel,
+                    "subject": {"subject": {"type": {"namespace": "rbac", "name": "principal"}, "id": "*"}}
                 }]')
         done <<< "$relations"
 
@@ -339,19 +300,19 @@ for role in data['roles']:
     print(role['slug'])
 " 2>/dev/null)
 
-    local update_count
-    update_count=$(echo "$updates" | jq 'length')
+    local tuple_count
+    tuple_count=$(echo "$tuples" | jq 'length')
 
-    if [ "$update_count" -eq 0 ]; then
-        log_error "No relationships generated from seed file"
+    if [ "$tuple_count" -eq 0 ]; then
+        log_error "No tuples generated from seed file"
         exit 1
     fi
 
-    log_info "Writing $update_count permission relationships for $role_count roles..."
+    log_info "Writing $tuple_count permission tuples for $role_count roles..."
     local payload
-    payload=$(jq -n --argjson updates "$updates" '{"updates": $updates}')
-    spicedb_write_relationships "$payload"
-    log_success "Seeded $role_count roles ($update_count relationships)"
+    payload=$(jq -n --argjson tuples "$tuples" '{"upsert": true, "tuples": $tuples}')
+    relations_create_tuples "$payload"
+    log_success "Seeded $role_count roles ($tuple_count tuples)"
 }
 
 # ---------------------------------------------------------------------------
@@ -394,7 +355,7 @@ do_grant() {
     tuples=$(build_grant_tuples "$username" "$role_slug" "$org_id")
     local payload
     payload=$(jq -n --argjson tuples "$tuples" '{"upsert": true, "tuples": $tuples}')
-    create_tuples "$payload"
+    relations_create_tuples "$payload"
 
     log_success "Granted '$role_slug' to '$username' in org '$org_id'"
 }
@@ -408,33 +369,14 @@ do_revoke() {
 
     log_info "Revoking role '$role_slug' from '$username' in org '$org_id'"
 
-    delete_tuples "$(cat <<TUPLES
-{
-    "tuples": [
-        {
-            "resource": {"type": {"namespace": "rbac", "name": "role_binding"}, "id": "$rb_id"},
-            "relation": "t_granted",
-            "subject": {"subject": {"type": {"namespace": "rbac", "name": "role"}, "id": "$role_slug"}}
-        },
-        {
-            "resource": {"type": {"namespace": "rbac", "name": "role_binding"}, "id": "$rb_id"},
-            "relation": "t_subject",
-            "subject": {"subject": {"type": {"namespace": "rbac", "name": "principal"}, "id": "redhat/$username"}}
-        },
-        {
-            "resource": {"type": {"namespace": "rbac", "name": "workspace"}, "id": "$org_id"},
-            "relation": "t_binding",
-            "subject": {"subject": {"type": {"namespace": "rbac", "name": "role_binding"}, "id": "$rb_id"}}
-        },
-        {
-            "resource": {"type": {"namespace": "rbac", "name": "tenant"}, "id": "$org_id"},
-            "relation": "t_binding",
-            "subject": {"subject": {"type": {"namespace": "rbac", "name": "role_binding"}, "id": "$rb_id"}}
-        }
-    ]
-}
-TUPLES
-    )"
+    relations_delete_tuple "rbac" "role_binding" "$rb_id" "t_granted" \
+        "rbac" "role" "$role_slug"
+    relations_delete_tuple "rbac" "role_binding" "$rb_id" "t_subject" \
+        "rbac" "principal" "redhat/$username"
+    relations_delete_tuple "rbac" "workspace" "$org_id" "t_binding" \
+        "rbac" "role_binding" "$rb_id"
+    relations_delete_tuple "rbac" "tenant" "$org_id" "t_binding" \
+        "rbac" "role_binding" "$rb_id"
 
     log_success "Revoked '$role_slug' from '$username' in org '$org_id'"
 }
@@ -447,13 +389,31 @@ do_check() {
 
     log_info "Checking '$permission' for '$username' in tenant '$org_id'"
 
+    local payload
+    payload=$(cat <<EOF
+{
+    "resource": {
+        "type": {"namespace": "rbac", "name": "workspace"},
+        "id": "$org_id"
+    },
+    "relation": "$permission",
+    "subject": {
+        "subject": {
+            "type": {"namespace": "rbac", "name": "principal"},
+            "id": "redhat/$username"
+        }
+    }
+}
+EOF
+    )
+
     local result
-    result=$(check_permission "workspace" "$org_id" "$permission" "redhat/$username")
+    result=$(relations_check "$payload")
 
     local allowed
     allowed=$(echo "$result" | jq -r '.allowed // "ALLOWED_UNSPECIFIED"')
 
-    if [ "$allowed" = "ALLOWED_TRUE" ] || echo "$result" | grep -q "ALLOWED_TRUE"; then
+    if [ "$allowed" = "ALLOWED_TRUE" ]; then
         log_success "ALLOWED: '$username' has '$permission' in '$org_id'"
     else
         log_warning "DENIED: '$username' does NOT have '$permission' in '$org_id'"
@@ -462,57 +422,18 @@ do_check() {
 }
 
 # ---------------------------------------------------------------------------
-# Build grant tuples as SpiceDB RelationshipUpdate objects (OPERATION_TOUCH).
-# Returns a JSON array suitable for WriteRelationships.updates[].
-#
-# Relation names match the schema.zed definitions exactly (t_ prefix is
-# already part of the schema relation names, NOT added by Relations API).
-# ---------------------------------------------------------------------------
-build_spicedb_grant_updates() {
-    local username="$1" role_slug="$2" org_id="$3"
-    local rb_id="${org_id}--${username}--${role_slug}"
-
-    cat <<EOF
-[
-  {"operation":"OPERATION_TOUCH","relationship":{"resource":{"objectType":"rbac/role_binding","objectId":"$rb_id"},"relation":"t_granted","subject":{"object":{"objectType":"rbac/role","objectId":"$role_slug"}}}},
-  {"operation":"OPERATION_TOUCH","relationship":{"resource":{"objectType":"rbac/role_binding","objectId":"$rb_id"},"relation":"t_subject","subject":{"object":{"objectType":"rbac/principal","objectId":"redhat/$username"}}}},
-  {"operation":"OPERATION_TOUCH","relationship":{"resource":{"objectType":"rbac/workspace","objectId":"$org_id"},"relation":"t_parent","subject":{"object":{"objectType":"rbac/tenant","objectId":"$org_id"}}}},
-  {"operation":"OPERATION_TOUCH","relationship":{"resource":{"objectType":"rbac/workspace","objectId":"$org_id"},"relation":"t_binding","subject":{"object":{"objectType":"rbac/role_binding","objectId":"$rb_id"}}}},
-  {"operation":"OPERATION_TOUCH","relationship":{"resource":{"objectType":"rbac/tenant","objectId":"$org_id"},"relation":"t_binding","subject":{"object":{"objectType":"rbac/role_binding","objectId":"$rb_id"}}}}
-]
-EOF
-}
-
-# Relations API format (for grant/revoke individual operations)
-build_grant_tuples() {
-    local username="$1" role_slug="$2" org_id="$3"
-    local rb_id="${org_id}--${username}--${role_slug}"
-
-    cat <<EOF
-[
-  {"resource":{"type":{"namespace":"rbac","name":"role_binding"},"id":"$rb_id"},"relation":"t_granted","subject":{"subject":{"type":{"namespace":"rbac","name":"role"},"id":"$role_slug"}}},
-  {"resource":{"type":{"namespace":"rbac","name":"role_binding"},"id":"$rb_id"},"relation":"t_subject","subject":{"subject":{"type":{"namespace":"rbac","name":"principal"},"id":"redhat/$username"}}},
-  {"resource":{"type":{"namespace":"rbac","name":"workspace"},"id":"$org_id"},"relation":"t_parent","subject":{"subject":{"type":{"namespace":"rbac","name":"tenant"},"id":"$org_id"}}},
-  {"resource":{"type":{"namespace":"rbac","name":"workspace"},"id":"$org_id"},"relation":"t_binding","subject":{"subject":{"type":{"namespace":"rbac","name":"role_binding"},"id":"$rb_id"}}},
-  {"resource":{"type":{"namespace":"rbac","name":"tenant"},"id":"$org_id"},"relation":"t_binding","subject":{"subject":{"type":{"namespace":"rbac","name":"role_binding"},"id":"$rb_id"}}}
-]
-EOF
-}
-
-# ---------------------------------------------------------------------------
-# Sync all Keycloak users → Kessel (batched: one gRPC call)
+# Sync all Keycloak users → Kessel (batched: one REST call)
 #
 # Collects tuples for all users and service accounts, then sends them in
 # a single CreateTuples call with upsert=true. This is idempotent.
 # ---------------------------------------------------------------------------
 do_sync() {
-    log_info "Syncing Keycloak users from realm '$KEYCLOAK_REALM' to SpiceDB (direct)..."
-    detect_spicedb
+    log_info "Syncing Keycloak users from realm '$KEYCLOAK_REALM' to Kessel..."
 
     local users_json
     users_json=$(keycloak_list_users)
 
-    local all_updates="[]"
+    local all_tuples="[]"
     local synced=0
     local skipped=0
 
@@ -527,42 +448,44 @@ do_sync() {
             continue
         fi
 
-        local user_updates
-        user_updates=$(build_spicedb_grant_updates "$username" "$DEFAULT_ROLE" "$org_id")
-        all_updates=$(echo "$all_updates" | jq --argjson t "$user_updates" '. + $t')
+        local user_tuples
+        user_tuples=$(build_grant_tuples "$username" "$DEFAULT_ROLE" "$org_id")
+        all_tuples=$(echo "$all_tuples" | jq --argjson t "$user_tuples" '. + $t')
         synced=$((synced + 1))
         log_info "  Queued '$username' (org: $org_id)"
     done < <(echo "$users_json" | jq -c '.[]')
 
-    local sa_updates
-    sa_updates=$(collect_service_account_updates_spicedb)
-    if [ -n "$sa_updates" ] && [ "$sa_updates" != "[]" ]; then
-        all_updates=$(echo "$all_updates" | jq --argjson t "$sa_updates" '. + $t')
+    local sa_tuples
+    sa_tuples=$(collect_service_account_tuples)
+    if [ -n "$sa_tuples" ] && [ "$sa_tuples" != "[]" ]; then
+        all_tuples=$(echo "$all_tuples" | jq --argjson t "$sa_tuples" '. + $t')
     fi
 
-    local update_count
-    update_count=$(echo "$all_updates" | jq 'length')
+    local tuple_count
+    tuple_count=$(echo "$all_tuples" | jq 'length')
 
-    if [ "$update_count" -eq 0 ]; then
+    if [ "$tuple_count" -eq 0 ]; then
         log_warning "No tuples to sync"
         return
     fi
 
-    log_info "Writing $update_count relationships to SpiceDB (OPERATION_TOUCH, atomic)..."
+    all_tuples=$(echo "$all_tuples" | jq -c 'unique_by(tostring)')
+    tuple_count=$(echo "$all_tuples" | jq 'length')
+
+    log_info "Writing $tuple_count tuples via Relations API (upsert, deduped)..."
     local payload
-    payload=$(jq -n --argjson updates "$all_updates" '{"updates": $updates}')
+    payload=$(jq -n --argjson tuples "$all_tuples" '{"upsert": true, "tuples": $tuples}')
 
     local result
-    result=$(spicedb_write_relationships "$payload" 2>&1)
-    if [ $? -eq 0 ]; then
-        log_success "Batch sync complete: $synced users, $update_count relationships"
+    if result=$(relations_create_tuples "$payload" 2>&1); then
+        log_success "Batch sync complete: $synced users, $tuple_count tuples"
     else
         log_error "Batch sync failed: $result"
         exit 1
     fi
 }
 
-collect_service_account_updates_spicedb() {
+collect_service_account_tuples() {
     local admin_token
     admin_token=$(keycloak_token 2>/dev/null)
     if [ -z "$admin_token" ]; then
@@ -575,7 +498,7 @@ collect_service_account_updates_spicedb() {
         -H "Authorization: Bearer $admin_token" \
         "${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/clients?max=100" 2>/dev/null)
 
-    local sa_updates="[]"
+    local sa_tuples="[]"
 
     while IFS= read -r client; do
         [ -z "$client" ] && continue
@@ -598,12 +521,12 @@ collect_service_account_updates_spicedb() {
         fi
 
         log_info "  Queued service account '$sa_username' (org: $org_id)"
-        local user_updates
-        user_updates=$(build_spicedb_grant_updates "$sa_username" "$DEFAULT_ROLE" "$org_id")
-        sa_updates=$(echo "$sa_updates" | jq --argjson t "$user_updates" '. + $t')
+        local user_tuples
+        user_tuples=$(build_grant_tuples "$sa_username" "$DEFAULT_ROLE" "$org_id")
+        sa_tuples=$(echo "$sa_tuples" | jq --argjson t "$user_tuples" '. + $t')
     done < <(echo "$clients_json" | jq -c '.[] | select(.serviceAccountsEnabled == true)' 2>/dev/null)
 
-    echo "$sa_updates"
+    echo "$sa_tuples"
 }
 
 # ---------------------------------------------------------------------------
@@ -642,7 +565,7 @@ do_status() {
         local ns name count
         ns="${resource%%/*}"
         name="${resource##*/}"
-        count=$(read_tuples "$ns" "$name" 2>/dev/null | grep -c '"tuple"' 2>/dev/null || echo "0")
+        count=$(relations_read_tuples "$ns" "$name" 2>/dev/null | grep -c '"tuple"' 2>/dev/null || echo "0")
         if [ "$count" -gt 0 ] 2>/dev/null; then
             printf "  %-45s %s tuples\n" "$resource" "$count"
         fi
@@ -650,18 +573,18 @@ do_status() {
 
     echo ""
     log_info "Role permission tuples (rbac/role):"
-    read_tuples "rbac" "role" 2>/dev/null | jq -r '
-        select(.tuple) | .tuple.resource.id + " → " + .tuple.relation
+    relations_read_tuples "rbac" "role" 2>/dev/null | jq -r '
+        select(.result.tuple) | .result.tuple.resource.id + " → " + .result.tuple.relation
     ' 2>/dev/null | sort | while IFS= read -r line; do
         printf "    %s\n" "$line"
     done
 
     echo ""
     log_info "User role bindings (rbac/role_binding):"
-    read_tuples "rbac" "role_binding" 2>/dev/null | jq -r '
-        select(.tuple) |
-        .tuple.resource.id + " #" + .tuple.relation + " → " +
-        .tuple.subject.subject.type.name + ":" + .tuple.subject.subject.id
+    relations_read_tuples "rbac" "role_binding" 2>/dev/null | jq -r '
+        select(.result.tuple) |
+        .result.tuple.resource.id + " #" + .result.tuple.relation + " → " +
+        .result.tuple.subject.subject.type.name + ":" + .result.tuple.subject.subject.id
     ' 2>/dev/null | sort | while IFS= read -r line; do
         printf "    %s\n" "$line"
     done

@@ -292,7 +292,7 @@ role_binding:{rb_id}  --t_subject-->  principal:{username}
 ```
 
 **Environment variables:**
-- `RELATIONS_URL`: Relations API gRPC endpoint (default: auto port-forward to `kessel-relations`)
+- `RELATIONS_URL`: Relations API HTTP base URL (default: auto-detect in-cluster, or port-forward to `http://localhost:8000`)
 - `KEYCLOAK_URL`: Keycloak admin URL (default: auto-detect from route)
 - `KEYCLOAK_REALM`: Realm name (default: `kubernetes`)
 - `KEYCLOAK_ADMIN`: Admin username (default: `admin`)
@@ -302,9 +302,8 @@ role_binding:{rb_id}  --t_subject-->  principal:{username}
 - `DEFAULT_ROLE`: Default role slug for `sync` (default: `cost-administrator`)
 
 **Prerequisites:**
-- `grpcurl` ([github.com/fullstorydev/grpcurl](https://github.com/fullstorydev/grpcurl))
-- `jq`
-- `oc` (logged into the cluster)
+- `curl`, `jq`
+- `oc` (logged into the cluster, only for auto-detection when env vars are not set)
 
 ---
 
@@ -580,7 +579,6 @@ For detailed troubleshooting, see [Troubleshooting Guide](../docs/operations/tro
 - `jq` (JSON processor)
 - `curl` (HTTP client)
 - `openssl` (Certificate tools)
-- `grpcurl` (gRPC CLI - required for `kessel-admin.sh`)
 - `python3` (Python 3 interpreter - required for pytest tests)
 - `python3-venv` (Virtual environment module - required for pytest tests)
 
