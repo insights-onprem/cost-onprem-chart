@@ -418,6 +418,8 @@ Common environment variables for Koku API and Celery
   value: {{ .Values.kessel.inventory.port | default "9000" | quote }}
 - name: KESSEL_INVENTORY_TLS
   value: {{ .Values.kessel.inventory.tls | default "false" | quote }}
+- name: KESSEL_CA_PATH
+  value: /etc/pki/ca-trust/combined/ca-bundle.crt
 # SpiceDB -- direct connection for schema management (kessel_update_schema command)
 - name: SPICEDB_HOST
   value: {{ include "cost-onprem.kessel.spicedbHost" . | quote }}

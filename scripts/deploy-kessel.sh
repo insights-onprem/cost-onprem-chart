@@ -630,6 +630,8 @@ data:
         address: 0.0.0.0:8000
       grpc:
         address: 0.0.0.0:9000
+        certfile: /etc/tls/grpc/tls.crt
+        keyfile: /etc/tls/grpc/tls.key
 ${AUTHN_BLOCK}
     authz:
       impl: kessel
@@ -672,6 +674,8 @@ metadata:
   namespace: $NAMESPACE
   labels:
     app: kessel-inventory
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: kessel-inventory-tls
 spec:
   ports:
     - name: http
@@ -763,6 +767,9 @@ spec:
             - name: resource-schemas
               mountPath: /resource-schemas
               readOnly: true
+            - name: grpc-tls
+              mountPath: /etc/tls/grpc
+              readOnly: true
           readinessProbe:
             tcpSocket:
               port: 8000
@@ -802,6 +809,9 @@ spec:
             name: kessel-resource-schemas
         - name: resource-schemas
           emptyDir: {}
+        - name: grpc-tls
+          secret:
+            secretName: kessel-inventory-tls
 EOF
     log_success "✓ Inventory API Deployment created"
 

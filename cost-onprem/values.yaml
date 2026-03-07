@@ -792,7 +792,7 @@ kessel:
   inventory:
     host: ""
     port: 9000
-    tls: false
+    tls: true
 
   # Kessel API authentication — Koku authenticates to Relations and Inventory
   # APIs using JWTs from a Keycloak service account. The kessel-koku-client
