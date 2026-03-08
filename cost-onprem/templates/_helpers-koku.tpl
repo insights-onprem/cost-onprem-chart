@@ -362,6 +362,18 @@ Common environment variables for Koku API and Celery
   value: {{ .Values.costManagement.reportDownloadSchedule | default "*/5 * * * *" | quote }}
 - name: POLLING_TIMER
   value: {{ .Values.costManagement.celery.pollingTimer | default "86400" | quote }}
+- name: THANOS_BRIDGE_ENABLED
+  value: {{ .Values.costManagement.thanosBridge.enabled | default false | quote }}
+{{- if .Values.costManagement.thanosBridge.enabled }}
+- name: THANOS_QUERY_URL
+  value: {{ required "costManagement.thanosBridge.thanosQueryUrl is required when thanosBridge is enabled" .Values.costManagement.thanosBridge.thanosQueryUrl | quote }}
+- name: THANOS_BRIDGE_SCHEDULE
+  value: {{ .Values.costManagement.thanosBridge.schedule | default "0 */6 * * *" | quote }}
+- name: THANOS_BRIDGE_TIME_WINDOW_HOURS
+  value: {{ .Values.costManagement.thanosBridge.timeWindowHours | default 6 | quote }}
+- name: THANOS_BRIDGE_QUERY_TIMEOUT
+  value: {{ .Values.costManagement.thanosBridge.queryTimeout | default 120 | quote }}
+{{- end }}
 {{- end -}}
 
 {{/*

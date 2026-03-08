@@ -1,6 +1,5 @@
+{{- if .Values.ingress.enabled }}
 ---
-# NetworkPolicy to allow traffic to Ingress service for file uploads
-# Traffic comes from centralized gateway which handles JWT authentication
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -25,5 +24,6 @@ spec:
               app.kubernetes.io/component: gateway
       ports:
         - protocol: TCP
-          port: {{ .Values.ingress.server.port }}  # Ingress container port
+          port: {{ .Values.ingress.server.port }}
+{{- end }}
 

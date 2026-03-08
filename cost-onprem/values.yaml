@@ -421,6 +421,20 @@ costManagement:
             memory: 500Mi
 
   # ---------------------------------------------------------------------------
+  # Thanos Bridge Configuration
+  # ---------------------------------------------------------------------------
+  # Thanos Bridge replaces the CMMO (koku-metrics-operator) + Ingress data path
+  # for ACM-managed clusters by reading centralized metrics from Thanos and
+  # feeding them into koku's existing pipeline (S3 upload + Kafka publish).
+  # Requires ACM with MCO (multicluster-observability-operator) deployed on the hub.
+  thanosBridge:
+    enabled: false
+    schedule: "0 */6 * * *"
+    timeWindowHours: 6
+    queryTimeout: 120
+    thanosQueryUrl: ""
+
+  # ---------------------------------------------------------------------------
   # Django Configuration
   # ---------------------------------------------------------------------------
   django:
@@ -497,6 +511,8 @@ kruize:
 # -----------------------------------------------------------------------------
 # Uses insights-ingress-go which requires INGRESS_* prefixed environment variables
 ingress:
+  enabled: true
+
   image:
     repository: quay.io/insights-onprem/insights-ingress-go
     tag: "latest"
