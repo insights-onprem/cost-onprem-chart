@@ -8,6 +8,14 @@ Complete installation methods, prerequisites, and upgrade procedures for the Cos
   - [Method 1: Script-Based Installation (Recommended)](#method-1-script-based-installation-recommended)
   - [Method 2: Direct Helm Installation](#method-2-direct-helm-installation)
 - [OpenShift Prerequisites](#openshift-prerequisites)
+  - [1. S3-Compatible Object Storage](#1-s3-compatible-object-storage)
+  - [2. Credentials and Secret Management](#2-credentials-and-secret-management)
+  - [3. Namespace Permissions](#3-namespace-permissions)
+  - [4. Resource Requirements](#4-resource-requirements)
+  - [5. Kafka (AMQ Streams)](#5-kafka-amq-streams)
+  - [6. Keycloak (RHBK)](#6-keycloak-rhbk)
+  - [7. Kessel (ReBAC Authorization)](#7-kessel-rebac-authorization)
+  - [8. User Workload Monitoring](#8-user-workload-monitoring-required-for-ros-metrics)
 - [Upgrade Procedures](#upgrade-procedures)
 - [Verification](#verification)
 - [Resource Requirements by Component](#resource-requirements-by-component)
@@ -24,7 +32,9 @@ The installation scripts require the following tools:
 # Required
 helm    # For installing Helm charts (v3+)
 kubectl # For Kubernetes cluster access
+oc      # OpenShift CLI (for OpenShift deployments)
 jq      # For JSON processing
+openssl # For certificate and secret generation
 
 # Required for E2E Testing
 python3      # Python 3 interpreter (for NISE data generation)
@@ -88,6 +98,11 @@ The script deploys a unified chart containing all components:
 - PostgreSQL (unified database for Koku, Sources, ROS, Kruize)
 - Valkey (caching and Celery broker)
 
+**External Prerequisites (deployed by separate scripts before `helm install`):**
+- Kessel authorization stack (SpiceDB, Relations API, Inventory API) -- see [Kessel section](#7-kessel-rebac-authorization)
+- Keycloak (RHBK) -- identity provider for JWT authentication
+- Kafka (AMQ Streams) -- message broker for data pipeline
+
 **Applications:**
 - Koku API (unified, masu, listener)
 - Celery Workers (background processing)
@@ -100,6 +115,7 @@ The script deploys a unified chart containing all components:
 - ✅ Automatic secret creation (Django, Sources, S3 credentials)
 - ✅ Installs from the Helm chart repository (GitHub Pages)
 - ✅ Auto-discovers S3 credentials (OBC, NooBaa, S4)
+- ✅ Auto-detects Kessel and configures authorization connectivity
 - ✅ OpenShift platform verification
 - ✅ Automatic upgrade detection
 - ✅ Perfect for CI/CD pipelines
@@ -211,6 +227,9 @@ FS_GROUP=$(echo "$SUPP_GROUPS" | cut -d'/' -f1)
 KEYCLOAK_NAMESPACE=$(oc get keycloaks.k8s.keycloak.org -A -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null)
 KEYCLOAK_HOST=$(oc get keycloaks.k8s.keycloak.org -A -o jsonpath='{.items[0].status.hostname}' 2>/dev/null)
 KEYCLOAK_URL="https://${KEYCLOAK_HOST}"
+
+# Kessel namespace (deployed by deploy-kessel.sh)
+KESSEL_NAMESPACE=$(oc get namespace kessel -o jsonpath='{.metadata.name}' 2>/dev/null || echo "kessel")
 ```
 
 #### Step 2: Prepare S3 Storage
@@ -241,8 +260,11 @@ helm install cost-onprem ./cost-onprem \
   --set jwtAuth.keycloak.installed=true \
   --set jwtAuth.keycloak.namespace="$KEYCLOAK_NAMESPACE" \
   --set jwtAuth.keycloak.url="$KEYCLOAK_URL" \
+  --set kessel.namespace="$KESSEL_NAMESPACE" \
   --wait
 ```
+
+> **Prerequisite:** Kessel and Keycloak must be deployed **before** running `helm install`. The Koku migration job seeds authorization roles into SpiceDB and will fail if Kessel is not available. See [Kessel (ReBAC Authorization)](#7-kessel-rebac-authorization) for deployment instructions.
 
 #### Complete Values Reference (Direct Install)
 
@@ -263,6 +285,16 @@ The table below lists every cluster-specific value, its chart default, and how t
 | `jwtAuth.keycloak.namespace` | `""` | Namespace where Keycloak runs | Usually `keycloak` |
 | `database.deploy` | `true` | Deploy bundled PostgreSQL StatefulSet | Set `false` to use an external database (see [BYOI](configuration.md#external-infrastructure-byoi)) |
 | `valkey.deploy` | `true` | Deploy bundled Valkey Deployment | Set `false` to use an external Redis/Valkey (see [BYOI](configuration.md#external-infrastructure-byoi)) |
+| `kessel.namespace` | `kessel` | Namespace where Kessel stack runs | Usually `kessel` (deployed by `deploy-kessel.sh`) |
+| `kessel.relations.host` | `""` (auto) | Kessel Relations API hostname | Auto-constructed from namespace; override for external Kessel |
+| `kessel.relations.port` | `9000` | Kessel Relations API gRPC port | Usually `9000` |
+| `kessel.relations.tls` | `false` | Enable TLS for Relations API | `true` for production with TLS |
+| `kessel.inventory.host` | `""` (auto) | Kessel Inventory API hostname | Auto-constructed from namespace; override for external Kessel |
+| `kessel.inventory.port` | `9000` | Kessel Inventory API gRPC port | Usually `9000` |
+| `kessel.inventory.tls` | `false` | Enable TLS for Inventory API | `true` for production with TLS |
+| `kessel.spicedb.host` | `""` (auto) | SpiceDB hostname (direct access) | Auto-constructed from namespace; used by migration job |
+| `kessel.spicedb.port` | `50051` | SpiceDB gRPC port | Usually `50051` |
+| `kessel.spicedb.tls` | `false` | Enable TLS for SpiceDB | `true` for production with TLS |
 
 > **Important:** The chart defaults are designed for `oc-mirror` image discovery (offline templating). They produce syntactically valid manifests but point to placeholder hostnames. For a working deployment, you **must** override the values marked above with real cluster values.
 
@@ -298,6 +330,18 @@ kubectl create secret generic cost-onprem-db-credentials \
   --from-literal=kruize-password="<kruize_password>" \
   --from-literal=koku-user="koku_user" \
   --from-literal=koku-password="<koku_password>"
+
+# 5. Kessel config (required — created by deploy-kessel.sh automatically)
+# If Kessel was deployed manually (not via deploy-kessel.sh), create this secret:
+kubectl create secret generic kessel-config \
+  --namespace=cost-onprem \
+  --from-literal=relations-host="kessel-relations.kessel.svc.cluster.local" \
+  --from-literal=relations-port="9000" \
+  --from-literal=inventory-host="kessel-inventory.kessel.svc.cluster.local" \
+  --from-literal=inventory-port="9000" \
+  --from-literal=spicedb-host="spicedb.kessel.svc.cluster.local" \
+  --from-literal=spicedb-port="50051" \
+  --from-literal=spicedb-preshared-key="<SPICEDB_PRESHARED_KEY>"
 ```
 
 #### Step 5: Verify
@@ -340,6 +384,9 @@ jwtAuth:
     installed: true
     url: "https://keycloak-keycloak.apps.mycluster.example.com"
     namespace: "keycloak"
+
+kessel:
+  namespace: "kessel"  # Namespace where deploy-kessel.sh deployed the stack
 ```
 
 #### Example: BYOI `my-values.yaml` (External PostgreSQL + Valkey)
@@ -382,6 +429,9 @@ jwtAuth:
     installed: true
     url: "https://keycloak-keycloak.apps.mycluster.example.com"
     namespace: "keycloak"
+
+kessel:
+  namespace: "kessel"
 ```
 
 Then install:
@@ -398,6 +448,22 @@ helm install cost-onprem ./cost-onprem \
 ---
 
 ## OpenShift Prerequisites
+
+**Required Deployment Order:**
+
+The following external services must be deployed **before** the Helm chart install, in this order:
+
+```
+1. Create cost-onprem namespace
+2. Deploy RHBK (Keycloak)          →  scripts/deploy-rhbk.sh
+3. Deploy Kessel (SpiceDB + APIs)  →  scripts/deploy-kessel.sh
+4. Deploy Kafka (AMQ Streams)      →  scripts/deploy-kafka.sh
+5. Install Helm chart              →  scripts/install-helm-chart.sh
+6. Configure TLS                   →  scripts/setup-cost-mgmt-tls.sh
+7. Sync users to Kessel            →  scripts/kessel-admin.sh sync
+```
+
+> The orchestration script `deploy-test-cost-onprem.sh` automates steps 1-6 but does **not** run step 7. You must run `kessel-admin.sh sync` manually after the orchestration script completes.
 
 ### 1. S3-Compatible Object Storage
 
@@ -517,7 +583,7 @@ oc auth can-i create deployments -n cost-onprem
 oc auth can-i create routes -n cost-onprem
 ```
 
-### 5. Resource Requirements
+### 4. Resource Requirements
 
 **Single Node OpenShift (SNO):**
 - SNO cluster with S3-compatible storage (ODF, S4, or external S3)
@@ -528,6 +594,8 @@ oc auth can-i create routes -n cost-onprem
 **See [Configuration Guide](../operations/configuration.md) for detailed requirements**
 
 ### 5. Kafka (AMQ Streams)
+
+> **Deployment Order:** Kafka should be deployed after Keycloak and Kessel, but before the Helm chart install.
 
 Kafka is required for the Cost Management data pipeline (OCP metrics ingestion).
 
@@ -575,7 +643,119 @@ oc wait kafka/cost-onprem-kafka --for=condition=Ready --timeout=300s -n kafka
 
 > **Using an existing Kafka cluster:** If you already have a Kafka cluster (e.g., AMQ Streams, Confluent, MSK), you can skip the AMQ Streams deployment and configure `kafka.bootstrapServers` in your values file. Set `KAFKA_BOOTSTRAP_SERVERS` when running the install script to skip AMQ Streams verification. Only PLAINTEXT connections are currently supported. See [External Kafka](configuration.md#external-kafka) for details.
 
-### 6. User Workload Monitoring (Required for ROS Metrics)
+### 6. Keycloak (RHBK)
+
+Red Hat Build of Keycloak (RHBK) is **required** as the identity provider for all on-premise deployments. It provides:
+- **JWT authentication** -- Issues tokens that the centralized gateway validates for all API requests
+- **User identity store** -- Keycloak users (with `org_id` attributes) are the source of truth that `kessel-admin.sh sync` uses to create authorization tuples in Kessel
+
+**Automated Deployment (Recommended):**
+```bash
+./scripts/deploy-rhbk.sh
+```
+
+The script deploys the RHBK Operator, creates a Keycloak instance with a `kubernetes` realm, configures the `cost-management-operator` OIDC client, and sets up OpenShift OIDC integration.
+
+**Deployment Order:** RHBK must be deployed **before** Kessel and the Helm chart, because:
+1. The Helm chart needs the Keycloak URL for JWT validation configuration
+2. `kessel-admin.sh sync` reads users from Keycloak to create Kessel tuples
+
+See [`scripts/deploy-rhbk.sh`](../../scripts/deploy-rhbk.sh) for full documentation.
+
+---
+
+### 7. Kessel (ReBAC Authorization)
+
+Kessel provides Relationship-Based Access Control (ReBAC) for Cost Management On-Premise. It replaces the SaaS RBAC service and is **required** for all on-premise deployments. Without Kessel, all API requests will be denied with HTTP 403.
+
+**Architecture:**
+```
+Keycloak (identity)  ──>  Kessel (authorization)  ──>  Cost Management (application)
+       │                        │                              │
+   JWT tokens            SpiceDB + Relations API         Koku / ROS APIs
+   User attributes       Role bindings, permissions      Permission enforcement
+```
+
+**Components deployed by `deploy-kessel.sh`:**
+- **PostgreSQL** -- Dedicated database for SpiceDB and Inventory
+- **SpiceDB** -- Relationship store (gRPC on port 50051)
+- **Kessel Relations API** -- Authorization API (gRPC on port 9000), used by Koku and ROS for `Check` and `LookupResources` calls
+- **Kessel Inventory API** -- Resource inventory (HTTP 8000, gRPC 9000)
+
+**Automated Deployment (Recommended):**
+```bash
+# IMPORTANT: The Cost Management namespace must exist before running deploy-kessel.sh
+# because the script creates the kessel-config secret there.
+# If using deploy-test-cost-onprem.sh, this is handled automatically.
+oc create namespace cost-onprem 2>/dev/null || true
+
+# Deploy the full Kessel stack
+./scripts/deploy-kessel.sh
+
+# The script will:
+# - Create the kessel namespace
+# - Deploy PostgreSQL, SpiceDB, Relations API, and Inventory API
+# - Provision the ZED authorization schema to SpiceDB
+# - Create the kessel-config secret in the Cost Management namespace
+# - Wait for all components to be ready
+```
+
+**Post-Helm Install -- Sync Users to Kessel:**
+
+After the Helm chart is installed (which runs `kessel_seed_roles` to create role definitions), sync Keycloak users to Kessel to establish the authorization chain:
+
+```bash
+# Sync all Keycloak users with the default cost-administrator role
+./scripts/kessel-admin.sh sync
+
+# Verify authorization works
+./scripts/kessel-admin.sh check <username> cost_management_openshift_cluster_read <org_id>
+
+# Show tuple counts
+./scripts/kessel-admin.sh status
+```
+
+**Authorization Chain:**
+
+The `kessel-admin.sh sync` command creates three tuples per user that form the complete authorization chain:
+
+```
+tenant:{org_id}         --t_binding-->   role_binding:{rb_id}
+role_binding:{rb_id}    --t_granted-->   role:{cost-administrator}
+role_binding:{rb_id}    --t_subject-->   principal:{username}
+```
+
+These tuples, combined with the roles seeded by Koku's migration job (`kessel_seed_roles`), allow the Relations API to resolve permission checks such as "does user X have `cost_management_openshift_cluster_read` in org Y?"
+
+**Customization:**
+```bash
+# Custom namespace
+KESSEL_NAMESPACE=my-kessel COST_MGMT_NAMESPACE=my-cost ./scripts/deploy-kessel.sh
+
+# Verbose output
+LOG_LEVEL=INFO ./scripts/deploy-kessel.sh
+```
+
+**Manual Verification:**
+```bash
+# Check all Kessel components are running
+oc get pods -n kessel
+
+# Verify Relations API is reachable (via port-forward)
+oc port-forward -n kessel svc/kessel-relations 8000:8000 &
+curl -s 'http://localhost:8000/api/authz/v1beta1/tuples?filter.resourceNamespace=rbac' | jq .
+
+# Check tuple counts
+./scripts/kessel-admin.sh status
+```
+
+> **Important:** Kessel must be deployed and healthy **before** running `helm install`. The Koku migration job connects to SpiceDB to seed roles and will fail if Kessel is not available.
+
+See [`scripts/deploy-kessel.sh`](../../scripts/deploy-kessel.sh) and [`scripts/kessel-admin.sh`](../../scripts/kessel-admin.sh) for full documentation.
+
+---
+
+### 8. User Workload Monitoring (Required for ROS Metrics)
 
 User Workload Monitoring must be enabled for Prometheus to scrape ServiceMonitors deployed by this chart. Without it, the ROS data pipeline will not function - ServiceMonitors will be created but no metrics will be collected.
 
@@ -710,6 +890,22 @@ curl -k https://<route-host>/ready
 curl http://localhost:32061/api/ros/status
 ```
 
+### Kessel Authorization Health
+
+```bash
+# Check Kessel stack components
+oc get pods -n kessel
+
+# Verify Kessel roles were seeded by the migration job
+./scripts/kessel-admin.sh status
+
+# Verify a user has expected permissions
+./scripts/kessel-admin.sh check <username> cost_management_openshift_cluster_read <org_id>
+
+# If no tuples exist, sync Keycloak users to Kessel
+./scripts/kessel-admin.sh sync
+```
+
 ### Storage Verification
 
 ```bash
@@ -730,9 +926,9 @@ kubectl get pvc -n cost-onprem -o jsonpath='{.items[*].spec.storageClassName}' |
 kubectl exec -it deployment/cost-onprem-ros-api -n cost-onprem -- \
   env | grep DATABASE_URL
 
-# Test Kafka connectivity
-kubectl exec -it statefulset/cost-onprem-kafka -n cost-onprem -- \
-  kafka-topics.sh --list --bootstrap-server localhost:29092
+# Test Kafka connectivity (Kafka runs in the kafka namespace, not cost-onprem)
+kubectl exec -it cost-onprem-kafka-broker-0 -n kafka -- \
+  kafka-topics.sh --list --bootstrap-server localhost:9092
 
 # Test S3 access (endpoint depends on your storage backend)
 oc rsh -n cost-onprem deployment/cost-onprem-ingress -- \
@@ -923,6 +1119,48 @@ chmod +x scripts/install-helm-chart.sh
 bash scripts/install-helm-chart.sh
 ```
 
+### Kessel Issues
+
+**Migration job fails with SpiceDB connection error:**
+```bash
+# Verify Kessel is deployed and running
+oc get pods -n kessel
+
+# Check kessel-config secret exists in Cost Management namespace
+oc get secret kessel-config -n cost-onprem
+
+# Check SpiceDB logs
+oc logs -n kessel deployment/spicedb --tail=20
+
+# Re-run deploy-kessel.sh if needed
+./scripts/deploy-kessel.sh
+```
+
+**API returns 403 Forbidden for all users:**
+```bash
+# Check if authorization tuples exist
+./scripts/kessel-admin.sh status
+
+# If tuple counts are 0, sync Keycloak users
+./scripts/kessel-admin.sh sync
+
+# Verify a specific user's permissions
+./scripts/kessel-admin.sh check <username> cost_management_openshift_cluster_read <org_id>
+```
+
+**Relations API not responding:**
+```bash
+# Check Relations API pod
+oc logs -n kessel deployment/kessel-relations --tail=20
+
+# Verify the schema ConfigMap exists
+oc get configmap kessel-schema -n kessel
+
+# Test REST connectivity via port-forward
+oc port-forward -n kessel svc/kessel-relations 8000:8000 &
+curl -s 'http://localhost:8000/api/authz/v1beta1/tuples?filter.resourceNamespace=rbac' | jq .
+```
+
 ### Network Issues
 
 ```bash
@@ -953,10 +1191,11 @@ kubectl top nodes  # requires metrics-server
 
 After successful installation:
 
-1. **Configure Access**: See [Configuration Guide](../operations/configuration.md)
-2. **Set Up JWT Auth**: See [JWT Authentication Guide](../api/native-jwt-authentication.md)
-3. **Configure TLS**: See [TLS Setup Guide](../operations/cost-management-operator-tls-config-setup.md)
-4. **Run Tests**: See [Scripts Reference](../scripts/README.md)
+1. **Sync Users to Kessel**: Run `./scripts/kessel-admin.sh sync` to create authorization tuples
+2. **Configure Access**: See [Configuration Guide](../operations/configuration.md)
+3. **Set Up JWT Auth**: See [JWT Authentication Guide](../api/native-jwt-authentication.md)
+4. **Configure TLS**: See [TLS Setup Guide](../operations/cost-management-operator-tls-config-setup.md)
+5. **Run Tests**: See [Scripts Reference](../../scripts/README.md)
 
 ---
 
