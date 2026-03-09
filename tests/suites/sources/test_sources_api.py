@@ -22,6 +22,7 @@ Run all sources tests: pytest -m sources
 Source registration flow is tested in suites/e2e/ as part of the complete pipeline.
 """
 
+import time
 import uuid
 from typing import Optional
 
@@ -202,17 +203,23 @@ class TestSourcesExternalCRUD:
         assert source_id, f"No source ID in response: {source_data}"
 
         try:
-            # Verify we can GET the source
-            get_response = authenticated_session.get(
-                f"{gateway_url}/cost-management/v1/sources/{source_id}",
-                timeout=30,
-            )
-            assert get_response.status_code == 200, (
-                f"Could not GET created source: {get_response.status_code}"
-            )
+            # The source is visible once Kessel registers the integration
+            # resource and the access provider cache refreshes. Retry for
+            # up to 30 seconds to allow asynchronous propagation.
+            fetched = None
+            for attempt in range(10):
+                get_response = authenticated_session.get(
+                    f"{gateway_url}/cost-management/v1/sources/{source_id}",
+                    timeout=30,
+                )
+                if get_response.status_code == 200:
+                    fetched = get_response.json()
+                    break
+                time.sleep(3)
 
-            # Verify source data matches
-            fetched = get_response.json()
+            assert fetched is not None, (
+                f"Source {source_id} not visible after 30s (last status: {get_response.status_code})"
+            )
             assert fetched.get("name") == source_name
             assert fetched.get("source_ref") == cluster_id
 
@@ -462,13 +469,15 @@ class TestAuthenticationErrors:
 
         assert response.status_code == 403, f"Expected 403, got {response.status_code}: {response.text[:200]}"
 
-    def test_non_admin_source_creation_returns_424(
+    def test_unprivileged_user_source_creation_returns_403(
         self, pod_session_no_auth: requests.Session, koku_api_url: str, invalid_identity_headers
     ):
-        """Verify non-admin source creation fails when RBAC is unavailable.
+        """Verify source creation is denied for users without settings.write access.
 
-        Koku checks RBAC for source creation. In on-prem deployments without
-        RBAC service, this returns 424 Failed Dependency.
+        With Kessel authorization, source write operations require the user to
+        have ``settings.write`` permission (granted via a cost-administrator
+        role).  A user with no Kessel role bindings receives an empty access
+        dict, so SourcesAccessPermission denies the request with 403.
         """
         response = pod_session_no_auth.post(
             f"{koku_api_url}/sources",
@@ -478,12 +487,12 @@ class TestAuthenticationErrors:
                 "source_ref": f"test-{uuid.uuid4().hex[:8]}",
             },
             headers={
-                "X-Rh-Identity": invalid_identity_headers["non_admin"],
+                "X-Rh-Identity": invalid_identity_headers["unprivileged"],
                 "Content-Type": "application/json",
             },
         )
 
-        assert response.status_code == 424, f"Expected 424, got {response.status_code}: {response.text[:200]}"
+        assert response.status_code == 403, f"Expected 403, got {response.status_code}: {response.text[:200]}"
 
     def test_missing_email_in_identity_returns_401(
         self, pod_session_no_auth: requests.Session, koku_api_url: str, invalid_identity_headers
@@ -611,14 +620,23 @@ class TestSourcesFiltering:
     def test_filter_sources_by_name(
         self, pod_session: requests.Session, koku_api_url: str, test_source
     ):
-        """Verify sources can be filtered by name."""
-        response = pod_session.get(
-            f"{koku_api_url}/sources",
-            params={"name": test_source["source_name"]},
-        )
+        """Verify sources can be filtered by name.
 
-        assert response.ok, f"Expected 200, got {response.status_code}: {response.text[:200]}"
-        data = response.json()
+        Retry for up to 15 seconds because the Kessel access provider caches
+        ``integration.read`` per user; a newly created source may not appear
+        in the filtered queryset until the cache entry expires or refreshes.
+        """
+        data = None
+        for attempt in range(5):
+            response = pod_session.get(
+                f"{koku_api_url}/sources",
+                params={"name": test_source["source_name"]},
+            )
+            assert response.ok, f"Expected 200, got {response.status_code}: {response.text[:200]}"
+            data = response.json()
+            if data.get("data"):
+                break
+            time.sleep(3)
 
         assert "data" in data, f"Missing data field: {data}"
         assert len(data["data"]) > 0, f"Expected filtered results, got empty list"

@@ -223,6 +223,65 @@ def jwt_token(keycloak_config: KeycloakConfig) -> JWTToken:
     return obtain_jwt_token(keycloak_config)
 
 
+def obtain_user_token(
+    keycloak_url: str,
+    realm: str,
+    client_id: str,
+    client_secret: str,
+    username: str,
+    password: str,
+) -> str:
+    """Obtain a JWT via the resource-owner password grant.
+
+    Unlike ``obtain_jwt_token`` (client-credentials flow), this authenticates
+    as a real Keycloak user, producing a token whose claims carry the user's
+    org_id, preferred_username, and other attributes the Envoy Lua script
+    needs to build a valid X-Rh-Identity header.
+    """
+    response = requests.post(
+        f"{keycloak_url}/realms/{realm}/protocol/openid-connect/token",
+        data={
+            "grant_type": "password",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "username": username,
+            "password": password,
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        verify=False,
+        timeout=30,
+    )
+    if response.status_code != 200:
+        pytest.fail(
+            f"Token request for '{username}' failed: "
+            f"{response.status_code} — {response.text[:300]}"
+        )
+    token = response.json().get("access_token")
+    if not token:
+        pytest.fail(f"No access_token in Keycloak response for '{username}'")
+    return token
+
+
+@pytest.fixture(scope="session")
+def ui_client(cluster_config, keycloak_config):
+    """Return (client_id, client_secret) for the ``cost-management-ui`` Keycloak client.
+
+    The UI client supports the resource-owner password grant, which is required
+    to obtain per-user tokens for authorization tests and API suites that need
+    a real user identity (as opposed to a service-account client-credentials
+    token).
+    """
+    client_id = "cost-management-ui"
+    secret = get_secret_value(
+        cluster_config.keycloak_namespace,
+        f"keycloak-client-secret-{client_id}",
+        "CLIENT_SECRET",
+    )
+    if not secret:
+        pytest.skip("cost-management-ui client secret not found in Keycloak")
+    return client_id, secret
+
+
 @pytest.fixture(scope="session")
 def gateway_url(cluster_config: ClusterConfig) -> str:
     """Get the API gateway URL.

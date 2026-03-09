@@ -99,9 +99,47 @@ pytest tests/suites/e2e/test_scenarios.py -v -m scenario
 ./scripts/run-pytest.sh -- -m "e2e and smoke"
 ```
 
+## Kessel Authorization Tests
+
+### Legacy Scenario (`test_authorization.py`)
+
+Three-user authorization tests: admin (cost-administrator), viewer/test
+(cost-openshift-viewer), and a dynamically-created no-access user.
+Validates access boundaries across sources, OCP reports, AWS reports,
+cost-models, settings, recommendations, and user-access.
+
+**Markers**: `@pytest.mark.e2e`, `@pytest.mark.kessel`
+
+### Opt-In Scenario (`test_opt_in_authorization.py`)
+
+Multi-workspace, group-based opt-in authorization tests for three restricted
+users (test1, test2, test3) whose permissions derive from group membership
+and direct workspace bindings.  Requires `kessel-admin.sh demo` bootstrap.
+
+See [opt-in-access-model-test-scenarios.md](../../docs/opt-in-access-model-test-scenarios.md)
+for the full reference scenario, verification matrix, and test mapping.
+
+**Markers**: `@pytest.mark.e2e`, `@pytest.mark.kessel`
+
+```bash
+# Run legacy authorization tests
+pytest suites/e2e/test_authorization.py -m e2e -v
+
+# Run opt-in authorization tests
+pytest suites/e2e/test_opt_in_authorization.py -m e2e -v
+
+# Run both
+pytest suites/e2e/test_authorization.py suites/e2e/test_opt_in_authorization.py -m e2e -v
+```
+
+---
+
 ## Related Files
 
 - `test_complete_flow.py` - Full E2E data flow tests (source → upload → processing → recommendations)
 - `test_smoke.py` - Quick smoke tests for E2E validation
+- `test_authorization.py` - Kessel ReBAC authorization tests (admin/viewer/no-access)
+- `test_opt_in_authorization.py` - Opt-in access model tests (test1/test2/test3)
 - `conftest.py` - Shared fixtures for E2E tests
 - `../../e2e_helpers.py` - Centralized E2E helpers (NISE config, source registration, upload utilities)
+- `../../docs/opt-in-access-model-test-scenarios.md` - Opt-in scenario reference and test documentation

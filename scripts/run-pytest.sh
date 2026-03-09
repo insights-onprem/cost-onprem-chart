@@ -380,6 +380,39 @@ main() {
         log_success "All tests passed!"
     else
         log_error "Some tests failed (exit code: $exit_code)"
+
+        # Collect Koku API pod logs for debugging authorization failures
+        echo ""
+        log_info "Collecting diagnostic logs..."
+        local koku_pod
+        koku_pod=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
+            | grep 'koku-api.*Running' | awk '{print $1}' | head -1 || true)
+        if [[ -n "$koku_pod" ]]; then
+            echo "--- Koku API init container (combine-ca) logs ---"
+            kubectl logs -n "$NAMESPACE" "$koku_pod" -c combine-ca 2>/dev/null | tail -30 || true
+            echo "--- Koku API last 80 log lines (grep Kessel/gRPC/error) ---"
+            kubectl logs -n "$NAMESPACE" "$koku_pod" --tail=200 2>/dev/null \
+                | grep -iE 'kessel|grpc|error|fail|token|refresh|ssl|tls|cert|403|denied|UNAUTHENTICATED' | tail -40 || true
+            echo "--- Koku API last 20 log lines (raw) ---"
+            kubectl logs -n "$NAMESPACE" "$koku_pod" --tail=20 2>/dev/null || true
+            echo "--- Koku API env check ---"
+            kubectl exec -n "$NAMESPACE" "$koku_pod" -- env 2>/dev/null \
+                | grep -E 'KESSEL_|AUTHORIZATION_BACKEND|ENHANCED_ORG' || true
+            echo "--- End Koku API diagnostics ---"
+        else
+            log_warning "Could not find koku-api pod"
+            kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null || true
+        fi
+
+        # Check Kessel Inventory API
+        local inv_pod
+        inv_pod=$(kubectl get pods -n kessel --no-headers 2>/dev/null \
+            | grep 'kessel-inventory.*Running' | awk '{print $1}' | head -1 || true)
+        if [[ -n "$inv_pod" ]]; then
+            echo "--- Kessel Inventory API last 30 log lines ---"
+            kubectl logs -n kessel "$inv_pod" --tail=30 2>/dev/null || true
+            echo "--- End Inventory API diagnostics ---"
+        fi
     fi
 
     log_info "JUnit report: $REPORTS_DIR/junit.xml"

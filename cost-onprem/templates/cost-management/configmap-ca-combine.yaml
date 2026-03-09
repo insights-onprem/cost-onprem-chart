@@ -13,6 +13,24 @@ data:
 
     echo "🔧 Combining CA certificates for Python SSL..."
 
+    # Wait for the OpenShift service-CA operator to inject the CA bundle.
+    # The ConfigMap is created with an empty data field and the annotation
+    # service.beta.openshift.io/inject-cabundle=true.  The operator
+    # populates it asynchronously, so the volume mount may be empty on
+    # first boot.  Without this CA the gRPC TLS handshake to the Kessel
+    # Inventory API will fail.
+    MAX_WAIT=60
+    WAITED=0
+    while [ ! -f /ca-source/service-ca.crt ] || [ ! -s /ca-source/service-ca.crt ]; do
+        if [ "$WAITED" -ge "$MAX_WAIT" ]; then
+            echo "⚠️ Timed out waiting for service-CA injection (${MAX_WAIT}s). Proceeding without it."
+            break
+        fi
+        echo "⏳ Waiting for service-CA ConfigMap injection... (${WAITED}s/${MAX_WAIT}s)"
+        sleep 2
+        WAITED=$((WAITED + 2))
+    done
+
     # Start with system CA bundle
     if [ -f /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem ]; then
         echo "📋 Adding system CA bundle..."
@@ -37,7 +55,7 @@ data:
         echo "" >> /tmp/combined-ca.crt
     fi
 
-    # Add OpenShift Service CA (signs *.svc certificates for in-cluster S3 endpoints)
+    # Add OpenShift Service CA (signs *.svc certificates for in-cluster TLS)
     if [ -f /ca-source/service-ca.crt ] && [ -s /ca-source/service-ca.crt ]; then
         echo "📋 Adding OpenShift Service CA..."
         cat /ca-source/service-ca.crt >> /tmp/combined-ca.crt
