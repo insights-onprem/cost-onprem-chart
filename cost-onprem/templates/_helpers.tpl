@@ -329,7 +329,10 @@ keycloak-service
 {{- if and .Values.jwtAuth .Values.jwtAuth.keycloak .Values.jwtAuth.keycloak.url -}}
 {{- .Values.jwtAuth.keycloak.url -}}
 {{- else -}}
-https://keycloak.keycloak.svc.cluster.local
+{{- $svc := include "cost-onprem.keycloak.serviceName" . -}}
+{{- $ns := include "cost-onprem.keycloak.namespace" . -}}
+{{- $port := .Values.jwtAuth.keycloak.servicePort | default 8080 -}}
+{{- printf "http://%s.%s.svc.cluster.local:%v" $svc $ns $port -}}
 {{- end -}}
 {{- end }}
 

@@ -45,11 +45,11 @@ spec:
           env:
             - name: CLOWDER_ENABLED
               value: "false"
-            # Point to Koku API for sources endpoints (application_types, etc.)
-            - name: SOURCES_API_BASE_URL
-              value: "http://{{ include "cost-onprem.koku.api.name" . }}:{{ .Values.costManagement.api.service.port }}"
-            - name: SOURCES_API_PREFIX
-              value: "/api/cost-management/v1"
+            # Shared cost-management application type ID injected from
+            # costManagement.costApplicationTypeId so Koku and housekeeper
+            # always agree on the same value.
+            - name: COST_APPLICATION_TYPE_ID
+              value: {{ .Values.costManagement.costApplicationTypeId | quote }}
             - name: KRUIZE_HOST
               value: {{ include "cost-onprem.fullname" . }}-kruize
             - name: KRUIZE_PORT

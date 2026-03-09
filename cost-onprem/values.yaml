@@ -24,7 +24,7 @@ global:
   imagePullSecrets: []
 
   # Cluster domain for Route hostnames (detected by install script; default allows offline templating)
-  clusterDomain: "apps.cluster.local"
+  clusterDomain: "apps.stress.parodos.dev"
 
   # Storage class for PVCs (detected by install script; default allows offline templating)
   storageClass: "ocs-storagecluster-ceph-rbd"
@@ -48,7 +48,7 @@ ros:
   # use the same image
   image:
     repository: quay.io/insights-onprem/ros-ocp-backend
-    tag: "latest"
+    tag: "kessel"
     pullPolicy: Always
 
   # Service Account
@@ -124,6 +124,16 @@ ros:
 
 costManagement:
   # ---------------------------------------------------------------------------
+  # Cost Management Application Type ID
+  # ---------------------------------------------------------------------------
+  # Shared constant used by both Koku and ros-ocp-backend (housekeeper) to
+  # identify cost-management applications.  Koku reads it from the
+  # COST_APPLICATION_TYPE_ID env var (falling back to "0") and the
+  # housekeeper uses it to filter Kafka Application.destroy events.
+  # Keeping the value in one place avoids silent mismatches.
+  costApplicationTypeId: "0"
+
+  # ---------------------------------------------------------------------------
   # Celery Beat Scheduler Configuration
   # ---------------------------------------------------------------------------
   scheduleReportChecks: true
@@ -147,7 +157,7 @@ costManagement:
 
     image:
       repository: quay.io/insights-onprem/koku
-      tag: "sources-3"
+      tag: "kessel"
       pullPolicy: Always
 
     replicas: 1
@@ -194,7 +204,6 @@ costManagement:
       CACHED_VIEWS_DISABLED: "False"
       RETAIN_NUM_MONTHS: "3"
       NOTIFICATION_CHECK_TIME: "24"
-      ENHANCED_ORG_ADMIN: "True"
       RBAC_CACHE_TIMEOUT: "300"
       CACHE_TIMEOUT: "3600"
       TAG_ENABLED_LIMIT: "200"
@@ -755,6 +764,54 @@ objectStorage:
   s3:
     region: "onprem"
 
+
+# -----------------------------------------------------------------------------
+# Kessel (ReBAC Authorization)
+# -----------------------------------------------------------------------------
+# Kessel provides Relationship-Based Access Control (ReBAC) for Cost Management.
+# It is deployed separately by scripts/deploy-kessel.sh (similar to RHBK).
+#
+# The deploy-kessel.sh script creates the Kessel stack in its own namespace
+# and outputs the service hostnames to configure here.
+#
+# After deploy-kessel.sh runs, install-helm-chart.sh auto-detects and sets
+# these values via --set overrides.
+kessel:
+  namespace: kessel
+  spicedb:
+    host: ""
+    port: 50051
+    tls: false
+    secretName: spicedb-config
+    secretKey: preshared-key
+  relations:
+    host: ""
+    port: 9000
+    httpPort: 8000
+    tls: false
+  inventory:
+    host: ""
+    port: 9000
+    tls: true
+
+  # Kessel API authentication — Koku authenticates to Relations and Inventory
+  # APIs using JWTs from a Keycloak service account. The kessel-koku-client
+  # secret is created automatically by deploy-rhbk.sh + install-helm-chart.sh.
+  auth:
+    secretName: kessel-koku-client
+
+  # Kessel user sync CronJob — periodically syncs Keycloak users/service
+  # accounts to SpiceDB role bindings via kessel-admin.sh.
+  # This is a temporary mechanism; the ReBAC Bridge will replace it with
+  # event-driven principal management (see rebac-bridge-design.md).
+  sync:
+    enabled: true
+    schedule: "*/5 * * * *"
+    defaultRole: cost-administrator
+    image: quay.io/insights-onprem/kessel-tools:latest
+    keycloakSecretName: keycloak-initial-admin
+    keycloakUsernameKey: username
+    keycloakPasswordKey: password
 
 # -----------------------------------------------------------------------------
 # Authentication Configuration (JWT with Keycloak/RHBK)

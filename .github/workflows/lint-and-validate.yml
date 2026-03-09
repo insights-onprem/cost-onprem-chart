@@ -63,6 +63,16 @@ jobs:
                 path: ./cost-onprem
           additionalImages:
             - name: quay.io/insights-onprem/postgresql:16
+            - name: quay.io/insights-onprem/kessel-tools:latest
+            - name: quay.io/insights-onprem/koku:kessel
+            - name: quay.io/insights-onprem/koku-ui-onprem:latest
+            - name: quay.io/insights-onprem/ros-ocp-backend:kessel
+            - name: quay.io/insights-onprem/insights-ingress-go:latest
+            - name: quay.io/redhat-services-prod/kruize-autotune-tenant/autotune:d0b4337
+            - name: registry.redhat.io/openshift-service-mesh/proxyv2-rhel9:2.6
+            - name: registry.redhat.io/rhceph/oauth2-proxy-rhel9:v7.6.0
+            - name: registry.redhat.io/rhel10/valkey-8:latest
+            - name: registry.access.redhat.com/ubi9/ubi-minimal:latest
         EOF
 
         echo "=== Running oc-mirror --dry-run --v2 ==="
