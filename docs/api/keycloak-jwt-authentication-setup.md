@@ -86,50 +86,45 @@ graph TB
    - Token URL pointing to Keycloak realm
 
 6. **UI/Interactive User Configuration** (for Cost Management UI access):
-   - Uses **ENHANCED_ORG_ADMIN** mode - all authenticated users are org admins
-   - No `access` claim required in JWT
-   - Simplified setup with full access within each user's org
+   - Kessel ReBAC governs all authorization decisions
+   - No `access` claim required in JWT -- permissions are resolved from SpiceDB
+   - Run `kessel-admin.sh bootstrap` after deployment to sync Keycloak users
 
-### Authentication Mode: ENHANCED_ORG_ADMIN
+### Authentication Mode: Kessel ReBAC
 
-The Cost Management on-premise deployment uses **ENHANCED_ORG_ADMIN** mode for simplified authentication:
+The Cost Management on-premise deployment uses **Kessel ReBAC** for authorization:
 
 | Setting | Value | Purpose |
 |---------|-------|---------|
-| `DEVELOPMENT` | `false` | Use production middleware (fixes Mock user bugs) |
-| `ENHANCED_ORG_ADMIN` | `true` | Bypass external RBAC service for admin users |
-| `is_org_admin` | `true` (in X-Rh-Identity) | Grant full access within user's org |
+| `ONPREM` | `True` | Enables ReBAC backend (implies `AUTHORIZATION_BACKEND=rebac`) |
+| `DEVELOPMENT` | `false` | Use production middleware |
 
 **How it works**:
 1. Envoy validates JWT and extracts `org_id`, `account_number`, and `username`
-2. Envoy constructs X-Rh-Identity header with `is_org_admin: true`
-3. Koku receives the request and sees `is_org_admin=true`
-4. With `ENHANCED_ORG_ADMIN=true`, Koku skips RBAC service calls
-5. User gets full access to all resources within their org
+2. Envoy constructs X-Rh-Identity header (no `is_org_admin` -- authorization delegated to Kessel)
+3. Koku receives the request and calls `KesselAccessProvider`
+4. `KesselAccessProvider` calls `StreamedListObjects` for each resource type
+5. User sees only the resources they are authorized to access via SpiceDB tuples
 
-**Benefits**:
-- ✅ No external RBAC service required
-- ✅ No `access` claim needed in JWT or Keycloak user attributes
-- ✅ Simpler Keycloak configuration
-- ✅ Production middleware (no Mock user bugs)
+**Authorization chain**:
+```
+rbac/role:{role_slug} --permission tuples--> rbac/principal:*
+rbac/role_binding:{id} --t_granted--> rbac/role:{role_slug}
+rbac/role_binding:{id} --t_subject--> rbac/principal:{username}
+rbac/tenant:{org_id}   --t_binding--> rbac/role_binding:{id}
+```
 
-**Limitations**:
-- ⚠️ All authenticated users are org admins (no granular RBAC within org)
-- ⚠️ Cannot restrict "User A sees only Cluster X" within same org
-- ✅ Multi-tenancy IS preserved: users only see their own org's data
+**Setup**:
+After `helm install` (which seeds roles via `kessel_seed_roles`), sync users:
+```bash
+./scripts/kessel-admin.sh bootstrap
+```
 
-**When to use**:
-- Single-tenant deployments
-- Trusted-user environments
-- Deployments where all users should have full access
-
-### Future: Granular RBAC (Not Currently Implemented)
-
-For deployments requiring granular permissions within an org, a future enhancement could:
-1. Deploy a custom RBAC service
-2. Set `ENHANCED_ORG_ADMIN=false`
-3. Add `access` claim to JWT with resource-level permissions
-4. Configure Koku to call the RBAC service
+This creates role bindings for all Keycloak users with the `cost-administrator` role.
+For granular access, use `grant` with a specific role:
+```bash
+./scripts/kessel-admin.sh grant test2 cost-openshift-viewer org1234567
+```
 
 **Resource Types** (for future RBAC implementation):
 
@@ -283,10 +278,10 @@ sequenceDiagram
    -- NOTE: org_id appears in TWO places as a workaround for Koku middleware compatibility
    -- 1. Top-level "org_id" - for middleware compatibility
    -- 2. identity.org_id - correct location per Red Hat identity schema
-   -- is_org_admin=true triggers ENHANCED_ORG_ADMIN bypass (no RBAC service calls)
+   -- is_org_admin is intentionally omitted; authorization delegated to Kessel
    local xrhid = string.format(
-     '{"org_id":"%s","identity":{"org_id":"%s","account_number":"%s","type":"User","user":{"username":"%s","is_org_admin":true}},"entitlements":{"cost_management":{"is_entitled":true}}}',
-     org_id, org_id, account_number, username
+     '{"org_id":"%s","identity":{"org_id":"%s","account_number":"%s","type":"User","user":{"username":"%s","email":"%s"}},"entitlements":{"cost_management":{"is_entitled":true}}}',
+     org_id, org_id, account_number, username, email
    )
    ```
 
@@ -1179,29 +1174,29 @@ ORG_ID="2" CLIENT_ID="cost-management-operator-2"
 
 ## Part 6: Technical Notes
 
-### ENHANCED_ORG_ADMIN Mode
+### Kessel ReBAC Authorization
 
-The on-premise deployment uses `DEVELOPMENT=false` and `ENHANCED_ORG_ADMIN=true` to provide a simpler authentication model without requiring an external RBAC service.
+The on-premise deployment uses `ONPREM=True` and `DEVELOPMENT=false` with Kessel ReBAC for authorization. There is no admin bypass -- all users are governed by SpiceDB tuples.
 
 **Configuration**:
 ```yaml
-# In Koku deployment
+# In Koku deployment (set by Helm chart)
+ONPREM: "True"              # Enables ReBAC backend
 DEVELOPMENT: "False"        # Use production middleware
-ENHANCED_ORG_ADMIN: "True"  # Bypass RBAC for org admins
 ```
 
 **X-Rh-Identity Header Format**:
 
 ```json
 {
-  "org_id": "org1234567",              
+  "org_id": "org1234567",
   "identity": {
-    "org_id": "org1234567",            
+    "org_id": "org1234567",
     "account_number": "7890123",
     "type": "User",
     "user": {
       "username": "test",
-      "is_org_admin": true
+      "email": "test@noreply.local"
     }
   },
   "entitlements": {
@@ -1210,17 +1205,13 @@ ENHANCED_ORG_ADMIN: "True"  # Bypass RBAC for org admins
 }
 ```
 
-**How it works**:
-1. `is_org_admin: true` in the identity marks the user as an organization admin
-2. With `ENHANCED_ORG_ADMIN=true`, Koku's `_get_access()` method returns `{}` for admin users
-3. This bypasses the RBAC service call entirely
-4. User gets full access to all resources within their org
+Note: `is_org_admin` is **not** included. Authorization is delegated to Kessel.
 
-**Benefits over DEVELOPMENT mode**:
-- ✅ No Mock user bugs (production middleware)
-- ✅ Proper `beta` attribute handling
-- ✅ Real User objects instead of Mock objects
-- ✅ All middleware checks work correctly
+**How it works**:
+1. Envoy validates the JWT and constructs the X-Rh-Identity header
+2. Koku's middleware calls `KesselAccessProvider.get_access()`
+3. `KesselAccessProvider` calls `StreamedListObjects` for each resource type
+4. The access dict controls which resources the user can see
 
 **Dual org_id placement**:
 The `org_id` appears at both top-level and inside `identity` for middleware compatibility.

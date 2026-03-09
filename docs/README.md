@@ -45,6 +45,11 @@ Deployment, configuration, maintenance, and troubleshooting.
 | **[Cost Management Concepts](operations/cost-management-concepts.md)** | Core concepts, cost models, and cost calculation methods |
 | **[Data Sources and Providers](operations/cost-management-data-sources.md)** | Configuring and managing OpenShift providers and data collection |
 
+#### Authorization
+| Document | Purpose |
+|----------|---------|
+| **[Kessel Authorization Management](operations/kessel-authorization-management.md)** | Kessel/SpiceDB authorization: user sync, role management, and management plane scripts |
+
 #### Configuration
 | Document | Purpose |
 |----------|---------|
@@ -92,12 +97,13 @@ Testing guides, validation procedures, and development resources.
 5. Understand the provider creation flow via **[Sources API Production Flow](architecture/sources-api-production-flow.md)**
 6. Review **[Configuration Reference](operations/configuration.md)** for production settings
 
-### "I'm setting up authentication"
+### "I'm setting up authentication and authorization"
 1. Read **[Native JWT Authentication](api/native-jwt-authentication.md)** to understand the architecture
 2. Follow **[Keycloak JWT Authentication Setup](api/keycloak-jwt-authentication-setup.md)** for step-by-step instructions
-3. For UI authentication, see **[UI OAuth Authentication](api/ui-oauth-authentication.md)** (OpenShift only)
-4. Use **[TLS Certificate Options](operations/tls-certificate-options.md)** for TLS configuration
-5. Reference **[External Keycloak Scenario](architecture/external-keycloak-scenario.md)** if using external Keycloak
+3. Set up authorization with **[Kessel Authorization Management](operations/kessel-authorization-management.md)** for user sync and role management
+4. For UI authentication, see **[UI OAuth Authentication](api/ui-oauth-authentication.md)** (OpenShift only)
+5. Use **[TLS Certificate Options](operations/tls-certificate-options.md)** for TLS configuration
+6. Reference **[External Keycloak Scenario](architecture/external-keycloak-scenario.md)** if using external Keycloak
 
 ### "I'm setting up the Cost Management Operator"
 1. Follow **[Cost Management Operator TLS Config Setup](operations/cost-management-operator-tls-config-setup.md)**
