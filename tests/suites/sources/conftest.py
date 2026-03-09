@@ -8,10 +8,16 @@ using X-Rh-Identity header for authentication.
 Uses PodAdapter/pod_session for all HTTP calls to internal services.
 The test_runner_pod fixture from conftest.py provides the dedicated
 test-runner pod for executing internal API calls.
+
+The ``authenticated_session`` fixture is overridden here so that the
+external-gateway tests authenticate as the ``admin`` Keycloak user
+(cost-administrator) via resource-owner password grant instead of the
+service-account client-credentials flow.
 """
 
 import base64
 import json
+import os
 import time
 import uuid
 from typing import Any, Dict, Generator, Optional
@@ -19,12 +25,36 @@ from typing import Any, Dict, Generator, Optional
 import pytest
 import requests
 
+from conftest import obtain_user_token
 from e2e_helpers import get_koku_api_url
 from utils import (
     create_identity_header_custom,
     create_pod_session,
     create_rh_identity_header,
 )
+
+
+@pytest.fixture(scope="function")
+def authenticated_session(keycloak_config, ui_client, gateway_url) -> requests.Session:
+    """Requests session authenticated as the ``admin`` Keycloak user.
+
+    Overrides the root conftest fixture so that external-gateway tests in
+    this suite use a real user identity with ``cost-administrator``
+    permissions in Kessel.
+    """
+    client_id, client_secret = ui_client
+    token = obtain_user_token(
+        keycloak_config.url,
+        keycloak_config.realm,
+        client_id,
+        client_secret,
+        username=os.environ.get("AUTHZ_ADMIN_USER", "admin"),
+        password=os.environ.get("AUTHZ_ADMIN_PASS", "admin"),
+    )
+    session = requests.Session()
+    session.headers.update({"Authorization": f"Bearer {token}"})
+    session.verify = False
+    return session
 
 
 @pytest.fixture(scope="module")
@@ -113,6 +143,11 @@ def invalid_identity_headers(org_id: str) -> Dict[str, str]:
         "non_admin": create_identity_header_custom(
             org_id=org_id,
             is_org_admin=False,
+        ),
+        "unprivileged": create_identity_header_custom(
+            org_id=org_id,
+            is_org_admin=False,
+            username="unprivileged-user-no-kessel-role",
         ),
         "no_email": create_identity_header_custom(
             org_id=org_id,
