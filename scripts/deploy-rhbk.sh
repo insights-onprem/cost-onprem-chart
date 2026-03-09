@@ -38,6 +38,8 @@ STORAGE_CLASS=${STORAGE_CLASS:-}  # Auto-detect if empty
 REALM_NAME=${REALM_NAME:-kubernetes}
 COST_MGMT_OPERATOR_CLIENT_ID=${COST_MGMT_OPERATOR_CLIENT_ID:-cost-management-operator}
 COST_MGMT_UI_CLIENT_ID=${COST_MGMT_UI_CLIENT_ID:-cost-management-ui}
+COST_MGMT_KOKU_CLIENT_ID=${COST_MGMT_KOKU_CLIENT_ID:-cost-management-koku}
+COST_MGMT_INVENTORY_CLIENT_ID=${COST_MGMT_INVENTORY_CLIENT_ID:-cost-management-inventory}
 COST_MGMT_NAMESPACE=${COST_MGMT_NAMESPACE:-cost-onprem}
 COST_MGMT_RELEASE_NAME=${COST_MGMT_RELEASE_NAME:-cost-onprem}
 KEYCLOAK_INSTANCES=${KEYCLOAK_INSTANCES:-1}
@@ -862,8 +864,33 @@ spec:
               id.token.claim: "true"
               jsonType.label: String
               userinfo.token.claim: "false"
-          # Note: "access" attribute mapper removed - using ENHANCED_ORG_ADMIN mode
-          # All authenticated users are org admins with full access within their org
+          # Note: "access" attribute is not needed -- Kessel ReBAC handles authorization
+      - clientId: $COST_MGMT_KOKU_CLIENT_ID
+        name: "Cost Management Koku Service Account"
+        description: "Service account for Koku backend to authenticate to Kessel APIs"
+        enabled: true
+        clientAuthenticatorType: client-secret
+        serviceAccountsEnabled: true
+        standardFlowEnabled: false
+        directAccessGrantsEnabled: false
+        implicitFlowEnabled: false
+        publicClient: false
+        protocol: openid-connect
+        defaultClientScopes:
+          - openid
+      - clientId: $COST_MGMT_INVENTORY_CLIENT_ID
+        name: "Cost Management Inventory Service Account"
+        description: "Service account for Kessel Inventory API to authenticate to Relations API"
+        enabled: true
+        clientAuthenticatorType: client-secret
+        serviceAccountsEnabled: true
+        standardFlowEnabled: false
+        directAccessGrantsEnabled: false
+        implicitFlowEnabled: false
+        publicClient: false
+        protocol: openid-connect
+        defaultClientScopes:
+          - openid
 EOF
         echo_success "✓ Kubernetes realm import created"
     fi
@@ -915,21 +942,17 @@ EOF
             local client_data=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/clients" \
                 -H "Authorization: Bearer $access_token" 2>/dev/null)
 
-            # Check if both clients are in the list
-            local operator_client_found=false
-            local ui_client_found=false
+            # Check if all four clients are in the list
+            local all_found=true
+            for cid in "$COST_MGMT_OPERATOR_CLIENT_ID" "$COST_MGMT_UI_CLIENT_ID" "$COST_MGMT_KOKU_CLIENT_ID" "$COST_MGMT_INVENTORY_CLIENT_ID"; do
+                if echo "$client_data" | grep -q "\"clientId\":\"$cid\""; then
+                    echo_success "✓ Client '$cid' is available via admin API"
+                else
+                    all_found=false
+                fi
+            done
 
-            if echo "$client_data" | grep -q "\"clientId\":\"$COST_MGMT_OPERATOR_CLIENT_ID\""; then
-                echo_success "✓ Client '$COST_MGMT_OPERATOR_CLIENT_ID' is available via admin API"
-                operator_client_found=true
-            fi
-
-            if echo "$client_data" | grep -q "\"clientId\":\"$COST_MGMT_UI_CLIENT_ID\""; then
-                echo_success "✓ Client '$COST_MGMT_UI_CLIENT_ID' is available via admin API"
-                ui_client_found=true
-            fi
-
-            if [ "$operator_client_found" = true ] && [ "$ui_client_found" = true ]; then
+            if [ "$all_found" = true ]; then
                 clients_available=true
                 break
             fi
@@ -1226,152 +1249,160 @@ extract_client_secret() {
     # Extract UI client secret
     extract_single_client_secret "$COST_MGMT_UI_CLIENT_ID" "keycloak-client-secret-cost-management-ui" || echo_warning "Failed to extract UI client secret"
 
+    # Extract Koku-to-Kessel service account secret
+    extract_single_client_secret "$COST_MGMT_KOKU_CLIENT_ID" "keycloak-client-secret-cost-management-koku" || echo_warning "Failed to extract Koku Kessel client secret"
+
+    # Extract Inventory API service account secret
+    extract_single_client_secret "$COST_MGMT_INVENTORY_CLIENT_ID" "keycloak-client-secret-cost-management-inventory" || echo_warning "Failed to extract Inventory Kessel client secret"
+
     echo ""
 }
 
-# Function to create test user with org_id and account_number attributes
-create_test_user() {
-    echo_header "CREATING TEST USER"
+# Function to create/update a single Keycloak user with org_id and account_number
+# Usage: _ensure_keycloak_user <keycloak_url> <access_token> <username> <email> <first> <last> <org_id> <account_number> <password>
+_ensure_keycloak_user() {
+    local kc_url="$1" token="$2" username="$3" email="$4"
+    local first="$5" last="$6" org_id="$7" account_num="$8" password="$9"
 
-    # Get Keycloak URL from Route
-    local KEYCLOAK_URL=$(oc get route keycloak -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+    echo_info "Creating user '$username' (org_id=$org_id)..."
+    local HTTP_CODE
+    HTTP_CODE=$(curl -sk -o /tmp/user_response.txt -w "%{http_code}" -X POST "$kc_url/admin/realms/$REALM_NAME/users" \
+        -H "Authorization: Bearer $token" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"username\": \"$username\",
+            \"email\": \"$email\",
+            \"emailVerified\": true,
+            \"enabled\": true,
+            \"firstName\": \"$first\",
+            \"lastName\": \"$last\",
+            \"attributes\": {
+                \"org_id\": [\"$org_id\"],
+                \"account_number\": [\"$account_num\"]
+            }
+        }" 2>/dev/null)
+
+    local RESPONSE
+    RESPONSE=$(cat /tmp/user_response.txt 2>/dev/null || echo "")
+    rm -f /tmp/user_response.txt
+
+    local USER_ID=""
+    if [ "$HTTP_CODE" = "409" ] || echo "$RESPONSE" | grep -q "already exists\|Conflict"; then
+        echo_info "User '$username' exists, updating attributes..."
+        local USERS_RESPONSE
+        USERS_RESPONSE=$(curl -sk -X GET "$kc_url/admin/realms/$REALM_NAME/users?username=$username&exact=true" \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json" 2>/dev/null)
+        USER_ID=$(echo "$USERS_RESPONSE" | grep -o '"id":"[^"]*"' | cut -d'"' -f4 | head -1)
+
+        if [ -n "$USER_ID" ]; then
+            curl -sk -X PUT "$kc_url/admin/realms/$REALM_NAME/users/$USER_ID" \
+                -H "Authorization: Bearer $token" \
+                -H "Content-Type: application/json" \
+                -d "{
+                    \"username\": \"$username\",
+                    \"email\": \"$email\",
+                    \"emailVerified\": true,
+                    \"enabled\": true,
+                    \"firstName\": \"$first\",
+                    \"lastName\": \"$last\",
+                    \"attributes\": {
+                        \"org_id\": [\"$org_id\"],
+                        \"account_number\": [\"$account_num\"]
+                    }
+                }" >/dev/null 2>&1
+        fi
+    elif [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
+        sleep 1
+        local USERS_RESPONSE
+        USERS_RESPONSE=$(curl -sk -X GET "$kc_url/admin/realms/$REALM_NAME/users?username=$username&exact=true" \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json" 2>/dev/null)
+        USER_ID=$(echo "$USERS_RESPONSE" | grep -o '"id":"[^"]*"' | cut -d'"' -f4 | head -1)
+    fi
+
+    if [ -z "$USER_ID" ]; then
+        echo_warning "Could not determine user ID for '$username'"
+        return 1
+    fi
+
+    curl -sk -X PUT "$kc_url/admin/realms/$REALM_NAME/users/$USER_ID/reset-password" \
+        -H "Authorization: Bearer $token" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"type\": \"password\",
+            \"value\": \"$password\",
+            \"temporary\": false
+        }" 2>/dev/null
+
+    echo_success "✓ User '$username' ready (ID: $USER_ID)"
+}
+
+# Function to create test users with org_id and account_number attributes
+#
+# WORKAROUND: The org_id includes "org" prefix (org1234567 instead of 1234567)
+# because the Koku image has a bug that prepends "org" to the org_id when
+# creating tenant schemas. This results in schema names like "orgorg1234567"
+# when the org_id is "org1234567". Once the Koku bug is fixed, change this
+# back to a plain numeric org_id like "1234567".
+#
+# REQUIRED ATTRIBUTES for Cost Management:
+#   - org_id: Tenant identifier (maps to database schema)
+#   - account_number: Customer account identifier
+#
+# Note: "access" attribute is not needed -- Kessel ReBAC handles authorization.
+# After Helm install, run `kessel-admin.sh bootstrap` to sync these users to Kessel.
+#
+# Users created:
+#   test  — legacy viewer user (cost-openshift-viewer, used by existing e2e tests)
+#   test1 — demo group member (opt-in scenario: Cluster A via group, Cluster B direct)
+#   test2 — infra group member (opt-in scenario: Clusters A and C via group)
+#   test3 — payment group member (opt-in scenario: namespace payment from B and C)
+create_test_user() {
+    echo_header "CREATING TEST USERS"
+
+    local KEYCLOAK_URL
+    KEYCLOAK_URL=$(oc get route keycloak -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
     if [ -z "$KEYCLOAK_URL" ]; then
         echo_warning "Could not determine Keycloak URL, skipping test user creation"
         return 1
     fi
-
     KEYCLOAK_URL="https://$KEYCLOAK_URL"
     echo_info "Keycloak URL: $KEYCLOAK_URL"
 
-    # Get the admin password from the secret created by RHBK operator
-    local ADMIN_PASSWORD=$(oc get secret keycloak-initial-admin -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
-
+    local ADMIN_PASSWORD
+    ADMIN_PASSWORD=$(oc get secret keycloak-initial-admin -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
     if [ -z "$ADMIN_PASSWORD" ]; then
-        echo_error "Could not retrieve auto-generated admin password from keycloak-initial-admin secret"
+        echo_error "Could not retrieve admin password from keycloak-initial-admin secret"
         return 1
     fi
 
-    # Get admin token
     echo_info "Obtaining admin access token..."
-    local TOKEN_RESPONSE=$(curl -sk -X POST "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
+    local TOKEN_RESPONSE
+    TOKEN_RESPONSE=$(curl -sk -X POST "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
         -H "Content-Type: application/x-www-form-urlencoded" \
         -d "username=admin" \
         -d "password=$ADMIN_PASSWORD" \
         -d "grant_type=password" \
         -d "client_id=admin-cli" 2>/dev/null)
 
-    local ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
-
+    local ACCESS_TOKEN
+    ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
     if [ -z "$ACCESS_TOKEN" ]; then
         echo_warning "Could not obtain admin token, skipping test user creation"
         return 1
     fi
-
     echo_success "Admin token obtained"
 
-    # Create test user with org_id and account_number attributes
-    # These values match the operator client's hardcoded values for testing
-    #
-    # WORKAROUND: The org_id includes "org" prefix (org1234567 instead of 1234567)
-    # because the Koku image has a bug that prepends "org" to the org_id when
-    # creating tenant schemas. This results in schema names like "orgorg1234567"
-    # when the org_id is "org1234567". Once the Koku bug is fixed, change this
-    # back to a plain numeric org_id like "1234567".
-    # See: https://github.com/project-koku/koku/issues/XXXX (TODO: add issue link)
-    #
-    # REQUIRED ATTRIBUTES for Cost Management:
-    #   - org_id: Tenant identifier (maps to database schema)
-    #   - account_number: Customer account identifier
-    #
-    # Note: "access" attribute is NOT required when using ENHANCED_ORG_ADMIN mode.
-    # All authenticated users are treated as org admins with full access within their org.
-    # This simplifies setup but means no granular RBAC within an org.
-    # Multi-tenancy is preserved: users only see data for their own org_id.
+    local ORG_ID="org1234567"
+    local ACCOUNT_NUM="7890123"
 
-    echo_info "Creating user 'test' with org_id and account_number attributes..."
-    local USER_HTTP_CODE=$(curl -sk -o /tmp/user_response.txt -w "%{http_code}" -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users" \
-        -H "Authorization: Bearer $ACCESS_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{
-            \"username\": \"test\",
-            \"email\": \"test@test.com\",
-            \"emailVerified\": true,
-            \"enabled\": true,
-            \"firstName\": \"Test\",
-            \"lastName\": \"User\",
-            \"attributes\": {
-                \"org_id\": [\"org1234567\"],
-                \"account_number\": [\"7890123\"]
-            }
-        }" 2>/dev/null)
+    _ensure_keycloak_user "$KEYCLOAK_URL" "$ACCESS_TOKEN" "test"  "test@test.com"   "Test"  "User"    "$ORG_ID" "$ACCOUNT_NUM" "test"
+    _ensure_keycloak_user "$KEYCLOAK_URL" "$ACCESS_TOKEN" "test1" "test1@test.com"  "Test1" "Demo"    "$ORG_ID" "$ACCOUNT_NUM" "test1"
+    _ensure_keycloak_user "$KEYCLOAK_URL" "$ACCESS_TOKEN" "test2" "test2@test.com"  "Test2" "Infra"   "$ORG_ID" "$ACCOUNT_NUM" "test2"
+    _ensure_keycloak_user "$KEYCLOAK_URL" "$ACCESS_TOKEN" "test3" "test3@test.com"  "Test3" "Payment" "$ORG_ID" "$ACCOUNT_NUM" "test3"
 
-    local USER_RESPONSE=$(cat /tmp/user_response.txt 2>/dev/null || echo "")
-    rm -f /tmp/user_response.txt
-
-    local USER_ID=""
-    if [ "$USER_HTTP_CODE" = "409" ] || echo "$USER_RESPONSE" | grep -q "already exists\|Conflict"; then
-        echo_warning "User 'test' may already exist, attempting to find it..."
-        # Get existing user
-        local USERS_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=test" \
-            -H "Authorization: Bearer $ACCESS_TOKEN" \
-            -H "Content-Type: application/json" 2>/dev/null)
-        USER_ID=$(echo "$USERS_RESPONSE" | grep -o '"id":"[^"]*"' | cut -d'"' -f4 | head -1)
-
-        if [ -n "$USER_ID" ]; then
-            echo_info "Found existing user 'test', updating with attributes..."
-            # Update user with attributes
-            curl -sk -X PUT "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users/$USER_ID" \
-                -H "Authorization: Bearer $ACCESS_TOKEN" \
-                -H "Content-Type: application/json" \
-                -d '{
-                    "username": "test",
-                    "email": "test@test.com",
-                    "emailVerified": true,
-                    "enabled": true,
-                    "firstName": "Test",
-                    "lastName": "User",
-                    "attributes": {
-                        "org_id": ["org1234567"],
-                        "account_number": ["7890123"]
-                    }
-                }' >/dev/null 2>&1
-            echo_success "✓ User 'test' updated"
-        fi
-    elif [ "$USER_HTTP_CODE" = "201" ] || [ "$USER_HTTP_CODE" = "200" ]; then
-        # User created successfully, get ID from users list
-        sleep 2
-        local USERS_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=test" \
-            -H "Authorization: Bearer $ACCESS_TOKEN" \
-            -H "Content-Type: application/json" 2>/dev/null)
-        USER_ID=$(echo "$USERS_RESPONSE" | grep -o '"id":"[^"]*"' | cut -d'"' -f4 | head -1)
-        echo_success "✓ User 'test' created"
-    fi
-
-    if [ -z "$USER_ID" ]; then
-        echo_warning "Could not determine user ID for 'test'"
-        return 1
-    fi
-
-    echo_info "User ID: $USER_ID"
-
-    # Set user password
-    echo_info "Setting password for user 'test'..."
-    local PASSWORD_RESPONSE=$(curl -sk -X PUT "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users/$USER_ID/reset-password" \
-        -H "Authorization: Bearer $ACCESS_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d '{
-            "type": "password",
-            "value": "test",
-            "temporary": false
-        }' 2>/dev/null)
-
-    if [ $? -eq 0 ]; then
-        echo_success "✓ Password set for user 'test'"
-    else
-        echo_warning "Could not set password for user 'test' (may already be set)"
-    fi
-
-    echo_success "✓ Test user creation complete"
+    echo_success "✓ Test user creation complete (4 users)"
     echo ""
 }
 
@@ -1419,14 +1450,25 @@ display_summary() {
     echo_info "  Secret stored in: keycloak-client-secret-cost-management-ui"
     echo ""
 
-    echo_info "Test User Information:"
-    echo_info "  User: test"
-    echo_info "    Password: test"
-    echo_info "    Email: test@test.com (verified)"
-    echo_info "    Attributes:"
-    echo_info "      org_id: org1234567 (includes 'org' prefix as workaround for Koku bug)"
-    echo_info "      account_number: 7890123"
-    echo_info "      access: OCP-only (openshift.cluster, openshift.project, openshift.node, cost_model)"
+    echo_info "Cost Management Koku Client (Kessel Auth):"
+    echo_info "  Client ID: $COST_MGMT_KOKU_CLIENT_ID"
+    echo_info "  Client Type: Service Account (client_credentials flow)"
+    echo_info "  Purpose: Koku backend → Kessel Relations/Inventory API auth"
+    echo_info "  Secret stored in: keycloak-client-secret-cost-management-koku"
+    echo ""
+
+    echo_info "Cost Management Inventory Client (Kessel Auth):"
+    echo_info "  Client ID: $COST_MGMT_INVENTORY_CLIENT_ID"
+    echo_info "  Client Type: Service Account (client_credentials flow)"
+    echo_info "  Purpose: Kessel Inventory API → Relations API auth"
+    echo_info "  Secret stored in: keycloak-client-secret-cost-management-inventory"
+    echo ""
+
+    echo_info "Test Users (all org_id=org1234567, account_number=7890123):"
+    echo_info "  test  / test  — legacy viewer (existing e2e tests)"
+    echo_info "  test1 / test1 — demo group member (opt-in: Cluster A via group, Cluster B direct)"
+    echo_info "  test2 / test2 — infra group member (opt-in: Clusters A and C via group)"
+    echo_info "  test3 / test3 — payment group member (opt-in: ns payment from B and C)"
     echo ""
 
     # Display admin credential retrieval
