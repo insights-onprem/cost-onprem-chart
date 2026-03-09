@@ -106,6 +106,53 @@ spec:
                 print("✓ Migration lock will auto-release on connection close")
             PYTHON_EOF
 
+            echo "=== Django migration job completed ==="
+
+            # =================================================================
+            # Kessel ReBAC Provisioning
+            # =================================================================
+            # Schema and ConfigMap are managed by deploy-kessel.sh.
+            # This section is a safety net: it writes the schema to SpiceDB
+            # (in case deploy-kessel.sh was not re-run after a Koku upgrade)
+            # and seeds role tuples directly to SpiceDB via the authzed SDK.
+            if [ "$ONPREM" = "True" ]; then
+                echo "=== Kessel ReBAC Provisioning ==="
+
+                # -- Wait for SpiceDB --
+                ELAPSED=0
+                echo "Waiting for SpiceDB at ${SPICEDB_HOST}:${SPICEDB_PORT}..."
+                while ! timeout 5 bash -c "cat < /dev/null > /dev/tcp/${SPICEDB_HOST}/${SPICEDB_PORT}" 2>/dev/null; do
+                  if [ $ELAPSED -ge $MAX_WAIT ]; then
+                    echo "ERROR: SpiceDB not ready after ${MAX_WAIT} seconds"
+                    exit 1
+                  fi
+                  echo "SpiceDB not ready (${ELAPSED}s elapsed), waiting..."
+                  sleep 5
+                  ELAPSED=$((ELAPSED + 5))
+                done
+                echo "✓ SpiceDB is ready (waited ${ELAPSED}s)"
+
+                # Step 1: Write schema to SpiceDB (safety net for upgrades)
+                echo "Step 1/2: Writing schema to SpiceDB..."
+                if python manage.py kessel_update_schema --force 2>&1; then
+                  echo "✓ Schema written to SpiceDB"
+                else
+                  echo "⚠ kessel_update_schema not available; schema managed by deploy-kessel.sh"
+                fi
+
+                # Step 2: Seed roles directly to SpiceDB
+                echo "Step 2/2: Seeding standard roles..."
+                if python manage.py kessel_seed_roles 2>&1; then
+                  echo "✓ Roles seeded"
+                else
+                  echo "⚠ kessel_seed_roles not available; roles will be managed externally"
+                fi
+
+                echo "=== Kessel ReBAC provisioning complete ==="
+            else
+                echo "ONPREM=$ONPREM (not True), skipping Kessel provisioning"
+            fi
+
             echo "=== Migration job completed ==="
 
         env:
