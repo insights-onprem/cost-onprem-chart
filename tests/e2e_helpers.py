@@ -189,53 +189,6 @@ def ensure_nise_available() -> bool:
     return install_nise()
 
 
-# Path to NISE templates
-# Default: local templates in tests/data/nise_templates (copied from IQE plugin)
-# Override with NISE_TEMPLATES_DIR env var if needed
-NISE_TEMPLATES_DIR = os.environ.get(
-    "NISE_TEMPLATES_DIR",
-    os.path.join(os.path.dirname(__file__), "data", "nise_templates")
-)
-
-
-def get_nise_template_path(template_name: str) -> Optional[str]:
-    """Get path to a NISE template if available.
-    
-    Templates are pre-configured NISE static reports for various test scenarios.
-    See tests/data/nise_templates/README.md for available templates.
-    
-    Args:
-        template_name: Name of the template file (e.g., "ocp_report_ros_0.yml")
-        
-    Returns:
-        Full path to template if it exists, None otherwise
-    """
-    if not os.path.isdir(NISE_TEMPLATES_DIR):
-        return None
-    
-    template_path = os.path.join(NISE_TEMPLATES_DIR, template_name)
-    if os.path.isfile(template_path):
-        return template_path
-    return None
-
-
-def list_nise_templates() -> List[str]:
-    """List available NISE templates.
-    
-    Returns:
-        List of template filenames, or empty list if templates not available
-    """
-    if not os.path.isdir(NISE_TEMPLATES_DIR):
-        return []
-    
-    return [f for f in os.listdir(NISE_TEMPLATES_DIR) if f.endswith(".yml")]
-
-
-# Aliases for backward compatibility (pending IQE integration)
-get_iqe_template_path = get_nise_template_path
-list_iqe_templates = list_nise_templates
-
-
 def generate_nise_data(
     cluster_id: str,
     start_date: datetime,
@@ -243,7 +196,6 @@ def generate_nise_data(
     output_dir: str,
     config: Optional[NISEConfig] = None,
     include_ros: bool = True,
-    iqe_template: Optional[str] = None,
 ) -> Dict[str, List[str]]:
     """Generate NISE OCP data and return categorized file paths.
     
@@ -254,47 +206,17 @@ def generate_nise_data(
         output_dir: Directory to write output files
         config: NISE configuration (uses defaults if not provided)
         include_ros: Whether to include ROS data (--ros-ocp-info flag)
-        iqe_template: Name of IQE template to use (e.g., "ocp_report_ros_0.yml")
-                     If provided, uses the IQE template instead of generating from config.
-                     Recommended templates:
-                     - "ocp_report_ros_0.yml": ROS optimization testing
-                     - "ocp_report_advanced.yml": Complex multi-node setup
     
     Returns:
         Dict with keys: pod_usage_files, ros_usage_files, node_label_files, namespace_label_files
     """
-    # Determine which YAML to use
-    if iqe_template:
-        # Use NISE template
-        template_path = get_nise_template_path(iqe_template)
-        if not template_path:
-            raise FileNotFoundError(
-                f"NISE template '{iqe_template}' not found. "
-                f"Available templates: {list_nise_templates()}"
-            )
-        
-        # Read and modify template to use our dates
-        with open(template_path, "r") as f:
-            yaml_content = f.read()
-        
-        # Replace date placeholders if present
-        yaml_content = yaml_content.replace("start_date: last_month", f"start_date: {start_date.strftime('%Y-%m-%d')}")
-        yaml_content = yaml_content.replace("start_date: today", f"start_date: {start_date.strftime('%Y-%m-%d')}")
-        
-        yaml_path = os.path.join(output_dir, "static_report.yml")
-        with open(yaml_path, "w") as f:
-            f.write(yaml_content)
-        
-        print(f"       Using NISE template: {iqe_template}")
-    else:
-        # Use config-based generation
-        if config is None:
-            config = NISEConfig()
-        
-        yaml_content = config.to_yaml(cluster_id, start_date, end_date)
-        yaml_path = os.path.join(output_dir, "static_report.yml")
-        with open(yaml_path, "w") as f:
-            f.write(yaml_content)
+    if config is None:
+        config = NISEConfig()
+    
+    yaml_content = config.to_yaml(cluster_id, start_date, end_date)
+    yaml_path = os.path.join(output_dir, "static_report.yml")
+    with open(yaml_path, "w") as f:
+        f.write(yaml_content)
     
     nise_output = os.path.join(output_dir, "nise_output")
     os.makedirs(nise_output, exist_ok=True)

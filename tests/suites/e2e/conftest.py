@@ -2,14 +2,36 @@
 E2E suite fixtures.
 
 Most fixtures are inherited from the root conftest.py.
-This file contains E2E-specific fixtures for internal API access.
+This file contains E2E-specific fixtures for internal API access
+and shared helpers used across authorization test modules.
 """
 
 import pytest
 import requests
 
 from conftest import ClusterConfig
-from utils import create_pod_session
+from utils import create_pod_session, run_oc_command
+
+
+def flush_valkey(namespace: str) -> None:
+    """Flush Valkey/Redis to clear cached Kessel access decisions."""
+    result = run_oc_command(
+        [
+            "exec", "-n", namespace,
+            "deployment/cost-onprem-valkey", "--",
+            "valkey-cli", "FLUSHALL",
+        ],
+        check=False,
+    )
+    if result.returncode != 0:
+        run_oc_command(
+            [
+                "exec", "-n", namespace,
+                "deployment/cost-onprem-valkey", "--",
+                "redis-cli", "FLUSHALL",
+            ],
+            check=False,
+        )
 
 
 @pytest.fixture(scope="module")

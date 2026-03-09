@@ -118,7 +118,7 @@ def internal_identity_header(cluster_config: ClusterConfig, org_id: str) -> str:
 def pod_session(
     test_runner_pod: str,
     cluster_config: ClusterConfig,
-    rh_identity_header: str,
+    internal_identity_header: str,
 ) -> requests.Session:
     """Pre-configured requests.Session that routes through the test-runner pod.
     
@@ -152,7 +152,7 @@ def pod_session(
         pod=test_runner_pod,
         container="runner",
         headers={
-            "X-Rh-Identity": rh_identity_header,
+            "X-Rh-Identity": internal_identity_header,
             "Content-Type": "application/json",
         },
         timeout=60,

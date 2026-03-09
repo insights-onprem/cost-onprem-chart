@@ -28,8 +28,6 @@ from e2e_helpers import (
     generate_cluster_id,
     generate_nise_data,
     get_koku_api_url,
-    get_nise_template_path,
-    list_nise_templates,
     register_source,
     upload_with_retry,
     wait_for_provider,
@@ -186,17 +184,10 @@ def cost_validation_data(cluster_config, s3_config, keycloak_config, ingress_url
     Environment Variables:
     - E2E_CLEANUP_BEFORE: Run cleanup before tests (default: true)
     - E2E_CLEANUP_AFTER: Run cleanup after tests (default: true)
-    - NISE_IQE_TEMPLATE: Use a NISE template instead of default config.
-                         Example: "ocp_report_ros_0.yml" for ROS optimization testing
-                         Available templates in tests/data/nise_templates/:
-                         - ocp_report_ros_0.yml: ROS optimization testing
-                         - ocp_report_advanced.yml: Complex multi-node setup
-                         See: tests/data/nise_templates/README.md
     """
     # Check cleanup settings
     cleanup_before = os.environ.get("E2E_CLEANUP_BEFORE", "true").lower() == "true"
     cleanup_after = os.environ.get("E2E_CLEANUP_AFTER", "true").lower() == "true"
-    iqe_template = os.environ.get("NISE_IQE_TEMPLATE", "")
     
     # Check NISE availability
     if not ensure_nise_available():
@@ -231,8 +222,6 @@ def cost_validation_data(cluster_config, s3_config, keycloak_config, ingress_url
         print(f"  Cluster ID: {cluster_id}")
         print(f"  Cleanup before: {cleanup_before}")
         print(f"  Cleanup after: {cleanup_after}")
-        if iqe_template:
-            print(f"  IQE Template: {iqe_template}")
         
         # Pre-test cleanup: Remove any leftover cost-val clusters from previous runs
         if cleanup_before:
@@ -254,11 +243,7 @@ def cost_validation_data(cluster_config, s3_config, keycloak_config, ingress_url
         start_date = (now - timedelta(days=2)).replace(hour=0, minute=0, second=0, microsecond=0)
         end_date = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
         
-        files = generate_nise_data(
-            cluster_id, start_date, end_date, temp_dir,
-            config=nise_config,
-            iqe_template=iqe_template if iqe_template else None,
-        )
+        files = generate_nise_data(cluster_id, start_date, end_date, temp_dir, config=nise_config)
         print(f"       Generated {len(files['all_files'])} CSV files")
         
         if not files["all_files"]:
