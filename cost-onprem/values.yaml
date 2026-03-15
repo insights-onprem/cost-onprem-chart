@@ -146,8 +146,8 @@ costManagement:
     enabled: true
 
     image:
-      repository: quay.io/insights-onprem/koku
-      tag: "sources-3"
+      repository: quay.io/redhat-services-prod/cost-mgmt-dev-tenant/koku
+      tag: "b6172dd"
       pullPolicy: Always
 
     replicas: 1
