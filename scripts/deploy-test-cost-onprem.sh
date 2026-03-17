@@ -353,8 +353,8 @@ create_namespace() {
         log_success "Created namespace: ${NAMESPACE}"
     fi
 
-    # Label namespace for Cost Management Operator
-    log_info "Labeling namespace for Cost Management Operator..."
+    # Label namespace for Cost Management Metrics Operator
+    log_info "Labeling namespace for Cost Management Metrics Operator..."
     oc label namespace "${NAMESPACE}" cost_management_optimizations=true --overwrite
     log_success "Namespace labeled successfully"
 }

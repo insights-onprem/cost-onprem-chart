@@ -180,7 +180,7 @@ JWT authentication is **automatically enabled** and requires Keycloak configurat
 # Step 1: Deploy Red Hat Build of Keycloak (RHBK)
 ./scripts/deploy-rhbk.sh
 
-# Step 2: Configure Cost Management Operator with JWT credentials
+# Step 2: Configure Cost Management Metrics Operator with JWT credentials
 ./scripts/setup-cost-mgmt-tls.sh
 
 # Step 3: Deploy Cost Management On-Premise
@@ -193,7 +193,7 @@ Key requirements:
 - ✅ Keycloak realm with `org_id` and `account_number` claims
 - ✅ Service account client credentials
 - ✅ Self-signed CA certificate bundle (auto-configured)
-- ✅ Cost Management Operator configured with JWT token URL
+- ✅ Cost Management Metrics Operator configured with JWT token URL
 
 **Operator Support:**
 - ✅ Red Hat Build of Keycloak (RHBK) v22+ - `k8s.keycloak.org/v2alpha1`

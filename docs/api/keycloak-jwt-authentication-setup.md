@@ -1,4 +1,4 @@
-# Keycloak JWT Authentication Setup for Cost Management Operator and ROS Backend
+# Keycloak JWT Authentication Setup for Cost Management Metrics Operator and ROS Backend
 
 **Technical Guide for Production Deployment**
 
@@ -10,7 +10,7 @@ This document describes how to configure Red Hat Build of Keycloak (RHBK) to pro
 
 ```mermaid
 graph TB
-    Operator["<b>Cost Management Operator</b><br/>Uploads metrics with JWT"]
+    Operator["<b>Cost Management Metrics Operator</b><br/>Uploads metrics with JWT"]
     Keycloak["<b>Red Hat Build of Keycloak (RHBK)</b><br/><br/>• Realm: kubernetes<br/>• Client: cost-management-operator<br/>• org_id claim mapper"]
     Gateway["<b>Centralized API Gateway</b><br/>(Port 9080)<br/><br/>• JWT signature validation<br/>• Inject X-Rh-Identity header<br/>• Route to backend services"]
     Ingress["<b>Ingress Service</b><br/>(Port 8081)<br/><br/>• Receive pre-authenticated requests<br/>• Extract org_id/account from X-Rh-Identity<br/>• Process upload<br/>• Publish to Kafka"]
@@ -317,7 +317,7 @@ The gateway routes requests to backend services based on URL path:
 
 **Request Flow**:
 ```
-Cost Management Operator
+Cost Management Metrics Operator
   ↓ Authorization: Bearer <JWT>
 Centralized Gateway (port 9080)
   ↓ Validates JWT, Transforms to XRHID
@@ -353,7 +353,7 @@ All backend services receive pre-authenticated requests from the gateway with th
 **Complete End-to-End Flow**:
 
 ```
-1. Cost Management Operator → Keycloak
+1. Cost Management Metrics Operator → Keycloak
    Request: client_credentials grant
    Response: JWT token with org_id and account_number claims
 
@@ -440,13 +440,13 @@ oc get secret keycloak-initial-admin -n keycloak \
 
 ---
 
-## Part 2: Keycloak Configuration for Cost Management Operator
+## Part 2: Keycloak Configuration for Cost Management Metrics Operator
 
-This section shows how to configure an existing Red Hat Build of Keycloak (RHBK) instance to work with the Cost Management Operator.
+This section shows how to configure an existing Red Hat Build of Keycloak (RHBK) instance to work with the Cost Management Metrics Operator.
 
 ### Overview
 
-The Cost Management Operator requires:
+The Cost Management Metrics Operator requires:
 1. **Realm**: A Keycloak realm (e.g., `kubernetes`)
 2. **Client**: A service account client with specific configuration
 3. **org_id Claim Mapper**: Critical for ROS backend compatibility

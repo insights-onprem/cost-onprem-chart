@@ -803,7 +803,7 @@ jwtAuth:
     # Keycloak realm name
     realm: kubernetes
 
-    # Client configuration (for reference - used by Cost Management Operator)
+    # Client configuration (for reference - used by Cost Management Metrics Operator)
     client:
       id: cost-management-operator
 
