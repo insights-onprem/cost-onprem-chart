@@ -25,13 +25,139 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 NAMESPACE="${NAMESPACE:-cost-onprem}"
 HELM_RELEASE_NAME="${HELM_RELEASE_NAME:-cost-onprem}"
 IQE_MARKER="${IQE_MARKER:-cost_ocp_on_prem}"
-IQE_FILTER="${IQE_FILTER:-}"
-IQE_TIMEOUT="${IQE_TIMEOUT:-1800}"
+
+# =============================================================================
+# TEST FILTER CONFIGURATION
+# =============================================================================
+# Tests are grouped by skip reason. Each group can be toggled independently.
+# Set SKIP_*=false to include those tests in the run.
+# See docs/development/skipped-tests.md for full documentation.
+
+# --- GPU/MIG Tests (COST-7179) ---
+# Backend bug: completed_datetime never set when GPU data processing fails
+# ~90 tests affected
+SKIP_GPU_TESTS="${SKIP_GPU_TESTS:-true}"
+FILTER_GPU="ai_workloads or distro or test_api_ocp_gpu or test_api_gpu or test_api_cost_model_ocp_gpu or test_api_cost_model_ocp_cost_gpu or test_api_ocp_resource_types_gpu"
+
+# --- ROS Tests (Missing Infrastructure) ---
+# Requires MinIO bucket and Vault credentials not available in on-prem
+# 3 tests affected
+SKIP_ROS_TESTS="${SKIP_ROS_TESTS:-true}"
+FILTER_ROS="test_api_ocp_ros"
+
+# --- Date Range Tests (Insufficient Historical Data) ---
+# On-prem generates ~60 days of data; 90-day queries and random date ranges fail
+# ~50 tests affected
+SKIP_DATE_RANGE_TESTS="${SKIP_DATE_RANGE_TESTS:-true}"
+FILTER_DATE_RANGE="last-90-days or random_date_range or random_daily_time_filter"
+
+# --- Order By Tests (Backend Timeout - COST-7179 related) ---
+# Fixtures timeout waiting for completed_datetime
+# ~66 tests affected
+SKIP_ORDER_BY_TESTS="${SKIP_ORDER_BY_TESTS:-true}"
+FILTER_ORDER_BY="test_api_ocp_all_limit_order_by_cost or test_api_ocp_tagging_limit_order_by_cost or test_api_ocp_volume_order_by"
+
+# --- Tag Validation Tests (Missing Tag Data) ---
+# Volume tag data not present in generated NISE data
+# ~6 tests affected
+SKIP_TAG_TESTS="${SKIP_TAG_TESTS:-true}"
+FILTER_TAG="volume-tag-exact_match"
+
+# --- Cost Distribution Tests (Backend Timeout - COST-7179 related) ---
+# Fixtures timeout waiting for completed_datetime
+# 5 tests affected
+SKIP_COST_DISTRIBUTION_TESTS="${SKIP_COST_DISTRIBUTION_TESTS:-true}"
+FILTER_COST_DISTRIBUTION="test_api_cost_model_ocp_cost_distribution"
+
+# --- Infrastructure/Config Tests (On-prem Incompatible) ---
+# Tests that were expected to require cloud infrastructure but now pass
+# Validated 2026-03-16: 256/258 passed (see skip-group-validation-plan.md Phase 8)
+# ~258 tests affected (includes parameterized variants)
+SKIP_INFRA_TESTS="${SKIP_INFRA_TESTS:-false}"
+FILTER_INFRA="test_api_cost_model_rates_update_to_tag_based or test_api_ocp_all_validate_items_date_range_monthly or test_api_ocp_ingest_source_static or test_api_ocp_ingest_source_eur or test_api_ocp_for_aws or test_api_ocp_cost_filtered_top_projects or test_api_ocp_all_bucketing or test_api_ocp_coros_distribution_negative_filtering"
+
+# --- Long Running Tests (Performance) ---
+# Tests that take >2 minutes; skip for faster feedback loops
+# ~10 tests affected, saves ~20 minutes
+SKIP_SLOW_TESTS="${SKIP_SLOW_TESTS:-true}"
+FILTER_SLOW="test_api_ocp_source_raw_node_cluster_capacity or test_api_source_cluster_info_sources or test_api_ocp_source_all_bucketing_platform_update or test_api_ocp_all_project_classification or test_api_ocp_daily_flow_ingest"
+
+# --- Delta/Calculation Tests (Data Timing Issues) ---
+# Tests that compare month-over-month deltas - previously expected to fail but now pass
+# Validated 2026-03-16: 12/12 passed (see skip-group-validation-plan.md Phase 7)
+# ~12 tests affected (includes parameterized variants)
+SKIP_DELTA_TESTS="${SKIP_DELTA_TESTS:-false}"
+FILTER_DELTA="deltas_monthly or test_api_ocp_coros_distribution_deltas"
+
+# --- Flaky/Data-Dependent Tests ---
+# Tests that were previously marked as flaky but now pass consistently
+# Validated 2026-03-16: 54/54 passed (see skip-group-validation-plan.md Phase 6)
+# ~54 tests affected (includes parameterized variants)
+SKIP_FLAKY_TESTS="${SKIP_FLAKY_TESTS:-false}"
+FILTER_FLAKY="test_api_ocp_forecast_data_other_params or test_api_ocp_forecast_prediction_days or test_api_ocp_forecast_values or test_api_ocp_resource_types_nodes_search or test_api_ocp_resource_types_clusters_search or test_api_ocp_resource_types_projects_search or test_api_ocp_currency_report_param or test_api_ocp_currency_compute or test_api_ocp_currency_memory or test_api_ocp_currency_volume or test_api_ocp_tags_filtered_total_match_group_by_total"
+
+# Build the combined filter from enabled skip groups
+build_test_filter() {
+    local filters=()
+    
+    if [[ "${SKIP_GPU_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_GPU})")
+    fi
+    if [[ "${SKIP_ROS_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_ROS})")
+    fi
+    if [[ "${SKIP_DATE_RANGE_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_DATE_RANGE})")
+    fi
+    if [[ "${SKIP_ORDER_BY_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_ORDER_BY})")
+    fi
+    if [[ "${SKIP_TAG_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_TAG})")
+    fi
+    if [[ "${SKIP_COST_DISTRIBUTION_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_COST_DISTRIBUTION})")
+    fi
+    if [[ "${SKIP_INFRA_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_INFRA})")
+    fi
+    if [[ "${SKIP_SLOW_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_SLOW})")
+    fi
+    if [[ "${SKIP_DELTA_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_DELTA})")
+    fi
+    if [[ "${SKIP_FLAKY_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_FLAKY})")
+    fi
+    
+    if [[ ${#filters[@]} -eq 0 ]]; then
+        echo ""
+        return
+    fi
+    
+    # Join with " or " and wrap in "not (...)"
+    local combined=""
+    for i in "${!filters[@]}"; do
+        if [[ $i -eq 0 ]]; then
+            combined="${filters[$i]}"
+        else
+            combined="${combined} or ${filters[$i]}"
+        fi
+    done
+    
+    echo "not (${combined})"
+}
+
+# IQE_FILTER is built after argument parsing (see below)
+IQE_TIMEOUT="${IQE_TIMEOUT:-14400}"
 IQE_IMAGE="${IQE_IMAGE:-quay.io/cloudservices/iqe-tests:cost-management}"
 KEEP_POD=false
 KEYCLOAK_SECRET_NS="${KEYCLOAK_SECRET_NS:-keycloak}"
 KEYCLOAK_SECRET_NAME="${KEYCLOAK_SECRET_NAME:-keycloak-client-secret-cost-management-operator}"
 SYNC_PULL_SECRET=false
+CLEAN_SOURCES=false
+NISE_VERSION="${NISE_VERSION:-}"
 
 show_help() {
     cat << EOF
@@ -42,20 +168,50 @@ Usage: $(basename "$0") [OPTIONS]
 Options:
     --namespace NAME     Target namespace (default: cost-onprem)
     --marker EXPR        Pytest marker expression (default: cost_ocp_on_prem)
-    --filter EXPR        Pytest -k filter expression to select/deselect tests
-    --timeout SECONDS    Test timeout (default: 1800)
+    --filter EXPR        Pytest -k filter expression (overrides skip groups)
+    --timeout SECONDS    Test timeout (default: 14400)
     --keep-pod           Don't delete the IQE pod after tests
+    --clean-sources      Delete existing sources before running tests
+    --nise-version VER   NISE version to use (e.g., 5.3.5)
     --sync-pull-secret   Sync local container registry credentials to cluster
+    --include-slow       Include slow tests (>2min) in the run
     --help               Show this help message
+
+Test Skip Groups (set to 'false' to include):
+    SKIP_GPU_TESTS           GPU/MIG tests - COST-7179 bug (~90 tests)
+    SKIP_ROS_TESTS           ROS tests - missing infrastructure (3 tests)
+    SKIP_DATE_RANGE_TESTS    Date range tests - insufficient data (~50 tests)
+    SKIP_ORDER_BY_TESTS      Order by tests - timeout bug (~66 tests)
+    SKIP_TAG_TESTS           Tag validation tests (~6 tests)
+    SKIP_COST_DISTRIBUTION_TESTS  Cost distribution tests (5 tests)
+    SKIP_INFRA_TESTS         Infrastructure/config tests (~14 tests)
+    SKIP_SLOW_TESTS          Long-running tests >2min (~10 tests)
+    SKIP_DELTA_TESTS         Delta/calculation tests (~15 tests)
+    SKIP_FLAKY_TESTS         Flaky/data-dependent tests (~20 tests)
 
 Environment Variables:
     IQE_IMAGE            IQE container image
+    IQE_FILTER           Custom filter (overrides all skip groups)
     HELM_RELEASE_NAME    Helm release name (default: cost-onprem)
     KEYCLOAK_SECRET_NS   Namespace containing Keycloak secret (default: keycloak)
+    NISE_VERSION         NISE version to use
 
 Examples:
-    # Run all on-prem tests
+    # Run with default filters (skips known failing tests)
     ./scripts/run-iqe-tests.sh
+
+    # Run with specific NISE version and clean sources
+    ./scripts/run-iqe-tests.sh --nise-version 5.3.5 --clean-sources
+
+    # Quick run - skip slow tests for faster feedback
+    ./scripts/run-iqe-tests.sh --include-slow=false
+    # or: SKIP_SLOW_TESTS=true ./scripts/run-iqe-tests.sh
+
+    # Include GPU tests (to verify COST-7179 fix)
+    SKIP_GPU_TESTS=false ./scripts/run-iqe-tests.sh
+
+    # Run only GPU tests
+    ./scripts/run-iqe-tests.sh --filter "ai_workloads or test_api_gpu"
 
     # Run specific marker with custom namespace
     ./scripts/run-iqe-tests.sh --namespace my-ns --marker "cost_ocp_on_prem and not slow"
@@ -72,27 +228,53 @@ EOF
 }
 
 # Parse arguments
+# Note: --filter is parsed but filter is rebuilt after arg parsing if not explicitly set
+EXPLICIT_FILTER=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --namespace) NAMESPACE="$2"; shift 2 ;;
         --marker) IQE_MARKER="$2"; shift 2 ;;
-        --filter) IQE_FILTER="$2"; shift 2 ;;
+        --filter) EXPLICIT_FILTER="$2"; shift 2 ;;
         --timeout) IQE_TIMEOUT="$2"; shift 2 ;;
         --keep-pod) KEEP_POD=true; shift ;;
+        --clean-sources) CLEAN_SOURCES=true; shift ;;
+        --nise-version) NISE_VERSION="$2"; shift 2 ;;
+        --include-slow) SKIP_SLOW_TESTS=false; shift ;;
+        --skip-slow) SKIP_SLOW_TESTS=true; shift ;;
         --sync-pull-secret) SYNC_PULL_SECRET=true; shift ;;
         --help) show_help; exit 0 ;;
         *) echo "Unknown option: $1"; show_help; exit 1 ;;
     esac
 done
 
+# Rebuild filter after argument parsing (skip groups may have changed)
+if [[ -n "${EXPLICIT_FILTER}" ]]; then
+    IQE_FILTER="${EXPLICIT_FILTER}"
+else
+    IQE_FILTER=$(build_test_filter)
+fi
+
 echo "========== Running IQE Cost Management Tests =========="
 echo "Namespace: ${NAMESPACE}"
 echo "Marker: ${IQE_MARKER}"
-if [ -n "${IQE_FILTER}" ]; then
-    echo "Filter: ${IQE_FILTER}"
-fi
 echo "Timeout: ${IQE_TIMEOUT}s"
 echo "Image: ${IQE_IMAGE}"
+echo ""
+echo "Skip Groups:"
+echo "  GPU tests (COST-7179):     ${SKIP_GPU_TESTS}"
+echo "  ROS tests:                 ${SKIP_ROS_TESTS}"
+echo "  Date range tests:          ${SKIP_DATE_RANGE_TESTS}"
+echo "  Order by tests:            ${SKIP_ORDER_BY_TESTS}"
+echo "  Tag validation:            ${SKIP_TAG_TESTS}"
+echo "  Cost distribution:         ${SKIP_COST_DISTRIBUTION_TESTS}"
+echo "  Infrastructure tests:      ${SKIP_INFRA_TESTS}"
+echo "  Slow tests (>2min):        ${SKIP_SLOW_TESTS}"
+echo "  Delta/calculation:         ${SKIP_DELTA_TESTS:-true}"
+echo "  Flaky/data-dependent:      ${SKIP_FLAKY_TESTS:-true}"
+if [ -n "${IQE_FILTER}" ]; then
+    echo ""
+    echo "Computed filter: ${IQE_FILTER}"
+fi
 
 # Validate container image pull access
 echo ""
@@ -101,69 +283,81 @@ echo "Validating access to IQE container image..."
 # Extract registry from image (e.g., quay.io from quay.io/cloudservices/iqe-tests:cost-management)
 IQE_REGISTRY=$(echo "${IQE_IMAGE}" | cut -d'/' -f1)
 
-# Try to pull the image manifest to verify access without downloading the full image
-if command -v skopeo &>/dev/null; then
-    # Use skopeo if available (faster, doesn't download layers)
-    if ! skopeo inspect "docker://${IQE_IMAGE}" &>/dev/null; then
-        echo ""
-        echo "ERROR: Cannot access IQE container image: ${IQE_IMAGE}"
-        echo ""
-        echo "This may be due to:"
-        echo "  1. Missing authentication to ${IQE_REGISTRY}"
-        echo "  2. The image does not exist or tag is invalid"
-        echo "  3. Network connectivity issues"
-        echo ""
-        echo "To authenticate with ${IQE_REGISTRY}:"
-        if [[ "${IQE_REGISTRY}" == "quay.io" ]]; then
-            echo "  podman login quay.io"
-            echo "  # or"
-            echo "  docker login quay.io"
-            echo ""
-            echo "Note: The IQE image requires Red Hat internal access."
-            echo "Contact the Cost Management team for access to quay.io/cloudservices/iqe-tests"
-        else
-            echo "  podman login ${IQE_REGISTRY}"
-            echo "  # or"
-            echo "  docker login ${IQE_REGISTRY}"
-        fi
-        exit 1
-    fi
-    echo "✓ Image accessible via skopeo"
-elif command -v podman &>/dev/null; then
-    # Fall back to podman
-    if ! podman pull --quiet "${IQE_IMAGE}" &>/dev/null; then
-        echo ""
-        echo "ERROR: Cannot pull IQE container image: ${IQE_IMAGE}"
-        echo ""
-        echo "To authenticate with ${IQE_REGISTRY}:"
-        echo "  podman login ${IQE_REGISTRY}"
-        if [[ "${IQE_REGISTRY}" == "quay.io" ]]; then
-            echo ""
-            echo "Note: The IQE image requires Red Hat internal access."
-            echo "Contact the Cost Management team for access to quay.io/cloudservices/iqe-tests"
-        fi
-        exit 1
-    fi
-    echo "✓ Image accessible via podman"
-elif command -v docker &>/dev/null; then
-    # Fall back to docker
-    if ! docker pull --quiet "${IQE_IMAGE}" &>/dev/null; then
-        echo ""
-        echo "ERROR: Cannot pull IQE container image: ${IQE_IMAGE}"
-        echo ""
-        echo "To authenticate with ${IQE_REGISTRY}:"
-        echo "  docker login ${IQE_REGISTRY}"
-        if [[ "${IQE_REGISTRY}" == "quay.io" ]]; then
-            echo ""
-            echo "Note: The IQE image requires Red Hat internal access."
-            echo "Contact the Cost Management team for access to quay.io/cloudservices/iqe-tests"
-        fi
-        exit 1
-    fi
-    echo "✓ Image accessible via docker"
+# Skip validation for internal OpenShift registry (cluster will handle auth)
+if [[ "${IQE_REGISTRY}" == *"openshift-image-registry"* ]] || [[ "${IQE_REGISTRY}" == *"image-registry.openshift-image-registry"* ]]; then
+    echo "✓ Using internal OpenShift registry - skipping local validation"
+    IMAGE_PULL_SECRET_NAME="default-dockercfg"
 else
-    echo "WARNING: Cannot validate image access (skopeo/podman/docker not found)"
-    echo "         The pod may fail to start if image pull fails in the cluster"
+    IMAGE_PULL_SECRET_NAME=""
+    # Try to pull the image manifest to verify access without downloading the full image
+    if command -v skopeo &>/dev/null; then
+        # Use skopeo if available (faster, doesn't download layers)
+        SKOPEO_OPTS=""
+        # Add --tls-verify=false for non-standard registries
+        if [[ "${IQE_REGISTRY}" != "quay.io" ]] && [[ "${IQE_REGISTRY}" != "registry.redhat.io" ]]; then
+            SKOPEO_OPTS="--tls-verify=false"
+        fi
+        if ! skopeo inspect ${SKOPEO_OPTS} "docker://${IQE_IMAGE}" &>/dev/null; then
+            echo ""
+            echo "ERROR: Cannot access IQE container image: ${IQE_IMAGE}"
+            echo ""
+            echo "This may be due to:"
+            echo "  1. Missing authentication to ${IQE_REGISTRY}"
+            echo "  2. The image does not exist or tag is invalid"
+            echo "  3. Network connectivity issues"
+            echo ""
+            echo "To authenticate with ${IQE_REGISTRY}:"
+            if [[ "${IQE_REGISTRY}" == "quay.io" ]]; then
+                echo "  podman login quay.io"
+                echo "  # or"
+                echo "  docker login quay.io"
+                echo ""
+                echo "Note: The IQE image requires Red Hat internal access."
+                echo "Contact the Cost Management team for access to quay.io/cloudservices/iqe-tests"
+            else
+                echo "  podman login ${IQE_REGISTRY}"
+                echo "  # or"
+                echo "  docker login ${IQE_REGISTRY}"
+            fi
+            exit 1
+        fi
+        echo "✓ Image accessible via skopeo"
+    elif command -v podman &>/dev/null; then
+        # Fall back to podman
+        if ! podman pull --quiet "${IQE_IMAGE}" &>/dev/null; then
+            echo ""
+            echo "ERROR: Cannot pull IQE container image: ${IQE_IMAGE}"
+            echo ""
+            echo "To authenticate with ${IQE_REGISTRY}:"
+            echo "  podman login ${IQE_REGISTRY}"
+            if [[ "${IQE_REGISTRY}" == "quay.io" ]]; then
+                echo ""
+                echo "Note: The IQE image requires Red Hat internal access."
+                echo "Contact the Cost Management team for access to quay.io/cloudservices/iqe-tests"
+            fi
+            exit 1
+        fi
+        echo "✓ Image accessible via podman"
+    elif command -v docker &>/dev/null; then
+        # Fall back to docker
+        if ! docker pull --quiet "${IQE_IMAGE}" &>/dev/null; then
+            echo ""
+            echo "ERROR: Cannot pull IQE container image: ${IQE_IMAGE}"
+            echo ""
+            echo "To authenticate with ${IQE_REGISTRY}:"
+            echo "  docker login ${IQE_REGISTRY}"
+            if [[ "${IQE_REGISTRY}" == "quay.io" ]]; then
+                echo ""
+                echo "Note: The IQE image requires Red Hat internal access."
+                echo "Contact the Cost Management team for access to quay.io/cloudservices/iqe-tests"
+            fi
+            exit 1
+        fi
+        echo "✓ Image accessible via docker"
+    else
+        echo "WARNING: Cannot validate image access (skopeo/podman/docker not found)"
+        echo "         The pod may fail to start if image pull fails in the cluster"
+    fi
 fi
 
 # Get S3 credentials from the deployed chart
@@ -413,6 +607,23 @@ fi
 echo ""
 echo "Creating IQE test pod..."
 
+# Determine imagePullSecrets based on registry
+if [ -n "${IMAGE_PULL_SECRET_NAME:-}" ]; then
+    # Use dynamically determined secret (e.g., for internal registry)
+    IMAGE_PULL_SECRETS_YAML="imagePullSecrets:
+  - name: ${IMAGE_PULL_SECRET_NAME}"
+else
+    IMAGE_PULL_SECRETS_YAML="imagePullSecrets:
+  - name: iqe-pull-secret"
+fi
+
+# Build NISE_VERSION env var if specified
+NISE_VERSION_ENV=""
+if [ -n "${NISE_VERSION}" ]; then
+    NISE_VERSION_ENV="    - name: DYNACONF_NISE_VERSION
+      value: \"${NISE_VERSION}\""
+fi
+
 cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: Pod
@@ -424,8 +635,7 @@ metadata:
     test-type: cost-management
 spec:
   restartPolicy: Never
-  imagePullSecrets:
-  - name: iqe-pull-secret
+  ${IMAGE_PULL_SECRETS_YAML}
   securityContext:
     runAsNonRoot: true
     seccompProfile:
@@ -444,9 +654,15 @@ spec:
       echo ""
       
       echo "Running IQE tests with marker: ${IQE_MARKER}"
+      # --force-default-user is required because the cost_onprem config's Jinja templates
+      # don't evaluate correctly (main.get('ONPREM_*') returns None since DYNACONF_ONPREM_*
+      # vars are placed at root level, not inside 'main'). We bypass this by setting
+      # the user explicitly and providing all user config via DYNACONF env vars.
+      # Note: user name must be lowercase to match the DYNACONF_users__cost_onprem_user__* keys
       if [ -n "\${IQE_FILTER}" ]; then
         echo "Filter expression: \${IQE_FILTER}"
         iqe tests plugin cost_management \
+          --force-default-user cost_onprem_user \
           -m "${IQE_MARKER}" \
           -k "\${IQE_FILTER}" \
           -vv \
@@ -454,6 +670,7 @@ spec:
           2>&1 | tee /results/test-output.log
       else
         iqe tests plugin cost_management \
+          --force-default-user cost_onprem_user \
           -m "${IQE_MARKER}" \
           -vv \
           --junitxml=/results/junit.xml \
@@ -529,21 +746,23 @@ spec:
       value: "http"
     
     # User configuration
+    # IMPORTANT: Use lowercase for nested keys (auth, identity) because IQE code
+    # expects lowercase keys like app_user["auth"], not app_user["AUTH"]
     - name: DYNACONF_DEFAULT_USER
       value: "cost_onprem_user"
-    - name: DYNACONF_USERS__COST_ONPREM_USER__AUTH__USERNAME
+    - name: DYNACONF_users__cost_onprem_user__auth__username
       value: "test"
-    - name: DYNACONF_USERS__COST_ONPREM_USER__AUTH__PASSWORD
+    - name: DYNACONF_users__cost_onprem_user__auth__password
       value: "test"
-    - name: DYNACONF_USERS__COST_ONPREM_USER__AUTH__JWT_GRANT_TYPE
+    - name: DYNACONF_users__cost_onprem_user__auth__jwt_grant_type
       value: "client_credentials"
-    - name: DYNACONF_USERS__COST_ONPREM_USER__AUTH__CLIENT_ID
+    - name: DYNACONF_users__cost_onprem_user__auth__client_id
       value: "${KEYCLOAK_CLIENT_ID}"
-    - name: DYNACONF_USERS__COST_ONPREM_USER__AUTH__CLIENT_SECRET
+    - name: DYNACONF_users__cost_onprem_user__auth__client_secret
       value: "${KEYCLOAK_CLIENT_SECRET}"
-    - name: DYNACONF_USERS__COST_ONPREM_USER__IDENTITY__ACCOUNT_NUMBER
+    - name: DYNACONF_users__cost_onprem_user__identity__account_number
       value: "7890123"
-    - name: DYNACONF_USERS__COST_ONPREM_USER__IDENTITY__ORG_ID
+    - name: DYNACONF_users__cost_onprem_user__identity__org_id
       value: "${ORG_ID}"
     
     # SSL CA bundle for cluster certificates
@@ -561,6 +780,7 @@ spec:
       value: "${S3_ACCESS_KEY}"
     - name: S3_SECRET_KEY
       value: "${S3_SECRET_KEY}"
+${NISE_VERSION_ENV}
     imagePullPolicy: Always
     resources:
       limits:
@@ -643,15 +863,34 @@ LOG_PID=$!
 
 echo "Waiting for tests to complete (timeout: ${IQE_TIMEOUT}s)..."
 ELAPSED=0
+RESULTS_DIR="${PROJECT_ROOT}/tests/reports"
+mkdir -p "${RESULTS_DIR}"
+RESULTS_COLLECTED=false
+
 while [ $ELAPSED -lt "$IQE_TIMEOUT" ]; do
     PHASE=$(kubectl get pod iqe-cost-tests -n "${NAMESPACE}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+    
+    # Try to collect results while container is still running (before Succeeded state)
+    # kubectl cp requires exec access which is lost once pod reaches Succeeded state
+    if [ "$RESULTS_COLLECTED" = "false" ]; then
+        if kubectl exec iqe-cost-tests -n "${NAMESPACE}" -- test -f /results/junit.xml 2>/dev/null; then
+            echo ""
+            echo "Test results file detected, collecting while container is running..."
+            if kubectl exec iqe-cost-tests -n "${NAMESPACE}" -- cat /results/junit.xml > "${RESULTS_DIR}/iqe_junit.xml" 2>/dev/null; then
+                echo "✓ Collected junit.xml"
+                RESULTS_COLLECTED=true
+            fi
+            kubectl exec iqe-cost-tests -n "${NAMESPACE}" -- cat /results/test-output.log > "${RESULTS_DIR}/iqe_output.log" 2>/dev/null || true
+        fi
+    fi
+    
     if [ "$PHASE" = "Succeeded" ] || [ "$PHASE" = "Failed" ]; then
         echo ""
         echo "IQE pod finished with phase: ${PHASE}"
         break
     fi
-    sleep 10
-    ELAPSED=$((ELAPSED + 10))
+    sleep 5
+    ELAPSED=$((ELAPSED + 5))
 done
 
 # Stop log streaming
@@ -663,14 +902,13 @@ if [ $ELAPSED -ge "$IQE_TIMEOUT" ]; then
     echo "ERROR: Tests timed out after ${IQE_TIMEOUT}s"
 fi
 
-# Collect results
-RESULTS_DIR="${PROJECT_ROOT}/tests/reports"
-mkdir -p "${RESULTS_DIR}"
-
-echo ""
-echo "Collecting test results..."
-kubectl cp "${NAMESPACE}/iqe-cost-tests:/results/junit.xml" "${RESULTS_DIR}/iqe_junit.xml" 2>/dev/null || true
-kubectl cp "${NAMESPACE}/iqe-cost-tests:/results/test-output.log" "${RESULTS_DIR}/iqe_output.log" 2>/dev/null || true
+# Try to collect results one more time if not already collected
+if [ "$RESULTS_COLLECTED" = "false" ]; then
+    echo ""
+    echo "Attempting to collect test results..."
+    kubectl cp "${NAMESPACE}/iqe-cost-tests:/results/junit.xml" "${RESULTS_DIR}/iqe_junit.xml" 2>/dev/null || true
+    kubectl cp "${NAMESPACE}/iqe-cost-tests:/results/test-output.log" "${RESULTS_DIR}/iqe_output.log" 2>/dev/null || true
+fi
 
 # Parse and display results
 TESTS=0

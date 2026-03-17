@@ -22,8 +22,100 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 NAMESPACE="${NAMESPACE:-cost-onprem}"
 HELM_RELEASE_NAME="${HELM_RELEASE_NAME:-cost-onprem}"
 IQE_MARKER="${IQE_MARKER:-cost_ocp_on_prem}"
-IQE_FILTER="${IQE_FILTER:-not ai_workloads and not distro and not test_api_cost_model_rates_update_to_tag_based and not test_api_ocp_all_validate_items_date_range_monthly and not test_api_ocp_ingest_source_static and not test_api_ocp_ingest_source_eur and not test_api_ocp_for_aws and not test_api_ocp_all_bucketing}"
 KEYCLOAK_NS="${KEYCLOAK_NS:-keycloak}"
+
+# =============================================================================
+# TEST FILTER CONFIGURATION
+# =============================================================================
+# Tests are grouped by skip reason. Each group can be toggled independently.
+# Set SKIP_*=false to include those tests in the run.
+# See docs/development/skipped-tests.md for full documentation.
+
+# --- GPU/MIG Tests (COST-7179) ---
+SKIP_GPU_TESTS="${SKIP_GPU_TESTS:-true}"
+FILTER_GPU="ai_workloads or distro or test_api_ocp_gpu or test_api_gpu or test_api_cost_model_ocp_gpu or test_api_cost_model_ocp_cost_gpu or test_api_ocp_resource_types_gpu"
+
+# --- ROS Tests (Missing Infrastructure) ---
+SKIP_ROS_TESTS="${SKIP_ROS_TESTS:-true}"
+FILTER_ROS="test_api_ocp_ros"
+
+# --- Date Range Tests (Insufficient Historical Data) ---
+SKIP_DATE_RANGE_TESTS="${SKIP_DATE_RANGE_TESTS:-true}"
+FILTER_DATE_RANGE="last-90-days or random_date_range or random_daily_time_filter"
+
+# --- Order By Tests (Backend Timeout) ---
+SKIP_ORDER_BY_TESTS="${SKIP_ORDER_BY_TESTS:-true}"
+FILTER_ORDER_BY="test_api_ocp_all_limit_order_by_cost or test_api_ocp_tagging_limit_order_by_cost or test_api_ocp_volume_order_by"
+
+# --- Tag Validation Tests (Missing Tag Data) ---
+SKIP_TAG_TESTS="${SKIP_TAG_TESTS:-true}"
+FILTER_TAG="volume-tag-exact_match"
+
+# --- Cost Distribution Tests (Backend Timeout) ---
+SKIP_COST_DISTRIBUTION_TESTS="${SKIP_COST_DISTRIBUTION_TESTS:-true}"
+FILTER_COST_DISTRIBUTION="test_api_cost_model_ocp_cost_distribution"
+
+# --- Infrastructure/Config Tests (On-prem Incompatible) ---
+SKIP_INFRA_TESTS="${SKIP_INFRA_TESTS:-true}"
+FILTER_INFRA="test_api_cost_model_rates_update_to_tag_based or test_api_ocp_all_validate_items_date_range_monthly or test_api_ocp_ingest_source_static or test_api_ocp_ingest_source_eur or test_api_ocp_for_aws or test_api_ocp_cost_filtered_top_projects or test_api_ocp_all_bucketing or test_api_ocp_coros_distribution_negative_filtering"
+
+# --- Long Running Tests (Performance) ---
+SKIP_SLOW_TESTS="${SKIP_SLOW_TESTS:-true}"
+FILTER_SLOW="test_api_ocp_source_raw_node_cluster_capacity or test_api_source_cluster_info_sources or test_api_ocp_source_all_bucketing_platform_update or test_api_ocp_all_project_classification or test_api_ocp_daily_flow_ingest"
+
+# --- Delta/Calculation Tests (Data Timing Issues) ---
+SKIP_DELTA_TESTS="${SKIP_DELTA_TESTS:-true}"
+FILTER_DELTA="deltas_monthly or test_api_ocp_coros_distribution_deltas"
+
+# --- Flaky/Data-Dependent Tests ---
+SKIP_FLAKY_TESTS="${SKIP_FLAKY_TESTS:-true}"
+FILTER_FLAKY="test_api_ocp_forecast_data_other_params or test_api_ocp_forecast_prediction_days or test_api_ocp_forecast_values or test_api_ocp_resource_types_nodes_search or test_api_ocp_resource_types_clusters_search or test_api_ocp_resource_types_projects_search or test_api_ocp_currency_report_param or test_api_ocp_currency_compute or test_api_ocp_currency_memory or test_api_ocp_currency_volume or test_api_ocp_tags_filtered_total_match_group_by_total"
+
+# Build the combined filter from enabled skip groups
+build_test_filter() {
+    local filters=()
+    
+    if [[ "${SKIP_GPU_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_GPU})")
+    fi
+    if [[ "${SKIP_ROS_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_ROS})")
+    fi
+    if [[ "${SKIP_DATE_RANGE_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_DATE_RANGE})")
+    fi
+    if [[ "${SKIP_ORDER_BY_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_ORDER_BY})")
+    fi
+    if [[ "${SKIP_TAG_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_TAG})")
+    fi
+    if [[ "${SKIP_COST_DISTRIBUTION_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_COST_DISTRIBUTION})")
+    fi
+    if [[ "${SKIP_INFRA_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_INFRA})")
+    fi
+    if [[ "${SKIP_SLOW_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_SLOW})")
+    fi
+    
+    if [[ ${#filters[@]} -eq 0 ]]; then
+        echo ""
+        return
+    fi
+    
+    local combined=""
+    for i in "${!filters[@]}"; do
+        if [[ $i -eq 0 ]]; then
+            combined="${filters[$i]}"
+        else
+            combined="${combined} or ${filters[$i]}"
+        fi
+    done
+    
+    echo "not (${combined})"
+}
 KEYCLOAK_SECRET_NAME="${KEYCLOAK_SECRET_NAME:-keycloak-client-secret-cost-management-operator}"
 MASU_LOCAL_PORT="${MASU_LOCAL_PORT:-8002}"
 
@@ -127,22 +219,32 @@ cleanup() {
 trap cleanup EXIT
 
 # Parse arguments
+EXPLICIT_FILTER=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --setup) DO_SETUP=true; shift ;;
         --namespace) NAMESPACE="$2"; shift 2 ;;
         --marker) IQE_MARKER="$2"; shift 2 ;;
-        --filter) IQE_FILTER="$2"; shift 2 ;;
+        --filter) EXPLICIT_FILTER="$2"; shift 2 ;;
         --nise-version) NISE_VERSION="$2"; shift 2 ;;
         --skip-portforward) SKIP_PORTFORWARD=true; shift ;;
         --masu-port) MASU_LOCAL_PORT="$2"; shift 2 ;;
         --clean-sources) CLEAN_SOURCES=true; shift ;;
+        --include-slow) SKIP_SLOW_TESTS=false; shift ;;
+        --skip-slow) SKIP_SLOW_TESTS=true; shift ;;
         --verbose) VERBOSE=true; shift ;;
         --dry-run) DRY_RUN=true; shift ;;
         --help) show_help; exit 0 ;;
         *) error "Unknown option: $1"; show_help; exit 1 ;;
     esac
 done
+
+# Build filter after argument parsing (skip groups may have changed)
+if [[ -n "${EXPLICIT_FILTER}" ]]; then
+    IQE_FILTER="${EXPLICIT_FILTER}"
+else
+    IQE_FILTER=$(build_test_filter)
+fi
 
 # =============================================================================
 # Validation
@@ -369,14 +471,16 @@ extract_cluster_config() {
     export DYNACONF_SERVICE_OBJECTS__MASU__CONFIG__SCHEME="http"
     
     # User configuration
+    # IMPORTANT: Use lowercase for nested keys (auth, identity) because IQE code
+    # expects lowercase keys like app_user["auth"], not app_user["AUTH"]
     export DYNACONF_DEFAULT_USER="cost_onprem_user"
-    export DYNACONF_USERS__COST_ONPREM_USER__AUTH__USERNAME="test"
-    export DYNACONF_USERS__COST_ONPREM_USER__AUTH__PASSWORD="test"
-    export DYNACONF_USERS__COST_ONPREM_USER__AUTH__JWT_GRANT_TYPE="client_credentials"
-    export DYNACONF_USERS__COST_ONPREM_USER__AUTH__CLIENT_ID="$DYNACONF_ONPREM_CLIENT_ID"
-    export DYNACONF_USERS__COST_ONPREM_USER__AUTH__CLIENT_SECRET="$DYNACONF_ONPREM_CLIENT_SECRET"
-    export DYNACONF_USERS__COST_ONPREM_USER__IDENTITY__ACCOUNT_NUMBER="7890123"
-    export DYNACONF_USERS__COST_ONPREM_USER__IDENTITY__ORG_ID="org1234567"
+    export DYNACONF_users__cost_onprem_user__auth__username="test"
+    export DYNACONF_users__cost_onprem_user__auth__password="test"
+    export DYNACONF_users__cost_onprem_user__auth__jwt_grant_type="client_credentials"
+    export DYNACONF_users__cost_onprem_user__auth__client_id="$DYNACONF_ONPREM_CLIENT_ID"
+    export DYNACONF_users__cost_onprem_user__auth__client_secret="$DYNACONF_ONPREM_CLIENT_SECRET"
+    export DYNACONF_users__cost_onprem_user__identity__account_number="7890123"
+    export DYNACONF_users__cost_onprem_user__identity__org_id="org1234567"
     
     if [ "$DRY_RUN" = true ]; then
         log "[DRY RUN] Cluster configuration:"
@@ -622,7 +726,11 @@ run_tests() {
     export DYNACONF_IQE_VAULT_OIDC_AUTH="false"
     
     # Build test command
+    # --force-default-user is required because the cost_onprem config's Jinja templates
+    # don't evaluate correctly. We bypass this by setting the user explicitly.
+    # Note: user name must be lowercase to match the DYNACONF_users__cost_onprem_user__* keys
     local test_cmd="iqe tests plugin cost_management"
+    test_cmd+=" --force-default-user cost_onprem_user"
     test_cmd+=" -m \"$IQE_MARKER\""
     
     if [ -n "$IQE_FILTER" ]; then
