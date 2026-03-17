@@ -18,7 +18,7 @@ Automation scripts for deploying, configuring, and testing the Cost Management O
 
 ### Standard OpenShift Deployment
 ```bash
-# 1. Deploy Cost Management Operator with TLS support
+# 1. Deploy Cost Management Metrics Operator with TLS support
 ./setup-cost-mgmt-tls.sh
 
 # 2. Deploy Kafka infrastructure
@@ -60,7 +60,7 @@ Deploy or upgrade the CoP Helm chart with automatic configuration.
 - Installs from GitHub releases or local chart
 - Auto-detects OpenShift and configures JWT authentication
 - Manages namespace and deployment lifecycle
-- **Automatically applies Cost Management Operator label** to namespace
+- **Automatically applies Cost Management Metrics Operator label** to namespace
 
 **Namespace Labeling:**
 The script automatically applies the `cost_management_optimizations=true` label to the deployment namespace. This label is **required** by the Cost Management Metrics Operator to collect resource optimization data from the namespace.
@@ -126,12 +126,12 @@ RHBK_NAMESPACE=my-keycloak ./deploy-rhbk.sh
 ---
 
 ### `setup-cost-mgmt-tls.sh`
-Configure Cost Management Operator with comprehensive CA certificate support.
+Configure Cost Management Metrics Operator with comprehensive CA certificate support.
 
 **Features:**
 - Extracts CA certificates from 15+ sources (routers, Keycloak, system CAs, custom CAs)
 - Creates consolidated CA bundle for self-signed certificate environments
-- Configures Cost Management Operator with proper TLS settings
+- Configures Cost Management Metrics Operator with proper TLS settings
 
 **Usage:**
 ```bash
@@ -437,7 +437,7 @@ NAMESPACE=cost-onprem ./run-pytest.sh --auth -v
 oc logs -n cost-onprem -l app.kubernetes.io/component=gateway
 ```
 
-**Cost Management Operator Issues**
+**Cost Management Metrics Operator Issues**
 ```bash
 # Check operator logs
 oc logs -n costmanagement-metrics-operator deployment/costmanagement-metrics-operator

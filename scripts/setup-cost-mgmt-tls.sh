@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # setup-cost-mgmt-tls.sh
-# Comprehensive automation script for Cost Management Operator with self-signed certificates
+# Comprehensive automation script for Cost Management Metrics Operator with self-signed certificates
 #
 # Usage: ./setup-cost-mgmt-tls.sh [options]
 # Prerequisites: OpenShift cluster with Keycloak (RHBK) installed
@@ -330,7 +330,7 @@ create_comprehensive_bundle() {
     # Start with header
     cat > combined-ca-bundle.crt << EOF
 #
-# Comprehensive CA Bundle for Cost Management Operator
+# Comprehensive CA Bundle for Cost Management Metrics Operator
 # Generated on $(date)
 # Cluster: $(oc config current-context)
 # Target Namespace: $NAMESPACE
@@ -401,7 +401,7 @@ EOF
 # Function to show usage
 show_usage() {
     cat << EOF
-Cost Management Operator TLS Setup Script
+Cost Management Metrics Operator TLS Setup Script
 
 This script automates the complete setup of the Cost Management Metrics Operator
 for environments with self-signed certificates.
@@ -440,7 +440,7 @@ EXAMPLES:
 
 WHAT THIS SCRIPT DOES:
     1. ✅ Verify prerequisites (cluster access, Keycloak)
-    2. ✅ Install Cost Management Operator via OLM
+    2. ✅ Install Cost Management Metrics Operator via OLM
     3. ✅ Extract all CA certificates (router, Keycloak, system)
     4. ✅ Update combined-ca-bundle ConfigMap
     5. ✅ Extract Keycloak client credentials
@@ -568,9 +568,9 @@ check_prerequisites() {
     fi
 }
 
-# Function to install Cost Management Operator
+# Function to install Cost Management Metrics Operator
 install_operator() {
-    print_header "Installing Cost Management Operator"
+    print_header "Installing Cost Management Metrics Operator"
 
     if oc get namespace "$NAMESPACE" &> /dev/null; then
         print_success "Namespace '$NAMESPACE' already exists"
@@ -584,11 +584,11 @@ install_operator() {
 
     # Check if operator is already installed
     if oc get subscription costmanagement-metrics-operator -n "$NAMESPACE" &> /dev/null; then
-        print_success "Cost Management Operator already installed"
+        print_success "Cost Management Metrics Operator already installed"
         return 0
     fi
 
-    print_status "Installing Cost Management Operator via OLM"
+    print_status "Installing Cost Management Metrics Operator via OLM"
 
     if [[ "$DRY_RUN" != "true" ]]; then
         # Create operator group if it doesn't exist
@@ -662,7 +662,7 @@ EOF
         fi
     fi
 
-    print_success "Cost Management Operator installed successfully"
+    print_success "Cost Management Metrics Operator installed successfully"
 }
 
 # Function to extract and update CA certificates
@@ -708,7 +708,7 @@ update_ca_certificates() {
     fi
 
     # Restart the operator deployment to pick up new certificates
-    print_status "Restarting Cost Management Operator to pick up new certificates..."
+    print_status "Restarting Cost Management Metrics Operator to pick up new certificates..."
     if oc get deployment costmanagement-metrics-operator -n "$NAMESPACE" &>/dev/null; then
         oc rollout restart deployment/costmanagement-metrics-operator -n "$NAMESPACE"
         print_status "Waiting for operator to restart..."
@@ -909,10 +909,10 @@ show_completion_summary() {
     print_header "Setup Complete!"
 
     echo ""
-    echo -e "${GREEN}🎉 Cost Management Operator TLS Setup Completed Successfully!${NC}"
+    echo -e "${GREEN}🎉 Cost Management Metrics Operator TLS Setup Completed Successfully!${NC}"
     echo ""
     echo -e "${BLUE}What was configured:${NC}"
-    echo -e "• ✅ Cost Management Operator installed in namespace: $NAMESPACE"
+    echo -e "• ✅ Cost Management Metrics Operator installed in namespace: $NAMESPACE"
     echo -e "• ✅ CA certificates extracted and configured for self-signed cert support"
     echo -e "• ✅ Keycloak JWT authentication configured (service-account type)"
     echo -e "• ✅ Client credentials: $CLIENT_ID (stored in cost-management-auth-secret)"
@@ -932,7 +932,7 @@ show_completion_summary() {
     echo -e "• CA bundle functionality: integrated in this script (setup-cost-mgmt-tls.sh)"
     echo -e "• Test script: NAMESPACE=cost-onprem ./scripts/run-pytest.sh"
     echo ""
-    echo -e "${GREEN}Your Cost Management Operator is now ready to work with self-signed certificates!${NC}"
+    echo -e "${GREEN}Your Cost Management Metrics Operator is now ready to work with self-signed certificates!${NC}"
     echo ""
 }
 
@@ -985,7 +985,7 @@ done
 
 # Main execution
 main() {
-    print_header "Cost Management Operator TLS Setup"
+    print_header "Cost Management Metrics Operator TLS Setup"
 
     if [[ "$DRY_RUN" == "true" ]]; then
         print_warning "DRY RUN MODE - No changes will be made"

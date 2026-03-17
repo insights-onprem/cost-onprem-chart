@@ -52,7 +52,7 @@ Deployment, configuration, maintenance, and troubleshooting.
 | **[Resource Requirements](operations/resource-requirements.md)** | Hardware and resource sizing guidance |
 | **[Worker Deployment Scenarios](operations/worker-deployment-scenarios.md)** | Different worker deployment configurations |
 | **[TLS Certificate Options](operations/tls-certificate-options.md)** | Guide to different TLS certificate configuration scenarios |
-| **[Cost Management Operator TLS Config](operations/cost-management-operator-tls-config-setup.md)** | TLS configuration for the Cost Management Metrics Operator |
+| **[Cost Management Metrics Operator TLS Config](operations/cost-management-operator-tls-config-setup.md)** | TLS configuration for the Cost Management Metrics Operator |
 | **[Force Operator Upload](operations/force-operator-upload.md)** | Guide for manually triggering metrics upload for testing |
 | **[Upload Verification Checklist](operations/cost-management-operator-upload-verification-checklist.md)** | Step-by-step checklist to verify operator metrics upload |
 | **[Troubleshooting Guide](operations/troubleshooting.md)** | Common issues and their solutions |
@@ -99,8 +99,8 @@ Testing guides, validation procedures, and development resources.
 4. Use **[TLS Certificate Options](operations/tls-certificate-options.md)** for TLS configuration
 5. Reference **[External Keycloak Scenario](architecture/external-keycloak-scenario.md)** if using external Keycloak
 
-### "I'm setting up the Cost Management Operator"
-1. Follow **[Cost Management Operator TLS Config Setup](operations/cost-management-operator-tls-config-setup.md)**
+### "I'm setting up the Cost Management Metrics Operator"
+1. Follow **[Cost Management Metrics Operator TLS Config Setup](operations/cost-management-operator-tls-config-setup.md)**
 2. Use **[Force Operator Upload](operations/force-operator-upload.md)** to test the upload pipeline
 3. Verify with **[Upload Verification Checklist](operations/cost-management-operator-upload-verification-checklist.md)**
 

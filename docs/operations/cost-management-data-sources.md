@@ -7,7 +7,7 @@ Guide for configuring and managing data sources (providers) in Cost Management O
 - [Overview](#overview)
 - [Provider Types](#provider-types)
 - [OpenShift Provider Configuration](#openshift-provider-configuration)
-- [Cost Management Metrics Operator Setup](#cost-management-operator-setup)
+- [Cost Management Metrics Operator Setup](#cost-management-metrics-operator-setup)
 - [Data Upload Process](#data-upload-process)
 - [Verification and Troubleshooting](#verification-and-troubleshooting)
 
@@ -157,13 +157,13 @@ EOF
 
 ### Configure Operator
 
-**Create CostManagement Custom Resource:**
+**Create CostManagementMetricsConfig Custom Resource:**
 
 ```yaml
-apiVersion: cost-mgmt.openshift.io/v1alpha1
-kind: CostManagement
+apiVersion: costmanagement-metrics-cfg.openshift.io/v1beta1
+kind: CostManagementMetricsConfig
 metadata:
-  name: cost-mgmt-example
+  name: costmanagementmetricscfg
   namespace: costmanagement-metrics-operator
 spec:
   # Upload settings
