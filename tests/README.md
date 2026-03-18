@@ -347,7 +347,7 @@ release/ci-operator/step-registry/insights-onprem/cost-onprem-chart/e2e/
 **CI Execution Sequence:**
 1. Dependencies installed (yq, kubectl, helm, oc)
 2. S4 configured from `insights-onprem-s4-deploy` step
-3. Cost Management Operator installed via OLM
+3. Cost Management Metrics Operator installed via OLM
 4. Helm wrapper injects S4 storage config
 5. `scripts/deploy-test-cost-onprem.sh` runs:
    - Deploys RHBK (Keycloak)

@@ -79,7 +79,7 @@ This document provides detailed information about the Helm templates used in the
 **Purpose**: Ingress deployment for file upload handling (receives pre-authenticated requests from Gateway).
 
 **Key Features**:
-- Processes file uploads from Cost Management Operator
+- Processes file uploads from Cost Management Metrics Operator
 - Trusts `X-Rh-Identity` header injected by Gateway
 - No longer requires Envoy sidecar (JWT validation handled by centralized Gateway)
 

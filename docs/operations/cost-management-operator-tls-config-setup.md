@@ -1,4 +1,4 @@
-# Cost Management Operator TLS Configuration for Self-Signed Certificates
+# Cost Management Metrics Operator TLS Configuration for Self-Signed Certificates
 
 This document explains how to configure the Cost Management Metrics Operator to work with self-signed certificates in airgapped or development environments.
 
@@ -6,10 +6,10 @@ This document explains how to configure the Cost Management Metrics Operator to 
 
 ### Why Self-Signed Certificates Don't Work Out of the Box
 
-The Cost Management Operator fails with self-signed certificates due to TLS verification failures. Here's what happens:
+The Cost Management Metrics Operator fails with self-signed certificates due to TLS verification failures. Here's what happens:
 
 #### Default Behavior
-Out of the box, the Cost Management Operator is configured with:
+Out of the box, the Cost Management Metrics Operator is configured with:
 - `SSL_CERT_FILE=/etc/ssl/certs/combined-ca-bundle.crt`
 - `REQUESTS_CA_BUNDLE=/etc/ssl/certs/combined-ca-bundle.crt`
 - A `combined-ca-bundle` ConfigMap that contains only standard CA certificates
@@ -39,7 +39,7 @@ The operator's `combined-ca-bundle.crt` doesn't include:
 4. **Self-signed root CAs** - used in airgapped environments
 
 #### OLM Management Complication
-**CRITICAL**: The Cost Management Operator is deployed and managed by OpenShift's Operator Lifecycle Manager (OLM) via a ClusterServiceVersion (CSV). This creates additional challenges:
+**CRITICAL**: The Cost Management Metrics Operator is deployed and managed by OpenShift's Operator Lifecycle Manager (OLM) via a ClusterServiceVersion (CSV). This creates additional challenges:
 
 - **Deployment Reconciliation**: Any direct changes to the operator deployment are automatically reverted by OLM
 - **CSV Specifications**: The deployment configuration is controlled by the CSV, not user modifications
@@ -56,7 +56,7 @@ The operator logs will show continuous authentication and upload failures, preve
 
 ## Overview
 
-The Cost Management Operator communicates with several services that may use self-signed certificates:
+The Cost Management Metrics Operator communicates with several services that may use self-signed certificates:
 1. **Red Hat Build of Keycloak (RHBK)** - for JWT token generation
 2. **Ingress** - for uploading metrics data
 3. **Prometheus/Thanos** - for collecting metrics
@@ -193,7 +193,7 @@ Create an automated script to maintain the CA bundle:
 NAMESPACE="costmanagement-metrics-operator"
 TEMP_DIR="/tmp/cost-mgmt-ca"
 
-echo "🔧 Updating Cost Management Operator CA Bundle"
+echo "🔧 Updating Cost Management Metrics Operator CA Bundle"
 echo "=============================================="
 
 mkdir -p "$TEMP_DIR"
@@ -229,7 +229,7 @@ fi
 # Create combined CA bundle
 echo "🔗 Creating combined CA bundle..."
 cat > combined-ca-bundle.crt << EOF
-# Combined CA Bundle for Cost Management Operator
+# Combined CA Bundle for Cost Management Metrics Operator
 # Generated on $(date)
 # Includes: System CA, Service CA, Keycloak CA, Ingress CA
 
@@ -252,10 +252,10 @@ oc create configmap combined-ca-bundle \
 echo "✅ CA bundle updated successfully"
 
 # Restart operator to pick up new CA bundle
-echo "🔄 Restarting Cost Management Operator..."
+echo "🔄 Restarting Cost Management Metrics Operator..."
 oc rollout restart deployment costmanagement-metrics-operator -n "$NAMESPACE"
 
-echo "✅ Cost Management Operator CA bundle update complete!"
+echo "✅ Cost Management Metrics Operator CA bundle update complete!"
 
 # Cleanup
 cd /
@@ -294,7 +294,7 @@ Based on our real-world testing, here are the exact errors you'll encounter and 
 During our JWT authentication implementation, we encountered this exact sequence:
 
 1. **Initial Error**: `x509: certificate signed by unknown authority` when generating JWT tokens
-2. **Symptom**: Cost Management Operator logs showed continuous authentication failures
+2. **Symptom**: Cost Management Metrics Operator logs showed continuous authentication failures
 3. **Impact**: No data uploads, JWT authentication completely broken
 4. **First Attempt**: Tried to modify deployment directly → **Failed due to OLM reconciliation**
 5. **Working Solution**: Updated existing `combined-ca-bundle` ConfigMap with Keycloak's CA certificate
@@ -309,7 +309,7 @@ During our JWT authentication implementation, we encountered this exact sequence
 
 #### Logs to Monitor
 ```bash
-# Cost Management Operator logs
+# Cost Management Metrics Operator logs
 oc logs -n costmanagement-metrics-operator deployment/costmanagement-metrics-operator -f
 
 # Look for specific TLS errors
@@ -321,7 +321,7 @@ oc logs -n costmanagement-metrics-operator deployment/costmanagement-metrics-ope
 **IMPORTANT**: This TLS configuration is essential for the JWT authentication flow documented in [native-jwt-authentication.md](native-jwt-authentication.md).
 
 ### Why TLS Matters for JWT Authentication
-Our JWT authentication implementation requires the Cost Management Operator to:
+Our JWT authentication implementation requires the Cost Management Metrics Operator to:
 1. **Generate JWT tokens** by calling Keycloak's token endpoint
 2. **Upload data** to the ingress with JWT authentication
 3. **Validate certificates** for all HTTPS communications
@@ -330,7 +330,7 @@ Without proper TLS configuration, the JWT authentication flow fails at the token
 
 When using JWT authentication (as documented in native-jwt-authentication.md), ensure:
 
-1. **Keycloak Communication**: Cost Management Operator must trust Keycloak's certificate
+1. **Keycloak Communication**: Cost Management Metrics Operator must trust Keycloak's certificate
 2. **Token Validation**: Tokens are properly signed and validated
 3. **Ingress Communication**: Upload requests include proper CA certificates
 
@@ -431,7 +431,7 @@ oc get configmap combined-ca-bundle -n costmanagement-metrics-operator -o yaml |
 ## Quick Setup Commands
 
 ```bash
-# 1. Deploy Cost Management Operator with CA bundle support
+# 1. Deploy Cost Management Metrics Operator with CA bundle support
 ./scripts/setup-cost-mgmt-tls.sh
 
 # 2. Apply TLS-compatible CostManagementMetricsConfig
@@ -444,4 +444,4 @@ oc rollout status deployment costmanagement-metrics-operator -n costmanagement-m
 oc logs -n costmanagement-metrics-operator deployment/costmanagement-metrics-operator --tail=50
 ```
 
-This configuration ensures the Cost Management Operator can successfully communicate with all services using self-signed certificates while maintaining security best practices.
+This configuration ensures the Cost Management Metrics Operator can successfully communicate with all services using self-signed certificates while maintaining security best practices.

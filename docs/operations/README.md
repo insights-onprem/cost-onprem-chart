@@ -30,7 +30,7 @@ Installation, deployment, configuration, and operational guides for Cost Managem
 | Document | Description |
 |----------|-------------|
 | **[TLS Certificate Options](tls-certificate-options.md)** | Guide to different TLS certificate configuration scenarios |
-| **[Cost Management Operator TLS Config](cost-management-operator-tls-config-setup.md)** | TLS configuration for the Cost Management Metrics Operator |
+| **[Cost Management Metrics Operator TLS Config](cost-management-operator-tls-config-setup.md)** | TLS configuration for the Cost Management Metrics Operator |
 
 ## Testing & Validation
 

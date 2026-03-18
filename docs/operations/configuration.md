@@ -55,7 +55,7 @@ Complete configuration reference for resource requirements, storage, and access 
 
 ## Namespace Requirements
 
-### Cost Management Operator Label
+### Cost Management Metrics Operator Label
 
 **REQUIRED**: The deployment namespace must be labeled for the Cost Management Metrics Operator to collect resource optimization data.
 
