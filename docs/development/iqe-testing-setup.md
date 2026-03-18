@@ -13,10 +13,10 @@ There are two ways to run IQE tests:
 ### 1. Red Hat Network Access
 
 **Required for both containerized and local testing.**
+- Clone IQE repositories from gitlab
 
 You must be connected to the Red Hat internal network (VPN or office network) to:
 - Pull IQE container images from `quay.io/cloudservices/iqe-tests`
-- Clone IQE repositories from `gitlab.cee.redhat.com`
 - Access internal PyPI (`nexus.corp.redhat.com`)
 
 ### 2. Quay.io Registry Access (Containerized Tests)
@@ -62,11 +62,11 @@ For local testing, clone these repositories adjacent to `cost-onprem-chart`:
 ```bash
 cd /path/to/workspaces
 
-# IQE Core framework (requires RH network)
-git clone git@gitlab.cee.redhat.com:insights-qe/iqe-core.git
+# IQE Core framework
+git clone https://github.com/RedHatQE/iqe-core.git
 
-# Cost Management IQE plugin (requires RH network)
-git clone git@gitlab.cee.redhat.com:insights-qe/iqe-cost-management-plugin.git
+# Cost Management IQE plugin
+git clone https://github.com/RedHatQE/iqe-cost-management-plugin.git
 
 # Your directory structure should look like:
 # workspaces/
@@ -191,12 +191,12 @@ Ensure your Quay account has access:
 # Test pull access
 podman pull quay.io/cloudservices/iqe-tests:cost-management
 ```
-
-If this fails, verify your `app-interface` user file has been merged.
-
-### "Connection refused" to gitlab.cee.redhat.com
+### "Connection refused" to gitlab
 
 You're not on the Red Hat network. Connect to VPN and retry.
+
+
+If this fails, verify your `app-interface` user file has been merged.
 
 ### Tests Stuck on "Line item summary update not complete"
 
@@ -234,6 +234,5 @@ The default `IQE_FILTER` in `run-iqe-tests-local.sh` skips:
 
 ## See Also
 
-- [IQE Core Documentation](https://gitlab.cee.redhat.com/insights-qe/iqe-core)
-- [Cost Management Plugin](https://gitlab.cee.redhat.com/insights-qe/iqe-cost-management-plugin)
-- [app-interface Repository](https://gitlab.cee.redhat.com/service/app-interface)
+- [IQE Core Documentation](https://github.com/RedHatQE/iqe-core)
+- [Cost Management Plugin](https://github.com/RedHatQE/iqe-cost-management-plugin)

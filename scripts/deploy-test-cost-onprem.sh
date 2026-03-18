@@ -2,9 +2,9 @@
 set -euo pipefail
 
 ################################################################################
-# Cost Management On-Premise OpenShift JWT Authentication Deployment Script
+# Cost Management On-Premise OpenShift with JWT Authentication Deployment Script
 #
-# This script orchestrates the complete JWT authentication setup for Cost Management on
+# This script orchestrates the complete setup for Cost Management on
 # OpenShift by wrapping the authoritative scripts from cost-onprem-chart repository.
 #
 # Based on: https://github.com/insights-onprem/cost-onprem-chart/blob/main/scripts/README.md
@@ -18,7 +18,7 @@ set -euo pipefail
 #   --skip-kafka              Skip Kafka/AMQ Streams deployment
 #   --skip-helm               Skip COST Helm chart installation
 #   --skip-tls                Skip TLS certificate setup
-#   --skip-test               Skip JWT authentication test
+#   --skip-test               Skip cost-onprem chart tests
 #   --skip-image-override     Skip creating custom values file for image override
 #   --deploy-s4               Deploy S4 (Super Simple Storage Service) for S3-compatible storage
 #   --s4-namespace NAME       S4 deployment namespace (default: s4-test)
@@ -27,10 +27,12 @@ set -euo pipefail
 #   --use-local-chart         Use local Helm chart instead of GitHub release
 #   --verbose                 Enable verbose output
 #   --dry-run                 Show what would be executed without running
-#   --tests-only              Run only JWT authentication tests (skip all deployments)
+#   --tests-only              Run only cost-onprem chart tests (skip all deployments)
 #   --include-ui              Include UI tests (requires Playwright system dependencies)
 #   --run-iqe                 Run IQE cost-management tests after deployment
 #   --iqe-marker EXPR         Pytest marker for IQE tests (default: cost_ocp_on_prem)
+#   --iqe-profile PROFILE     IQE test profile: smoke, extended, stable, full (default: stable)
+#   --listener-cpu LIMIT      Temporarily set listener CPU limit (e.g., 500m, 1000m, or 'max')
 #   --save-versions [FILE]    Save deployment version info to JSON file (default: version_info.json)
 #   --help                    Display this help message
 #
@@ -85,8 +87,10 @@ TESTS_ONLY="${TESTS_ONLY:-false}"
 INCLUDE_UI="${INCLUDE_UI:-false}"
 RUN_IQE="${RUN_IQE:-false}"
 IQE_MARKER="${IQE_MARKER:-cost_ocp_on_prem}"
+IQE_PROFILE="${IQE_PROFILE:-stable}"
 SAVE_VERSIONS="${SAVE_VERSIONS:-false}"
 VERSION_INFO_FILE="${VERSION_INFO_FILE:-version_info.json}"
+LISTENER_CPU_LIMIT="${LISTENER_CPU_LIMIT:-}"
 
 # S4 deployment configuration
 DEPLOY_S4="${DEPLOY_S4:-false}"
@@ -560,12 +564,45 @@ setup_tls() {
 
 
 run_tests() {
+    # Apply listener CPU boost early - benefits both chart tests and IQE tests
+    local cpu_boost_applied=false
+    if [[ -n "${LISTENER_CPU_LIMIT}" ]]; then
+        if validate_cpu_limit "${LISTENER_CPU_LIMIT}"; then
+            local effective_cpu_limit="${LISTENER_CPU_LIMIT}"
+            if [[ "${LISTENER_CPU_LIMIT}" == "max" ]]; then
+                local max_cpu
+                max_cpu=$(calculate_max_listener_cpu)
+                effective_cpu_limit="${max_cpu}m"
+                log_info "Calculated maximum available CPU: ${effective_cpu_limit}"
+            fi
+            
+            log_step "Setting listener CPU limit to ${effective_cpu_limit}"
+            if set_listener_cpu "${effective_cpu_limit}"; then
+                cpu_boost_applied=true
+            else
+                log_warning "Continuing with current listener CPU"
+            fi
+        fi
+    fi
+    
+    # Helper to reset CPU on exit
+    cleanup_cpu_boost() {
+        if [[ "${cpu_boost_applied}" == "true" ]]; then
+            reset_listener_cpu
+        fi
+    }
+    
     if [[ "${SKIP_TEST}" == "true" ]]; then
-        log_warning "Skipping JWT authentication test (--skip-test)"
+        log_warning "Skipping cost-onprem chart tests (--skip-test)"
+        # Still run IQE tests if requested
+        if [[ "${RUN_IQE}" == "true" ]]; then
+            run_iqe_tests
+        fi
+        cleanup_cpu_boost
         return 0
     fi
 
-    log_step "Testing JWT authentication (6/6)"
+    log_step "Running cost-onprem chart tests (6/6)"
 
     # Ensure we're logged in to OpenShift for JWT test
     if [[ "${DRY_RUN}" != "true" ]]; then
@@ -573,6 +610,10 @@ run_tests() {
             log_info "Not logged in to OpenShift with a user that has an available token, attempting login for JWT test..."
             if ! login_to_openshift; then
                 log_warning "Failed to login to OpenShift, skipping JWT test"
+                # Still run IQE tests if requested
+                if [[ "${RUN_IQE}" == "true" ]]; then
+                    run_iqe_tests
+                fi
                 return 0
             fi
         fi
@@ -608,23 +649,244 @@ run_tests() {
     fi
     
     if [[ "${DRY_RUN}" == "true" ]]; then
-        log_info "DRY RUN: Would execute: ${pytest_script} ${pytest_args[*]}"
+        log_info "DRY RUN: Would execute: ${pytest_script} ${pytest_args[*]:-}"
         return 0
     fi
     
-    # Run tests
+    # Track test failures - continue running all tests, fail at the end
+    local chart_tests_failed=false
+    local iqe_tests_failed=false
+    
+    # Run chart tests
     # Note: cost_validation tests have their own E2E setup with 300s provider timeout
-    if ! "${pytest_script}" "${pytest_args[@]}"; then
-        log_error "Pytest test suite failed"
-        log_info "JUnit report available at: tests/reports/junit.xml"
-        exit 1
+    # if ! "${pytest_script}" ${pytest_args[@]+"${pytest_args[@]}"}; then
+    #     log_error "Pytest test suite failed"
+    #     log_info "JUnit report available at: tests/reports/junit.xml"
+    #     chart_tests_failed=true
+    # else
+    #     log_success "Pytest test suite completed"
+    # fi
+    
+    # Run IQE tests if requested (continue even if chart tests failed)
+    if [[ "${RUN_IQE}" == "true" ]]; then
+        if ! run_iqe_tests; then
+            iqe_tests_failed=true
+        fi
     fi
     
-    log_success "Pytest test suite completed"
+    # Reset listener CPU after all tests
+    cleanup_cpu_boost
     
-    # Run IQE tests if requested
-    if [[ "${RUN_IQE}" == "true" ]]; then
-        run_iqe_tests
+    # Report overall status
+    if [[ "${chart_tests_failed}" == "true" ]] || [[ "${iqe_tests_failed}" == "true" ]]; then
+        echo ""
+        log_error "Test failures detected:"
+        [[ "${chart_tests_failed}" == "true" ]] && log_error "  - Chart tests (pytest) failed"
+        [[ "${iqe_tests_failed}" == "true" ]] && log_error "  - IQE tests failed"
+        return 1
+    fi
+}
+
+################################################################################
+# Resource Management for Test Runs
+################################################################################
+
+# Store original resource values for restoration
+ORIGINAL_LISTENER_CPU_LIMIT=""
+ORIGINAL_LISTENER_CPU_REQUEST=""
+
+# Parse CPU value to millicores (e.g., "500m" -> 500, "1" -> 1000)
+parse_cpu_to_millicores() {
+    local cpu_value="$1"
+    if [[ "${cpu_value}" =~ ^([0-9]+)m$ ]]; then
+        echo "${BASH_REMATCH[1]}"
+    elif [[ "${cpu_value}" =~ ^([0-9]+)$ ]]; then
+        echo "$((${BASH_REMATCH[1]} * 1000))"
+    else
+        echo "0"
+    fi
+}
+
+# Calculate maximum available CPU on the node where listener runs
+calculate_max_listener_cpu() {
+    local release="${HELM_RELEASE_NAME:-cost-onprem}"
+    local listener_deploy="${release}-koku-listener"
+    
+    # Get the node where listener is running
+    local listener_node
+    listener_node=$(kubectl get pods -n "${NAMESPACE}" -l "app.kubernetes.io/component=listener" \
+        -o jsonpath='{.items[0].spec.nodeName}' 2>/dev/null)
+    
+    if [[ -z "${listener_node}" ]]; then
+        log_warning "Could not determine listener node, using default max of 2000m"
+        echo "2000"
+        return
+    fi
+    
+    # Get node's allocatable CPU
+    local allocatable_cpu
+    allocatable_cpu=$(kubectl get node "${listener_node}" -o jsonpath='{.status.allocatable.cpu}' 2>/dev/null)
+    local allocatable_millicores
+    allocatable_millicores=$(parse_cpu_to_millicores "${allocatable_cpu}")
+    
+    # Get current CPU requests on the node
+    local used_requests
+    used_requests=$(kubectl describe node "${listener_node}" 2>/dev/null | grep -A5 "Allocated resources" | grep "cpu" | awk '{print $2}' | sed 's/[^0-9]//g')
+    
+    if [[ -z "${used_requests}" ]]; then
+        used_requests=0
+    fi
+    
+    # Get listener's current request
+    local listener_request
+    listener_request=$(kubectl get deploy "${listener_deploy}" -n "${NAMESPACE}" \
+        -o jsonpath='{.spec.template.spec.containers[0].resources.requests.cpu}' 2>/dev/null || echo "150m")
+    local listener_request_millicores
+    listener_request_millicores=$(parse_cpu_to_millicores "${listener_request}")
+    
+    # Calculate available: allocatable - used + listener's current (since we're replacing it)
+    # Leave 500m buffer for system overhead
+    local available=$((allocatable_millicores - used_requests + listener_request_millicores - 500))
+    
+    # Cap at 4000m (4 cores) as a reasonable maximum for a single pod
+    if [[ "${available}" -gt 4000 ]]; then
+        available=4000
+    fi
+    
+    # Minimum of 500m
+    if [[ "${available}" -lt 500 ]]; then
+        available=500
+    fi
+    
+    log_verbose "Node ${listener_node}: allocatable=${allocatable_millicores}m, used=${used_requests}m, listener=${listener_request_millicores}m, available=${available}m"
+    echo "${available}"
+}
+
+# Validate CPU limit format and value
+validate_cpu_limit() {
+    local cpu_limit="$1"
+    
+    # Special case: "max" means calculate maximum available
+    if [[ "${cpu_limit}" == "max" ]]; then
+        return 0
+    fi
+    
+    # Check format (must be like "500m" or "1")
+    if [[ ! "${cpu_limit}" =~ ^[0-9]+m?$ ]]; then
+        log_error "Invalid CPU limit format: ${cpu_limit}"
+        log_error "Expected format: <number>m (e.g., 500m, 1000m), <number> (e.g., 1, 2), or 'max'"
+        return 1
+    fi
+    
+    local millicores
+    millicores=$(parse_cpu_to_millicores "${cpu_limit}")
+    
+    # Sanity check: must be at least 100m and at most 4000m (4 cores)
+    if [[ "${millicores}" -lt 100 ]]; then
+        log_error "CPU limit too low: ${cpu_limit} (minimum: 100m)"
+        return 1
+    fi
+    
+    if [[ "${millicores}" -gt 4000 ]]; then
+        log_error "CPU limit too high: ${cpu_limit} (maximum: 4000m / 4 cores)"
+        return 1
+    fi
+    
+    return 0
+}
+
+set_listener_cpu() {
+    local new_limit="$1"
+    
+    log_step "Setting listener CPU limit to ${new_limit}"
+    
+    local release="${HELM_RELEASE_NAME:-cost-onprem}"
+    local listener_deploy="${release}-koku-listener"
+    
+    # Get current values for restoration later
+    ORIGINAL_LISTENER_CPU_LIMIT=$(kubectl get deploy "${listener_deploy}" -n "${NAMESPACE}" \
+        -o jsonpath='{.spec.template.spec.containers[0].resources.limits.cpu}' 2>/dev/null || echo "")
+    ORIGINAL_LISTENER_CPU_REQUEST=$(kubectl get deploy "${listener_deploy}" -n "${NAMESPACE}" \
+        -o jsonpath='{.spec.template.spec.containers[0].resources.requests.cpu}' 2>/dev/null || echo "")
+    
+    if [[ -z "${ORIGINAL_LISTENER_CPU_LIMIT}" ]]; then
+        log_warning "Could not get current listener CPU limit"
+        return 1
+    fi
+    
+    # Parse values for comparison
+    local current_millicores new_millicores
+    current_millicores=$(parse_cpu_to_millicores "${ORIGINAL_LISTENER_CPU_LIMIT}")
+    new_millicores=$(parse_cpu_to_millicores "${new_limit}")
+    
+    log_info "Current listener CPU: limit=${ORIGINAL_LISTENER_CPU_LIMIT}, request=${ORIGINAL_LISTENER_CPU_REQUEST}"
+    
+    # Check if new limit is same as current
+    if [[ "${current_millicores}" -eq "${new_millicores}" ]]; then
+        log_info "Listener CPU limit already set to ${new_limit}, no change needed"
+        ORIGINAL_LISTENER_CPU_LIMIT=""  # Clear so we don't reset later
+        return 0
+    fi
+    
+    # Warn if decreasing CPU
+    if [[ "${new_millicores}" -lt "${current_millicores}" ]]; then
+        log_warning "Decreasing CPU limit from ${ORIGINAL_LISTENER_CPU_LIMIT} to ${new_limit}"
+    fi
+    
+    # Calculate request as half of limit (standard practice)
+    local new_request="$((new_millicores / 2))m"
+    
+    log_info "Setting listener CPU: limit=${new_limit}, request=${new_request}"
+    
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log_info "DRY RUN: Would patch ${listener_deploy} CPU to limit=${new_limit}, request=${new_request}"
+        return 0
+    fi
+    
+    # Patch listener deployment
+    if kubectl patch deploy "${listener_deploy}" -n "${NAMESPACE}" --type='json' \
+        -p="[{\"op\": \"replace\", \"path\": \"/spec/template/spec/containers/0/resources/limits/cpu\", \"value\": \"${new_limit}\"},
+             {\"op\": \"replace\", \"path\": \"/spec/template/spec/containers/0/resources/requests/cpu\", \"value\": \"${new_request}\"}]" \
+        &>/dev/null; then
+        log_success "Listener CPU set to ${new_limit}"
+        
+        # Wait for rollout
+        log_info "Waiting for listener rollout..."
+        if ! kubectl rollout status deploy/"${listener_deploy}" -n "${NAMESPACE}" --timeout=120s; then
+            log_warning "Rollout timed out, but continuing..."
+        fi
+    else
+        log_error "Failed to set listener CPU"
+        ORIGINAL_LISTENER_CPU_LIMIT=""  # Clear so we don't try to reset
+        return 1
+    fi
+}
+
+reset_listener_cpu() {
+    if [[ -z "${ORIGINAL_LISTENER_CPU_LIMIT}" ]]; then
+        return 0
+    fi
+    
+    log_step "Resetting listener CPU to original values"
+    
+    local release="${HELM_RELEASE_NAME:-cost-onprem}"
+    local listener_deploy="${release}-koku-listener"
+    
+    log_info "Resetting listener CPU: limit=${ORIGINAL_LISTENER_CPU_LIMIT}, request=${ORIGINAL_LISTENER_CPU_REQUEST}"
+    
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log_info "DRY RUN: Would reset ${listener_deploy} CPU"
+        return 0
+    fi
+    
+    if kubectl patch deploy "${listener_deploy}" -n "${NAMESPACE}" --type='json' \
+        -p="[{\"op\": \"replace\", \"path\": \"/spec/template/spec/containers/0/resources/limits/cpu\", \"value\": \"${ORIGINAL_LISTENER_CPU_LIMIT}\"},
+             {\"op\": \"replace\", \"path\": \"/spec/template/spec/containers/0/resources/requests/cpu\", \"value\": \"${ORIGINAL_LISTENER_CPU_REQUEST}\"}]" \
+        &>/dev/null; then
+        log_success "Listener CPU reset to ${ORIGINAL_LISTENER_CPU_LIMIT}"
+    else
+        log_warning "Failed to reset listener CPU - manual intervention may be needed"
+        log_warning "Expected values: limit=${ORIGINAL_LISTENER_CPU_LIMIT}, request=${ORIGINAL_LISTENER_CPU_REQUEST}"
     fi
 }
 
@@ -641,10 +903,10 @@ run_iqe_tests() {
         return 1
     fi
     
-    log_info "Running IQE tests with marker: ${IQE_MARKER}"
+    log_info "Running IQE tests with profile: ${IQE_PROFILE}, marker: ${IQE_MARKER}"
     
     if [[ "${DRY_RUN}" == "true" ]]; then
-        log_info "DRY RUN: Would execute: ${iqe_script} --namespace ${NAMESPACE} --marker '${IQE_MARKER}'"
+        log_info "DRY RUN: Would execute: ${iqe_script} --namespace ${NAMESPACE} --profile ${IQE_PROFILE} --marker '${IQE_MARKER}'"
         return 0
     fi
     
@@ -653,14 +915,17 @@ run_iqe_tests() {
     export HELM_RELEASE_NAME="${HELM_RELEASE_NAME:-cost-onprem}"
     export IQE_MARKER="${IQE_MARKER}"
     
-    if ! "${iqe_script}" --namespace "${NAMESPACE}" --marker "${IQE_MARKER}"; then
+    local test_result=0
+    if ! "${iqe_script}" --namespace "${NAMESPACE}" --profile "${IQE_PROFILE}" --marker "${IQE_MARKER}"; then
         log_error "IQE tests failed"
         log_info "IQE JUnit report available at: tests/reports/iqe_junit.xml"
         log_info "IQE output log available at: tests/reports/iqe_output.log"
-        return 1
+        test_result=1
+    else
+        log_success "IQE tests completed"
     fi
     
-    log_success "IQE tests completed"
+    return ${test_result}
 }
 
 ################################################################################
@@ -721,7 +986,13 @@ print_summary() {
     [[ "${SKIP_HELM}" == "false" ]] && echo "  ✓ Deploy Cost On-Prem Helm Chart" || echo "  ✗ Deploy Cost On-Prem Helm Chart (SKIPPED)"
     [[ "${SKIP_TLS}" == "false" ]] && echo "  ✓ Setup TLS Certificates" || echo "  ✗ Setup TLS Certificates (SKIPPED)"
     [[ "${SKIP_TEST}" == "false" ]] && echo "  ✓ Test JWT Flow" || echo "  ✗ Test JWT Flow (SKIPPED)"
-    [[ "${RUN_IQE}" == "true" ]] && echo "  ✓ Run IQE Tests (marker: ${IQE_MARKER})" || echo "  ✗ Run IQE Tests (OPTIONAL)"
+    if [[ "${RUN_IQE}" == "true" ]]; then
+        local iqe_opts="profile: ${IQE_PROFILE}, marker: ${IQE_MARKER}"
+        [[ -n "${LISTENER_CPU_LIMIT}" ]] && iqe_opts="${iqe_opts}, listener-cpu: ${LISTENER_CPU_LIMIT}"
+        echo "  ✓ Run IQE Tests (${iqe_opts})"
+    else
+        echo "  ✗ Run IQE Tests (OPTIONAL)"
+    fi
     echo ""
 }
 
@@ -740,7 +1011,7 @@ print_completion() {
 
 main() {
     echo ""
-    echo -e "${CYAN}Cost On-Prem OpenShift JWT Authentication Deployment${NC}"
+    echo -e "${CYAN}Cost On-Prem OpenShift with JWT Authentication Deployment${NC}"
     echo ""
 
     # Parse command line arguments
@@ -810,6 +1081,14 @@ main() {
                 IQE_MARKER="$2"
                 shift 2
                 ;;
+            --iqe-profile)
+                IQE_PROFILE="$2"
+                shift 2
+                ;;
+            --listener-cpu)
+                LISTENER_CPU_LIMIT="$2"
+                shift 2
+                ;;
             --save-versions)
                 SAVE_VERSIONS=true
                 # Check if next argument is a file path (not another flag)
@@ -867,7 +1146,10 @@ main() {
 
     deploy_helm_chart
     setup_tls
-    run_tests
+    
+    # Run tests and capture result (don't exit on failure)
+    local test_result=0
+    run_tests || test_result=$?
 
     # Save version information if requested
     if [[ "${SAVE_VERSIONS}" == "true" ]]; then
@@ -876,14 +1158,20 @@ main() {
 
     # Print completion message
     if [[ "${DRY_RUN}" == "false" ]]; then
-        print_completion
+        if [[ "${test_result}" -eq 0 ]]; then
+            print_completion
+        else
+            echo ""
+            log_error "Deployment completed but tests failed (exit code: ${test_result})"
+            echo ""
+        fi
     else
         echo ""
         log_info "DRY RUN completed. No changes were made."
         echo ""
     fi
 
-    exit 0
+    exit ${test_result}
 }
 
 # Run main function

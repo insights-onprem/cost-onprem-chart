@@ -29,7 +29,52 @@ KEYCLOAK_NS="${KEYCLOAK_NS:-keycloak}"
 # =============================================================================
 # Tests are grouped by skip reason. Each group can be toggled independently.
 # Set SKIP_*=false to include those tests in the run.
-# See docs/development/skipped-tests.md for full documentation.
+# See docs/development/skipped-iqe-tests.md for full documentation.
+#
+# Profiles (use --profile flag):
+#   smoke     - Source + cost model tests (~43 tests, ~17 min) - PR checks
+#   extended  - All except infra tests (~2100 tests, ~33 min) - Daily CI
+#   stable    - All validated tests (~2350 tests, ~40 min) - Weekly CI
+#   full      - All cost_ocp_on_prem tests (~3324 tests, ~60 min) - Release
+
+# Profile selection
+TEST_PROFILE="${TEST_PROFILE:-}"
+
+# Apply profile settings
+apply_profile() {
+    case "${TEST_PROFILE}" in
+        smoke)
+            SMOKE_FILTER="(test_api_ocp_source and not test_api_ocp_source_crud) or test_api_cost_model_ocp"
+            SKIP_INFRA_TESTS=true
+            SKIP_SLOW_TESTS=true
+            SKIP_DELTA_TESTS=true
+            SKIP_FLAKY_TESTS=true
+            ;;
+        extended)
+            # Daily CI - all tests except blocked groups and infrastructure
+            SKIP_INFRA_TESTS=true
+            SKIP_SLOW_TESTS=false
+            SKIP_DELTA_TESTS=false
+            SKIP_FLAKY_TESTS=false
+            ;;
+        stable)
+            SKIP_INFRA_TESTS=false
+            SKIP_SLOW_TESTS=false
+            SKIP_DELTA_TESTS=false
+            SKIP_FLAKY_TESTS=false
+            ;;
+        full)
+            SKIP_FILTER_BUILD=true
+            ;;
+        *)
+            # Default: same as stable
+            SKIP_INFRA_TESTS=false
+            SKIP_SLOW_TESTS=false
+            SKIP_DELTA_TESTS=false
+            SKIP_FLAKY_TESTS=false
+            ;;
+    esac
+}
 
 # --- GPU/MIG Tests (COST-7179) ---
 SKIP_GPU_TESTS="${SKIP_GPU_TESTS:-true}"
@@ -41,7 +86,7 @@ FILTER_ROS="test_api_ocp_ros"
 
 # --- Date Range Tests (Insufficient Historical Data) ---
 SKIP_DATE_RANGE_TESTS="${SKIP_DATE_RANGE_TESTS:-true}"
-FILTER_DATE_RANGE="last-90-days or random_date_range or random_daily_time_filter"
+FILTER_DATE_RANGE="(last and 90 and days) or random_date_range or random_daily_time_filter"
 
 # --- Order By Tests (Backend Timeout) ---
 SKIP_ORDER_BY_TESTS="${SKIP_ORDER_BY_TESTS:-true}"
@@ -49,26 +94,39 @@ FILTER_ORDER_BY="test_api_ocp_all_limit_order_by_cost or test_api_ocp_tagging_li
 
 # --- Tag Validation Tests (Missing Tag Data) ---
 SKIP_TAG_TESTS="${SKIP_TAG_TESTS:-true}"
-FILTER_TAG="volume-tag-exact_match"
+FILTER_TAG="(volume and tag and exact_match)"
 
 # --- Cost Distribution Tests (Backend Timeout) ---
 SKIP_COST_DISTRIBUTION_TESTS="${SKIP_COST_DISTRIBUTION_TESTS:-true}"
 FILTER_COST_DISTRIBUTION="test_api_cost_model_ocp_cost_distribution"
 
-# --- Infrastructure/Config Tests (On-prem Incompatible) ---
-SKIP_INFRA_TESTS="${SKIP_INFRA_TESTS:-true}"
-FILTER_INFRA="test_api_cost_model_rates_update_to_tag_based or test_api_ocp_all_validate_items_date_range_monthly or test_api_ocp_ingest_source_static or test_api_ocp_ingest_source_eur or test_api_ocp_for_aws or test_api_ocp_cost_filtered_top_projects or test_api_ocp_all_bucketing or test_api_ocp_coros_distribution_negative_filtering"
+# --- Source CRUD Update Test (Backend Bug) ---
+SKIP_SOURCE_CRUD_TESTS="${SKIP_SOURCE_CRUD_TESTS:-true}"
+FILTER_SOURCE_CRUD="test_api_ocp_source_crud"
+
+# --- Tag-Based Rates Update Test (COST-7179 related) ---
+SKIP_TAG_RATES_TESTS="${SKIP_TAG_RATES_TESTS:-true}"
+FILTER_TAG_RATES="test_api_cost_model_rates_update_to_tag_based"
+
+# --- Unstable Tests (Timing/Data-Dependent Failures) ---
+# Jira: FLPATH-2689
+SKIP_UNSTABLE_TESTS="${SKIP_UNSTABLE_TESTS:-true}"
+FILTER_UNSTABLE="test_api_ocp_network_endpoint_date_range_end_negative or test_api_ocp_volume_endpoint_date_range_end_negative or test_api_ocp_tagging_endpoint_date_range_end_negative or test_api_ocp_virtual_machines_report_content or test_api_ocp_volume_deltas_monthly or test_api_ocp_currency_report_param or test_api_ocp_currency_compute or test_api_ocp_currency_memory or test_api_ocp_currency_volume or test_api_ocp_forecast_values or test_api_ocp_forecast_data_other_params or test_api_ocp_forecast_prediction_days"
+
+# --- Infrastructure/Config Tests ---
+SKIP_INFRA_TESTS="${SKIP_INFRA_TESTS:-false}"
+FILTER_INFRA="test_api_ocp_all_validate_items_date_range_monthly or test_api_ocp_ingest_source_static or test_api_ocp_ingest_source_eur or test_api_ocp_for_aws or test_api_ocp_cost_filtered_top_projects or test_api_ocp_all_bucketing or test_api_ocp_coros_distribution_negative_filtering"
 
 # --- Long Running Tests (Performance) ---
-SKIP_SLOW_TESTS="${SKIP_SLOW_TESTS:-true}"
+SKIP_SLOW_TESTS="${SKIP_SLOW_TESTS:-false}"
 FILTER_SLOW="test_api_ocp_source_raw_node_cluster_capacity or test_api_source_cluster_info_sources or test_api_ocp_source_all_bucketing_platform_update or test_api_ocp_all_project_classification or test_api_ocp_daily_flow_ingest"
 
-# --- Delta/Calculation Tests (Data Timing Issues) ---
-SKIP_DELTA_TESTS="${SKIP_DELTA_TESTS:-true}"
+# --- Delta/Calculation Tests ---
+SKIP_DELTA_TESTS="${SKIP_DELTA_TESTS:-false}"
 FILTER_DELTA="deltas_monthly or test_api_ocp_coros_distribution_deltas"
 
 # --- Flaky/Data-Dependent Tests ---
-SKIP_FLAKY_TESTS="${SKIP_FLAKY_TESTS:-true}"
+SKIP_FLAKY_TESTS="${SKIP_FLAKY_TESTS:-false}"
 FILTER_FLAKY="test_api_ocp_forecast_data_other_params or test_api_ocp_forecast_prediction_days or test_api_ocp_forecast_values or test_api_ocp_resource_types_nodes_search or test_api_ocp_resource_types_clusters_search or test_api_ocp_resource_types_projects_search or test_api_ocp_currency_report_param or test_api_ocp_currency_compute or test_api_ocp_currency_memory or test_api_ocp_currency_volume or test_api_ocp_tags_filtered_total_match_group_by_total"
 
 # Build the combined filter from enabled skip groups
@@ -93,11 +151,26 @@ build_test_filter() {
     if [[ "${SKIP_COST_DISTRIBUTION_TESTS}" == "true" ]]; then
         filters+=("(${FILTER_COST_DISTRIBUTION})")
     fi
+    if [[ "${SKIP_SOURCE_CRUD_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_SOURCE_CRUD})")
+    fi
+    if [[ "${SKIP_TAG_RATES_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_TAG_RATES})")
+    fi
+    if [[ "${SKIP_UNSTABLE_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_UNSTABLE})")
+    fi
     if [[ "${SKIP_INFRA_TESTS}" == "true" ]]; then
         filters+=("(${FILTER_INFRA})")
     fi
     if [[ "${SKIP_SLOW_TESTS}" == "true" ]]; then
         filters+=("(${FILTER_SLOW})")
+    fi
+    if [[ "${SKIP_DELTA_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_DELTA})")
+    fi
+    if [[ "${SKIP_FLAKY_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_FLAKY})")
     fi
     
     if [[ ${#filters[@]} -eq 0 ]]; then
@@ -156,6 +229,7 @@ Options:
     --namespace NAME     Target namespace (default: cost-onprem)
     --marker EXPR        Pytest marker expression (default: cost_ocp_on_prem)
     --filter EXPR        Pytest -k filter expression to select/deselect tests
+    --profile PROFILE    Test profile (smoke, extended, stable, full)
     --nise-version VER   Override koku-nise version (e.g., 5.2.0 for pre-MIG)
     --skip-portforward   Don't start masu port-forward (if already running)
     --masu-port PORT     Local port for masu port-forward (default: 8002)
@@ -163,6 +237,13 @@ Options:
     --verbose            Enable verbose output
     --dry-run            Show what would be done without executing
     --help               Show this help message
+
+Test Profiles (use --profile):
+    smoke      Source + cost model tests (~43 tests, ~17 min) - PR checks
+    extended   All except infra tests (~2100 tests, ~33 min) - Daily CI
+    stable     All validated tests (~2350 tests, ~40 min) - Weekly CI
+    full       All cost_ocp_on_prem tests (~3324 tests, ~60 min) - Release
+    (default)  Same as stable
 
 Environment Variables:
     IQE_CORE_PATH        Path to iqe-core repo (default: ../iqe-core)
@@ -175,17 +256,17 @@ Examples:
     # First time setup
     ./scripts/run-iqe-tests-local.sh --setup
 
-    # Run all on-prem tests (uses default filter to skip known problematic tests)
-    ./scripts/run-iqe-tests-local.sh
+    # Quick smoke tests for PR validation (~17 min)
+    ./scripts/run-iqe-tests-local.sh --profile smoke
+
+    # Extended tests for daily CI
+    ./scripts/run-iqe-tests-local.sh --profile extended
 
     # Run with custom filter
-    ./scripts/run-iqe-tests-local.sh --filter "not ai_workloads"
+    ./scripts/run-iqe-tests-local.sh --filter "test_api_ocp_source"
 
     # Use older NISE version without MIG support
     ./scripts/run-iqe-tests-local.sh --setup --nise-version 5.2.0
-
-    # Skip port-forward if already running
-    ./scripts/run-iqe-tests-local.sh --skip-portforward
 
     # Dry run to see configuration
     ./scripts/run-iqe-tests-local.sh --dry-run
@@ -226,6 +307,7 @@ while [[ $# -gt 0 ]]; do
         --namespace) NAMESPACE="$2"; shift 2 ;;
         --marker) IQE_MARKER="$2"; shift 2 ;;
         --filter) EXPLICIT_FILTER="$2"; shift 2 ;;
+        --profile) TEST_PROFILE="$2"; shift 2 ;;
         --nise-version) NISE_VERSION="$2"; shift 2 ;;
         --skip-portforward) SKIP_PORTFORWARD=true; shift ;;
         --masu-port) MASU_LOCAL_PORT="$2"; shift 2 ;;
@@ -239,9 +321,23 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Build filter after argument parsing (skip groups may have changed)
-if [[ -n "${EXPLICIT_FILTER}" ]]; then
+# Apply profile settings if specified
+if [[ -n "${TEST_PROFILE}" ]]; then
+    apply_profile
+fi
+
+# Build filter after argument parsing
+if [[ "${SKIP_FILTER_BUILD:-false}" == "true" ]]; then
+    IQE_FILTER=""
+elif [[ -n "${EXPLICIT_FILTER}" ]]; then
     IQE_FILTER="${EXPLICIT_FILTER}"
+elif [[ -n "${SMOKE_FILTER:-}" ]]; then
+    SKIP_FILTER=$(build_test_filter)
+    if [[ -n "${SKIP_FILTER}" ]]; then
+        IQE_FILTER="(${SMOKE_FILTER}) and ${SKIP_FILTER}"
+    else
+        IQE_FILTER="${SMOKE_FILTER}"
+    fi
 else
     IQE_FILTER=$(build_test_filter)
 fi
@@ -469,6 +565,9 @@ extract_cluster_config() {
     export DYNACONF_SERVICE_OBJECTS__MASU__CONFIG__HOSTNAME="$DYNACONF_ONPREM_MASU_HOSTNAME"
     export DYNACONF_SERVICE_OBJECTS__MASU__CONFIG__PORT="$DYNACONF_ONPREM_MASU_PORT"
     export DYNACONF_SERVICE_OBJECTS__MASU__CONFIG__SCHEME="http"
+    export DYNACONF_SERVICE_OBJECTS__COST_MANAGEMENT_SOURCES__CONFIG__HOSTNAME="$DYNACONF_ONPREM_KOKU_HOSTNAME"
+    export DYNACONF_SERVICE_OBJECTS__COST_MANAGEMENT_SOURCES__CONFIG__SCHEME="https"
+    export DYNACONF_SERVICE_OBJECTS__COST_MANAGEMENT_SOURCES__CONFIG__PORT=""
     
     # User configuration
     # IMPORTANT: Use lowercase for nested keys (auth, identity) because IQE code

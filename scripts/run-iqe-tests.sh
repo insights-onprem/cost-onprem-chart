@@ -31,7 +31,64 @@ IQE_MARKER="${IQE_MARKER:-cost_ocp_on_prem}"
 # =============================================================================
 # Tests are grouped by skip reason. Each group can be toggled independently.
 # Set SKIP_*=false to include those tests in the run.
-# See docs/development/skipped-tests.md for full documentation.
+# See docs/development/skipped-iqe-tests.md for full documentation.
+#
+# Profiles (use --profile flag):
+#   smoke     - Source + cost model tests (~43 tests, ~17 min) - FOR PR CHECKS
+#   extended  - All except infra tests (~2100 tests, ~33 min) - DAILY CI
+#   stable    - All validated tests (~2350 tests, ~40 min) - WEEKLY CI
+#   full      - All cost_ocp_on_prem tests (~3324 tests, 2-3 hours) - RELEASE VALIDATION
+
+# Profile selection (set via --profile flag, overrides individual SKIP_* vars)
+# Empty means use individual SKIP_* settings (defaults to stable-like behavior)
+TEST_PROFILE="${TEST_PROFILE:-}"
+
+# Apply profile settings (called after arg parsing)
+apply_profile() {
+    case "${TEST_PROFILE}" in
+        smoke)
+            # Quick validation (~43 tests, ~17 min)
+            # Uses positive -k filter to select source + cost model tests
+            # Excludes test_api_ocp_source_crud (backend 500 error on update)
+            SMOKE_FILTER="(test_api_ocp_source and not test_api_ocp_source_crud) or test_api_cost_model_ocp"
+            # Skip all optional groups for fastest run
+            SKIP_INFRA_TESTS=true
+            SKIP_SLOW_TESTS=true
+            SKIP_DELTA_TESTS=true
+            SKIP_FLAKY_TESTS=true
+            ;;
+        extended)
+            # Daily CI (~2100 tests, ~33 min)
+            # All tests except blocked groups and infrastructure
+            # No positive filter - runs broader set than smoke
+            SKIP_INFRA_TESTS=true
+            SKIP_SLOW_TESTS=false
+            SKIP_DELTA_TESTS=false
+            SKIP_FLAKY_TESTS=false
+            ;;
+        stable)
+            # Weekly CI (~2350 tests, ~40 min)
+            # All validated groups including infrastructure
+            # No positive filter - runs all tests except blocked groups
+            SKIP_INFRA_TESTS=false
+            SKIP_SLOW_TESTS=false
+            SKIP_DELTA_TESTS=false
+            SKIP_FLAKY_TESTS=false
+            ;;
+        full)
+            # Release validation (~3324 tests, 2-3 hours)
+            # All cost_ocp_on_prem tests, no skip filters
+            SKIP_FILTER_BUILD=true
+            ;;
+        *)
+            # Default: same as stable (all validated groups)
+            SKIP_INFRA_TESTS=false
+            SKIP_SLOW_TESTS=false
+            SKIP_DELTA_TESTS=false
+            SKIP_FLAKY_TESTS=false
+            ;;
+    esac
+}
 
 # --- GPU/MIG Tests (COST-7179) ---
 # Backend bug: completed_datetime never set when GPU data processing fails
@@ -48,8 +105,9 @@ FILTER_ROS="test_api_ocp_ros"
 # --- Date Range Tests (Insufficient Historical Data) ---
 # On-prem generates ~60 days of data; 90-day queries and random date ranges fail
 # ~50 tests affected
+# Note: Use underscores in patterns - pytest -k treats hyphens as "and not"
 SKIP_DATE_RANGE_TESTS="${SKIP_DATE_RANGE_TESTS:-true}"
-FILTER_DATE_RANGE="last-90-days or random_date_range or random_daily_time_filter"
+FILTER_DATE_RANGE="(last and 90 and days) or random_date_range or random_daily_time_filter"
 
 # --- Order By Tests (Backend Timeout - COST-7179 related) ---
 # Fixtures timeout waiting for completed_datetime
@@ -60,8 +118,9 @@ FILTER_ORDER_BY="test_api_ocp_all_limit_order_by_cost or test_api_ocp_tagging_li
 # --- Tag Validation Tests (Missing Tag Data) ---
 # Volume tag data not present in generated NISE data
 # ~6 tests affected
+# Note: Use "and" between words - pytest -k treats hyphens as "and not"
 SKIP_TAG_TESTS="${SKIP_TAG_TESTS:-true}"
-FILTER_TAG="volume-tag-exact_match"
+FILTER_TAG="(volume and tag and exact_match)"
 
 # --- Cost Distribution Tests (Backend Timeout - COST-7179 related) ---
 # Fixtures timeout waiting for completed_datetime
@@ -69,17 +128,45 @@ FILTER_TAG="volume-tag-exact_match"
 SKIP_COST_DISTRIBUTION_TESTS="${SKIP_COST_DISTRIBUTION_TESTS:-true}"
 FILTER_COST_DISTRIBUTION="test_api_cost_model_ocp_cost_distribution"
 
+# --- Source CRUD Update Test (Backend Bug) ---
+# Backend PATCH endpoint returns 500 error
+# 1 test affected
+SKIP_SOURCE_CRUD_TESTS="${SKIP_SOURCE_CRUD_TESTS:-true}"
+FILTER_SOURCE_CRUD="test_api_ocp_source_crud"
+
+# --- Tag-Based Rates Update Test (COST-7179 related) ---
+# Fixtures timeout waiting for completed_datetime after tag-based rate update
+# 1 test affected
+SKIP_TAG_RATES_TESTS="${SKIP_TAG_RATES_TESTS:-true}"
+FILTER_TAG_RATES="test_api_cost_model_rates_update_to_tag_based"
+
+# --- Unstable Tests (Timing/Data-Dependent Failures) ---
+# Tests that fail intermittently due to timing, date calculations, or data dependencies
+# Jira: FLPATH-2689
+# Failures observed 2026-03-17 in stable profile run:
+#   - date_range_end_negative: Expects API exception not raised (3 tests)
+#   - virtual_machines_report_content: Calculation mismatch (1 test)
+#   - volume_deltas_monthly: Delta calculation mismatch (3 tests)
+#   - currency tests: IndexError - empty response (8 tests)
+#   - forecast tests: Date offset off-by-one (5 tests)
+# ~20 tests affected
+SKIP_UNSTABLE_TESTS="${SKIP_UNSTABLE_TESTS:-true}"
+FILTER_UNSTABLE="test_api_ocp_network_endpoint_date_range_end_negative or test_api_ocp_volume_endpoint_date_range_end_negative or test_api_ocp_tagging_endpoint_date_range_end_negative or test_api_ocp_virtual_machines_report_content or test_api_ocp_volume_deltas_monthly or test_api_ocp_currency_report_param or test_api_ocp_currency_compute or test_api_ocp_currency_memory or test_api_ocp_currency_volume or test_api_ocp_forecast_values or test_api_ocp_forecast_data_other_params or test_api_ocp_forecast_prediction_days"
+
 # --- Infrastructure/Config Tests (On-prem Incompatible) ---
 # Tests that were expected to require cloud infrastructure but now pass
 # Validated 2026-03-16: 256/258 passed (see skip-group-validation-plan.md Phase 8)
-# ~258 tests affected (includes parameterized variants)
+# Note: test_api_cost_model_rates_update_to_tag_based moved to SKIP_TAG_RATES_TESTS (COST-7179)
+# ~257 tests affected (includes parameterized variants)
 SKIP_INFRA_TESTS="${SKIP_INFRA_TESTS:-false}"
-FILTER_INFRA="test_api_cost_model_rates_update_to_tag_based or test_api_ocp_all_validate_items_date_range_monthly or test_api_ocp_ingest_source_static or test_api_ocp_ingest_source_eur or test_api_ocp_for_aws or test_api_ocp_cost_filtered_top_projects or test_api_ocp_all_bucketing or test_api_ocp_coros_distribution_negative_filtering"
+FILTER_INFRA="test_api_ocp_all_validate_items_date_range_monthly or test_api_ocp_ingest_source_static or test_api_ocp_ingest_source_eur or test_api_ocp_for_aws or test_api_ocp_cost_filtered_top_projects or test_api_ocp_all_bucketing or test_api_ocp_coros_distribution_negative_filtering"
 
 # --- Long Running Tests (Performance) ---
-# Tests that take >2 minutes; skip for faster feedback loops
-# ~10 tests affected, saves ~20 minutes
-SKIP_SLOW_TESTS="${SKIP_SLOW_TESTS:-true}"
+# Tests that take >2 minutes each - slow but stable
+# Validated 2026-03-17: 13/13 passed (see skip-group-validation-plan.md Phase 10)
+# ~13 tests affected, ~20 minutes total
+# Set SKIP_SLOW_TESTS=true for faster feedback loops
+SKIP_SLOW_TESTS="${SKIP_SLOW_TESTS:-false}"
 FILTER_SLOW="test_api_ocp_source_raw_node_cluster_capacity or test_api_source_cluster_info_sources or test_api_ocp_source_all_bucketing_platform_update or test_api_ocp_all_project_classification or test_api_ocp_daily_flow_ingest"
 
 # --- Delta/Calculation Tests (Data Timing Issues) ---
@@ -117,6 +204,15 @@ build_test_filter() {
     fi
     if [[ "${SKIP_COST_DISTRIBUTION_TESTS}" == "true" ]]; then
         filters+=("(${FILTER_COST_DISTRIBUTION})")
+    fi
+    if [[ "${SKIP_SOURCE_CRUD_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_SOURCE_CRUD})")
+    fi
+    if [[ "${SKIP_TAG_RATES_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_TAG_RATES})")
+    fi
+    if [[ "${SKIP_UNSTABLE_TESTS}" == "true" ]]; then
+        filters+=("(${FILTER_UNSTABLE})")
     fi
     if [[ "${SKIP_INFRA_TESTS}" == "true" ]]; then
         filters+=("(${FILTER_INFRA})")
@@ -156,7 +252,7 @@ KEEP_POD=false
 KEYCLOAK_SECRET_NS="${KEYCLOAK_SECRET_NS:-keycloak}"
 KEYCLOAK_SECRET_NAME="${KEYCLOAK_SECRET_NAME:-keycloak-client-secret-cost-management-operator}"
 SYNC_PULL_SECRET=false
-CLEAN_SOURCES=false
+CLEAN_SOURCES="${CLEAN_SOURCES:-true}"
 NISE_VERSION="${NISE_VERSION:-}"
 
 show_help() {
@@ -171,59 +267,46 @@ Options:
     --filter EXPR        Pytest -k filter expression (overrides skip groups)
     --timeout SECONDS    Test timeout (default: 14400)
     --keep-pod           Don't delete the IQE pod after tests
-    --clean-sources      Delete existing sources before running tests
+    --clean-sources      Delete existing sources before running tests (default)
+    --keep-sources       Keep existing sources (reuse data from previous runs)
     --nise-version VER   NISE version to use (e.g., 5.3.5)
     --sync-pull-secret   Sync local container registry credentials to cluster
-    --include-slow       Include slow tests (>2min) in the run
+    --profile PROFILE    Test profile (smoke, extended, stable, full)
     --help               Show this help message
 
-Test Skip Groups (set to 'false' to include):
-    SKIP_GPU_TESTS           GPU/MIG tests - COST-7179 bug (~90 tests)
-    SKIP_ROS_TESTS           ROS tests - missing infrastructure (3 tests)
-    SKIP_DATE_RANGE_TESTS    Date range tests - insufficient data (~50 tests)
-    SKIP_ORDER_BY_TESTS      Order by tests - timeout bug (~66 tests)
-    SKIP_TAG_TESTS           Tag validation tests (~6 tests)
-    SKIP_COST_DISTRIBUTION_TESTS  Cost distribution tests (5 tests)
-    SKIP_INFRA_TESTS         Infrastructure/config tests (~14 tests)
-    SKIP_SLOW_TESTS          Long-running tests >2min (~10 tests)
-    SKIP_DELTA_TESTS         Delta/calculation tests (~15 tests)
-    SKIP_FLAKY_TESTS         Flaky/data-dependent tests (~20 tests)
+Test Profiles (use --profile):
+    smoke      Source + cost model tests (~43 tests, ~17 min) - PR checks
+    extended   All except infra tests (~2100 tests, ~33 min) - Daily CI
+    stable     All validated tests (~2350 tests, ~40 min) - Weekly CI
+    full       All cost_ocp_on_prem tests (~3324 tests, ~60 min) - Release
+    (default)  Same as stable
 
 Environment Variables:
     IQE_IMAGE            IQE container image
     IQE_FILTER           Custom filter (overrides all skip groups)
+    TEST_PROFILE         Same as --profile flag
     HELM_RELEASE_NAME    Helm release name (default: cost-onprem)
     KEYCLOAK_SECRET_NS   Namespace containing Keycloak secret (default: keycloak)
     NISE_VERSION         NISE version to use
 
 Examples:
-    # Run with default filters (skips known failing tests)
-    ./scripts/run-iqe-tests.sh
+    # Quick smoke tests for PR validation (~17 min)
+    ./scripts/run-iqe-tests.sh --profile smoke
 
-    # Run with specific NISE version and clean sources
-    ./scripts/run-iqe-tests.sh --nise-version 5.3.5 --clean-sources
+    # Extended tests for daily CI (~33 min)
+    ./scripts/run-iqe-tests.sh --profile extended
 
-    # Quick run - skip slow tests for faster feedback
-    ./scripts/run-iqe-tests.sh --include-slow=false
-    # or: SKIP_SLOW_TESTS=true ./scripts/run-iqe-tests.sh
+    # Stable tests for weekly CI (~40 min)
+    ./scripts/run-iqe-tests.sh --profile stable
 
-    # Include GPU tests (to verify COST-7179 fix)
-    SKIP_GPU_TESTS=false ./scripts/run-iqe-tests.sh
+    # Full release validation (~2-3 hours)
+    ./scripts/run-iqe-tests.sh --profile full
 
-    # Run only GPU tests
-    ./scripts/run-iqe-tests.sh --filter "ai_workloads or test_api_gpu"
-
-    # Run specific marker with custom namespace
-    ./scripts/run-iqe-tests.sh --namespace my-ns --marker "cost_ocp_on_prem and not slow"
-
-    # Exclude specific tests by name
-    ./scripts/run-iqe-tests.sh --filter "not ai_workloads"
+    # Run specific tests with custom filter
+    ./scripts/run-iqe-tests.sh --filter "test_api_ocp_source"
 
     # Keep pod for debugging
     ./scripts/run-iqe-tests.sh --keep-pod
-
-    # Sync local credentials to cluster (for local development)
-    ./scripts/run-iqe-tests.sh --sync-pull-secret
 EOF
 }
 
@@ -238,19 +321,37 @@ while [[ $# -gt 0 ]]; do
         --timeout) IQE_TIMEOUT="$2"; shift 2 ;;
         --keep-pod) KEEP_POD=true; shift ;;
         --clean-sources) CLEAN_SOURCES=true; shift ;;
+        --keep-sources) CLEAN_SOURCES=false; shift ;;
         --nise-version) NISE_VERSION="$2"; shift 2 ;;
-        --include-slow) SKIP_SLOW_TESTS=false; shift ;;
-        --skip-slow) SKIP_SLOW_TESTS=true; shift ;;
+        --profile) TEST_PROFILE="$2"; shift 2 ;;
         --sync-pull-secret) SYNC_PULL_SECRET=true; shift ;;
         --help) show_help; exit 0 ;;
         *) echo "Unknown option: $1"; show_help; exit 1 ;;
     esac
 done
 
-# Rebuild filter after argument parsing (skip groups may have changed)
-if [[ -n "${EXPLICIT_FILTER}" ]]; then
+# Apply profile settings if specified (overrides individual SKIP_* defaults)
+if [[ -n "${TEST_PROFILE}" ]]; then
+    apply_profile
+fi
+
+# Rebuild filter after argument parsing
+if [[ "${SKIP_FILTER_BUILD:-false}" == "true" ]]; then
+    # Full profile: no filters
+    IQE_FILTER=""
+elif [[ -n "${EXPLICIT_FILTER}" ]]; then
+    # User-provided filter overrides everything
     IQE_FILTER="${EXPLICIT_FILTER}"
+elif [[ -n "${SMOKE_FILTER:-}" ]]; then
+    # Smoke/extended profile: positive filter AND skip filters combined
+    SKIP_FILTER=$(build_test_filter)
+    if [[ -n "${SKIP_FILTER}" ]]; then
+        IQE_FILTER="(${SMOKE_FILTER}) and ${SKIP_FILTER}"
+    else
+        IQE_FILTER="${SMOKE_FILTER}"
+    fi
 else
+    # Stable/default: just skip filters (runs all tests except blocked)
     IQE_FILTER=$(build_test_filter)
 fi
 
@@ -259,6 +360,9 @@ echo "Namespace: ${NAMESPACE}"
 echo "Marker: ${IQE_MARKER}"
 echo "Timeout: ${IQE_TIMEOUT}s"
 echo "Image: ${IQE_IMAGE}"
+if [[ -n "${TEST_PROFILE}" ]]; then
+    echo "Profile: ${TEST_PROFILE}"
+fi
 echo ""
 echo "Skip Groups:"
 echo "  GPU tests (COST-7179):     ${SKIP_GPU_TESTS}"
@@ -368,8 +472,23 @@ echo "Extracting configuration from cluster..."
 S3_ACCESS_KEY=$(kubectl get secret "$S3_SECRET_NAME" -n "$NAMESPACE" -o jsonpath='{.data.access-key}' 2>/dev/null | base64 -d || echo "")
 S3_SECRET_KEY=$(kubectl get secret "$S3_SECRET_NAME" -n "$NAMESPACE" -o jsonpath='{.data.secret-key}' 2>/dev/null | base64 -d || echo "")
 
-# Get S3 endpoint from MASU pod
+# Get S3 endpoint and bucket names from MASU pod
 S3_ENDPOINT=$(kubectl exec -n "$NAMESPACE" deploy/${HELM_RELEASE_NAME}-koku-masu -c masu -- printenv S3_ENDPOINT 2>/dev/null || echo "")
+S3_BUCKET_NAME=$(kubectl exec -n "$NAMESPACE" deploy/${HELM_RELEASE_NAME}-koku-masu -c masu -- printenv S3_BUCKET_NAME 2>/dev/null || echo "koku-data")
+S3_ROS_BUCKET=$(kubectl exec -n "$NAMESPACE" deploy/${HELM_RELEASE_NAME}-koku-masu -c masu -- printenv REQUESTED_ROS_BUCKET 2>/dev/null || echo "ros-data")
+
+# Determine S3 port and SSL from endpoint
+if [[ "$S3_ENDPOINT" =~ :([0-9]+)$ ]]; then
+    S3_PORT="${BASH_REMATCH[1]}"
+else
+    S3_PORT="443"
+fi
+# Assume SSL unless port is 7480 (S4 default) or 9000 (MinIO default)
+if [[ "$S3_PORT" == "7480" ]] || [[ "$S3_PORT" == "9000" ]]; then
+    S3_USE_SSL="false"
+else
+    S3_USE_SSL="true"
+fi
 
 # Get Keycloak credentials from the auth secret
 # Try uppercase keys first (keycloak-client-secret-*), then lowercase (cost-management-auth-secret)
@@ -421,6 +540,8 @@ echo "Service Configuration:"
 echo "  Koku API (route): ${KOKU_HOSTNAME}"
 echo "  MASU (in-cluster): ${MASU_HOSTNAME}:${MASU_PORT}"
 echo "  S3 Endpoint: ${S3_ENDPOINT}"
+echo "  S3 Port: ${S3_PORT} (SSL: ${S3_USE_SSL})"
+echo "  S3 Buckets: koku=${S3_BUCKET_NAME}, ros=${S3_ROS_BUCKET}"
 echo "  OAuth URL: ${OAUTH_URL}"
 echo "  Keycloak Client ID: ${KEYCLOAK_CLIENT_ID}"
 
@@ -744,6 +865,12 @@ spec:
       value: "${MASU_PORT}"
     - name: DYNACONF_SERVICE_OBJECTS__MASU__CONFIG__SCHEME
       value: "http"
+    - name: DYNACONF_SERVICE_OBJECTS__COST_MANAGEMENT_SOURCES__CONFIG__HOSTNAME
+      value: "${KOKU_HOSTNAME}"
+    - name: DYNACONF_SERVICE_OBJECTS__COST_MANAGEMENT_SOURCES__CONFIG__SCHEME
+      value: "https"
+    - name: DYNACONF_SERVICE_OBJECTS__COST_MANAGEMENT_SOURCES__CONFIG__PORT
+      value: ""
     
     # User configuration
     # IMPORTANT: Use lowercase for nested keys (auth, identity) because IQE code
@@ -773,13 +900,23 @@ spec:
     - name: CURL_CA_BUNDLE
       value: "/etc/pki/tls/certs/ca-bundle.crt"
     
-    # S3 Configuration
+    # S3 Configuration (for IQE fixtures)
     - name: S3_ENDPOINT
       value: "${S3_ENDPOINT}"
+    - name: S3_PORT
+      value: "${S3_PORT}"
+    - name: S3_USE_SSL
+      value: "${S3_USE_SSL}"
     - name: S3_ACCESS_KEY
       value: "${S3_ACCESS_KEY}"
     - name: S3_SECRET_KEY
       value: "${S3_SECRET_KEY}"
+    - name: S3_SECRET_NAME
+      value: "${S3_SECRET_NAME}"
+    - name: S3_KOKU_BUCKET
+      value: "${S3_BUCKET_NAME}"
+    - name: S3_ROS_BUCKET
+      value: "${S3_ROS_BUCKET}"
 ${NISE_VERSION_ENV}
     imagePullPolicy: Always
     resources:

@@ -64,10 +64,7 @@ Runs tests from local IQE repositories. Requires VPN access.
 Backend is slow. Use a cluster with worker nodes or increase timeout.
 
 ### "Failed to pull image"
-Need Quay.io access. See `docs/development/iqe-testing-setup.md`.
-
-### Connection refused to gitlab
-Not on Red Hat network. Connect to VPN.
+Need Quay.io access and VPN. See `docs/development/iqe-testing-setup.md`.
 
 ## See Also
 

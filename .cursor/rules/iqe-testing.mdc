@@ -10,9 +10,8 @@ These are separate from the pytest tests in this repository.
 
 ### Network Access
 - **Red Hat VPN required** for:
-  - Cloning IQE repositories from `gitlab.cee.redhat.com`
   - Accessing internal PyPI (`nexus.corp.redhat.com`)
-  - Pulling IQE container images
+  - Pulling IQE container images from `quay.io/cloudservices`
 
 ### Quay.io Access (Containerized Tests)
 To pull `quay.io/cloudservices/iqe-tests:cost-management`:
@@ -31,7 +30,20 @@ For local tests, clone these adjacent to cost-onprem-chart:
 
 ### Containerized (on cluster)
 ```bash
-./scripts/run-iqe-tests.sh --timeout 3600
+# Default run (stable profile - validated tests)
+./scripts/run-iqe-tests.sh
+
+# Quick smoke tests (~17 min)
+./scripts/run-iqe-tests.sh --profile smoke
+
+# Extended daily CI (~33 min)
+./scripts/run-iqe-tests.sh --profile extended
+
+# Full run - all tests (~60 min, expect some failures)
+./scripts/run-iqe-tests.sh --profile full
+
+# Keep pod for debugging
+./scripts/run-iqe-tests.sh --keep-pod
 ```
 
 ### Local (from your workstation)
@@ -43,24 +55,69 @@ For local tests, clone these adjacent to cost-onprem-chart:
 ./scripts/run-iqe-tests-local.sh --clean-sources
 ```
 
-## Test Duration Expectations
+## Test Profiles
 
-| Cluster Config | Expected Duration |
-|----------------|-------------------|
-| 3 control plane only | 1-2+ hours (may timeout) |
-| 3 CP + 2 workers | 30-60 minutes |
+Use `--profile` to select a pre-configured test scope:
+
+| Profile | Description | Est. Tests | Est. Duration |
+|---------|-------------|------------|---------------|
+| `smoke` | Source + cost model tests | ~43 | ~17 min |
+| `extended` | All except infra tests | ~2100 | ~33 min |
+| `stable` | All validated tests (default) | ~2350 | ~40 min |
+| `full` | All tests, expect failures | ~3324 | ~60 min |
+
+> Durations measured with `--listener-cpu max` on test cluster (3 workers, 12 CPU / 32GB each)
+
+For granular control, use `SKIP_*` environment variables:
+```bash
+# Include GPU tests (to verify COST-7179 fix)
+SKIP_GPU_TESTS=false ./scripts/run-iqe-tests.sh
+
+# Run specific tests only
+./scripts/run-iqe-tests.sh --filter "test_api_ocp_ros"
+```
+
+## Performance Tips
+
+Use `--listener-cpu max` to dynamically boost the listener CPU for faster data processing:
+```bash
+./scripts/deploy-test-cost-onprem.sh --tests-only --run-iqe --iqe-profile extended --listener-cpu max
+```
 
 Tests are **backend I/O bound**, not compute bound. They wait for:
-- Data ingestion (up to 10 min per source)
+- Data ingestion (up to 10 min per source without CPU boost)
 - Celery worker processing
 - Database queries
 
+## Skip Groups
+
+Tests are organized into skip groups based on validation status:
+
+**Validated (included by default):**
+- `SKIP_FLAKY_TESTS=false` - Forecast, currency, resource types
+- `SKIP_DELTA_TESTS=false` - Month-over-month calculations
+- `SKIP_INFRA_TESTS=false` - Infrastructure tests (stable+ only)
+- `SKIP_SLOW_TESTS=false` - Long-running tests (>2 min each)
+
+**Skipped (known issues):**
+- `SKIP_GPU_TESTS=true` - COST-7179 schema bug (~90 tests)
+- `SKIP_ROS_TESTS=true` - Requires IQE plugin update (3 tests)
+- `SKIP_DATE_RANGE_TESTS=true` - 90-day data limitation (~228 tests)
+- `SKIP_ORDER_BY_TESTS=true` - Blocked by COST-7179 (~66 tests)
+- `SKIP_TAG_TESTS=true` - NISE tag config (~6 tests)
+- `SKIP_COST_DISTRIBUTION_TESTS=true` - Blocked by COST-7179 (5 tests)
+- `SKIP_SOURCE_CRUD_TESTS=true` - Backend bug (1 test)
+- `SKIP_TAG_RATES_TESTS=true` - COST-7179 timeout (1 test)
+- `SKIP_UNSTABLE_TESTS=true` - Timing/data-dependent (~20 tests)
+
 ## Known Issues
 
-Default filters skip problematic tests:
-- `ai_workloads`, `distro` - Not applicable to on-prem
-- `test_api_cost_model_rates_update_to_tag_based` - Backend timeout with lightweight clusters
-- Source update IntegrityError - Potential backend issue (PATCH creates instead of updates)
+See `docs/development/skipped-iqe-tests.md` for full details on blocked tests.
+
+Key blockers:
+- **COST-7179** - Backend `completed_datetime` bug blocks GPU, order-by, cost distribution tests
+- **90-day data** - NISE generates ~60 days, tests querying 90 days fail
+- **Unstable tests** - Timing/date-dependent failures under investigation
 
 ## IMPORTANT: Test Parallelization
 
@@ -86,11 +143,9 @@ Backend is slow. Options:
 3. Skip test: `--filter "not test_name"`
 
 ### "Failed to pull image"
-Missing Quay.io access. Check app-interface user file.
-
-### Connection refused to gitlab
-Not on Red Hat network. Connect to VPN.
+Missing Quay.io access. Check app-interface user file. Connect to VPN.
 
 ## See Also
 - Full setup guide: `docs/development/iqe-testing-setup.md`
 - Cursor prompt: `.cursor/prompts/run-iqe-tests.md`
+- Skip group details: `docs/development/skipped-iqe-tests.md`
