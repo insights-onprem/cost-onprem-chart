@@ -663,13 +663,13 @@ run_tests() {
     
     # Run chart tests
     # Note: cost_validation tests have their own E2E setup with 300s provider timeout
-    # if ! "${pytest_script}" ${pytest_args[@]+"${pytest_args[@]}"}; then
-    #     log_error "Pytest test suite failed"
-    #     log_info "JUnit report available at: tests/reports/junit.xml"
-    #     chart_tests_failed=true
-    # else
-    #     log_success "Pytest test suite completed"
-    # fi
+    if ! "${pytest_script}" ${pytest_args[@]+"${pytest_args[@]}"}; then
+        log_error "Pytest test suite failed"
+        log_info "JUnit report available at: tests/reports/junit.xml"
+        chart_tests_failed=true
+    else
+        log_success "Pytest test suite completed"
+    fi
     
     # Run IQE tests if requested (continue even if chart tests failed)
     if [[ "${RUN_IQE}" == "true" ]]; then
