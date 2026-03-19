@@ -56,7 +56,7 @@ Runs tests from local IQE repositories. Requires VPN access.
 
 - **3 control plane only**: 1-2+ hours (may timeout)
 - **3 CP + 2 workers**: 30-60 minutes
-- **Default timeout**: 30 minutes
+- **Default timeout**: 4 hours (14400s)
 
 ## Troubleshooting
 

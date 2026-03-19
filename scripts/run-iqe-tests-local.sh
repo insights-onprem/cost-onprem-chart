@@ -18,177 +18,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# Source shared filter configuration
+# shellcheck source=lib/iqe-filters.sh
+source "${SCRIPT_DIR}/lib/iqe-filters.sh"
+
 # Defaults
 NAMESPACE="${NAMESPACE:-cost-onprem}"
 HELM_RELEASE_NAME="${HELM_RELEASE_NAME:-cost-onprem}"
 IQE_MARKER="${IQE_MARKER:-cost_ocp_on_prem}"
 KEYCLOAK_NS="${KEYCLOAK_NS:-keycloak}"
-
-# =============================================================================
-# TEST FILTER CONFIGURATION
-# =============================================================================
-# Tests are grouped by skip reason. Each group can be toggled independently.
-# Set SKIP_*=false to include those tests in the run.
-# See docs/development/skipped-iqe-tests.md for full documentation.
-#
-# Profiles (use --profile flag):
-#   smoke     - Source + cost model tests (~43 tests, ~17 min) - PR checks
-#   extended  - All except infra tests (~2100 tests, ~33 min) - Daily CI
-#   stable    - All validated tests (~2350 tests, ~40 min) - Weekly CI
-#   full      - All cost_ocp_on_prem tests (~3324 tests, ~60 min) - Release
-
-# Profile selection
-TEST_PROFILE="${TEST_PROFILE:-}"
-
-# Apply profile settings
-apply_profile() {
-    case "${TEST_PROFILE}" in
-        smoke)
-            SMOKE_FILTER="(test_api_ocp_source and not test_api_ocp_source_crud) or test_api_cost_model_ocp"
-            SKIP_INFRA_TESTS=true
-            SKIP_SLOW_TESTS=true
-            SKIP_DELTA_TESTS=true
-            SKIP_FLAKY_TESTS=true
-            ;;
-        extended)
-            # Daily CI - all tests except blocked groups and infrastructure
-            SKIP_INFRA_TESTS=true
-            SKIP_SLOW_TESTS=false
-            SKIP_DELTA_TESTS=false
-            SKIP_FLAKY_TESTS=false
-            ;;
-        stable)
-            SKIP_INFRA_TESTS=false
-            SKIP_SLOW_TESTS=false
-            SKIP_DELTA_TESTS=false
-            SKIP_FLAKY_TESTS=false
-            ;;
-        full)
-            SKIP_FILTER_BUILD=true
-            ;;
-        *)
-            # Default: same as stable
-            SKIP_INFRA_TESTS=false
-            SKIP_SLOW_TESTS=false
-            SKIP_DELTA_TESTS=false
-            SKIP_FLAKY_TESTS=false
-            ;;
-    esac
-}
-
-# --- GPU/MIG Tests (COST-7179) ---
-SKIP_GPU_TESTS="${SKIP_GPU_TESTS:-true}"
-FILTER_GPU="ai_workloads or distro or test_api_ocp_gpu or test_api_gpu or test_api_cost_model_ocp_gpu or test_api_cost_model_ocp_cost_gpu or test_api_ocp_resource_types_gpu"
-
-# --- ROS Tests (Missing Infrastructure) ---
-SKIP_ROS_TESTS="${SKIP_ROS_TESTS:-true}"
-FILTER_ROS="test_api_ocp_ros"
-
-# --- Date Range Tests (Insufficient Historical Data) ---
-SKIP_DATE_RANGE_TESTS="${SKIP_DATE_RANGE_TESTS:-true}"
-FILTER_DATE_RANGE="(last and 90 and days) or random_date_range or random_daily_time_filter"
-
-# --- Order By Tests (Backend Timeout) ---
-SKIP_ORDER_BY_TESTS="${SKIP_ORDER_BY_TESTS:-true}"
-FILTER_ORDER_BY="test_api_ocp_all_limit_order_by_cost or test_api_ocp_tagging_limit_order_by_cost or test_api_ocp_volume_order_by"
-
-# --- Tag Validation Tests (Missing Tag Data) ---
-SKIP_TAG_TESTS="${SKIP_TAG_TESTS:-true}"
-FILTER_TAG="(volume and tag and exact_match)"
-
-# --- Cost Distribution Tests (Backend Timeout) ---
-SKIP_COST_DISTRIBUTION_TESTS="${SKIP_COST_DISTRIBUTION_TESTS:-true}"
-FILTER_COST_DISTRIBUTION="test_api_cost_model_ocp_cost_distribution"
-
-# --- Source CRUD Update Test (Backend Bug) ---
-SKIP_SOURCE_CRUD_TESTS="${SKIP_SOURCE_CRUD_TESTS:-true}"
-FILTER_SOURCE_CRUD="test_api_ocp_source_crud"
-
-# --- Tag-Based Rates Update Test (COST-7179 related) ---
-SKIP_TAG_RATES_TESTS="${SKIP_TAG_RATES_TESTS:-true}"
-FILTER_TAG_RATES="test_api_cost_model_rates_update_to_tag_based"
-
-# --- Unstable Tests (Timing/Data-Dependent Failures) ---
-# Jira: FLPATH-2689
-SKIP_UNSTABLE_TESTS="${SKIP_UNSTABLE_TESTS:-true}"
-FILTER_UNSTABLE="test_api_ocp_network_endpoint_date_range_end_negative or test_api_ocp_volume_endpoint_date_range_end_negative or test_api_ocp_tagging_endpoint_date_range_end_negative or test_api_ocp_virtual_machines_report_content or test_api_ocp_volume_deltas_monthly or test_api_ocp_currency_report_param or test_api_ocp_currency_compute or test_api_ocp_currency_memory or test_api_ocp_currency_volume or test_api_ocp_forecast_values or test_api_ocp_forecast_data_other_params or test_api_ocp_forecast_prediction_days"
-
-# --- Infrastructure/Config Tests ---
-SKIP_INFRA_TESTS="${SKIP_INFRA_TESTS:-false}"
-FILTER_INFRA="test_api_ocp_all_validate_items_date_range_monthly or test_api_ocp_ingest_source_static or test_api_ocp_ingest_source_eur or test_api_ocp_for_aws or test_api_ocp_cost_filtered_top_projects or test_api_ocp_all_bucketing or test_api_ocp_coros_distribution_negative_filtering"
-
-# --- Long Running Tests (Performance) ---
-SKIP_SLOW_TESTS="${SKIP_SLOW_TESTS:-false}"
-FILTER_SLOW="test_api_ocp_source_raw_node_cluster_capacity or test_api_source_cluster_info_sources or test_api_ocp_source_all_bucketing_platform_update or test_api_ocp_all_project_classification or test_api_ocp_daily_flow_ingest"
-
-# --- Delta/Calculation Tests ---
-SKIP_DELTA_TESTS="${SKIP_DELTA_TESTS:-false}"
-FILTER_DELTA="deltas_monthly or test_api_ocp_coros_distribution_deltas"
-
-# --- Flaky/Data-Dependent Tests ---
-SKIP_FLAKY_TESTS="${SKIP_FLAKY_TESTS:-false}"
-FILTER_FLAKY="test_api_ocp_forecast_data_other_params or test_api_ocp_forecast_prediction_days or test_api_ocp_forecast_values or test_api_ocp_resource_types_nodes_search or test_api_ocp_resource_types_clusters_search or test_api_ocp_resource_types_projects_search or test_api_ocp_currency_report_param or test_api_ocp_currency_compute or test_api_ocp_currency_memory or test_api_ocp_currency_volume or test_api_ocp_tags_filtered_total_match_group_by_total"
-
-# Build the combined filter from enabled skip groups
-build_test_filter() {
-    local filters=()
-    
-    if [[ "${SKIP_GPU_TESTS}" == "true" ]]; then
-        filters+=("(${FILTER_GPU})")
-    fi
-    if [[ "${SKIP_ROS_TESTS}" == "true" ]]; then
-        filters+=("(${FILTER_ROS})")
-    fi
-    if [[ "${SKIP_DATE_RANGE_TESTS}" == "true" ]]; then
-        filters+=("(${FILTER_DATE_RANGE})")
-    fi
-    if [[ "${SKIP_ORDER_BY_TESTS}" == "true" ]]; then
-        filters+=("(${FILTER_ORDER_BY})")
-    fi
-    if [[ "${SKIP_TAG_TESTS}" == "true" ]]; then
-        filters+=("(${FILTER_TAG})")
-    fi
-    if [[ "${SKIP_COST_DISTRIBUTION_TESTS}" == "true" ]]; then
-        filters+=("(${FILTER_COST_DISTRIBUTION})")
-    fi
-    if [[ "${SKIP_SOURCE_CRUD_TESTS}" == "true" ]]; then
-        filters+=("(${FILTER_SOURCE_CRUD})")
-    fi
-    if [[ "${SKIP_TAG_RATES_TESTS}" == "true" ]]; then
-        filters+=("(${FILTER_TAG_RATES})")
-    fi
-    if [[ "${SKIP_UNSTABLE_TESTS}" == "true" ]]; then
-        filters+=("(${FILTER_UNSTABLE})")
-    fi
-    if [[ "${SKIP_INFRA_TESTS}" == "true" ]]; then
-        filters+=("(${FILTER_INFRA})")
-    fi
-    if [[ "${SKIP_SLOW_TESTS}" == "true" ]]; then
-        filters+=("(${FILTER_SLOW})")
-    fi
-    if [[ "${SKIP_DELTA_TESTS}" == "true" ]]; then
-        filters+=("(${FILTER_DELTA})")
-    fi
-    if [[ "${SKIP_FLAKY_TESTS}" == "true" ]]; then
-        filters+=("(${FILTER_FLAKY})")
-    fi
-    
-    if [[ ${#filters[@]} -eq 0 ]]; then
-        echo ""
-        return
-    fi
-    
-    local combined=""
-    for i in "${!filters[@]}"; do
-        if [[ $i -eq 0 ]]; then
-            combined="${filters[$i]}"
-        else
-            combined="${combined} or ${filters[$i]}"
-        fi
-    done
-    
-    echo "not (${combined})"
-}
 KEYCLOAK_SECRET_NAME="${KEYCLOAK_SECRET_NAME:-keycloak-client-secret-cost-management-operator}"
 MASU_LOCAL_PORT="${MASU_LOCAL_PORT:-8002}"
 
@@ -225,7 +63,10 @@ repositories instead of using the container image. This provides:
 Usage: $(basename "$0") [OPTIONS]
 
 Options:
-    --setup              Create/update virtual environment and install dependencies
+    --setup              Create/update virtual environment and install dependencies.
+                         NOTE: When --setup is used, the script exits after setup
+                         completes without running tests. Run again without --setup
+                         to execute tests.
     --namespace NAME     Target namespace (default: cost-onprem)
     --marker EXPR        Pytest marker expression (default: cost_ocp_on_prem)
     --filter EXPR        Pytest -k filter expression to select/deselect tests
@@ -824,35 +665,33 @@ run_tests() {
     export DYNACONF_IQE_VAULT_LOADER_ENABLED="false"
     export DYNACONF_IQE_VAULT_OIDC_AUTH="false"
     
-    # Build test command
+    # Build test command as array to avoid shell injection via eval
     # --force-default-user is required because the cost_onprem config's Jinja templates
     # don't evaluate correctly. We bypass this by setting the user explicitly.
     # Note: user name must be lowercase to match the DYNACONF_users__cost_onprem_user__* keys
-    local test_cmd="iqe tests plugin cost_management"
-    test_cmd+=" --force-default-user cost_onprem_user"
-    test_cmd+=" -m \"$IQE_MARKER\""
+    local test_cmd=(iqe tests plugin cost_management --force-default-user cost_onprem_user -m "$IQE_MARKER")
     
     if [ -n "$IQE_FILTER" ]; then
-        test_cmd+=" -k \"$IQE_FILTER\""
+        test_cmd+=(-k "$IQE_FILTER")
     fi
     
-    test_cmd+=" -vv"
+    test_cmd+=(-vv)
     
     if [ "$DRY_RUN" = true ]; then
         log "[DRY RUN] Would execute:"
         log "  ENV_FOR_DYNACONF=cost_onprem"
         log "  DYNACONF_IQE_VAULT_LOADER_ENABLED=false"
         log "  DYNACONF_IQE_VAULT_OIDC_AUTH=false"
-        log "  $test_cmd"
+        log "  ${test_cmd[*]}"
         return
     fi
     
-    log "Test command: $test_cmd"
+    log "Test command: ${test_cmd[*]}"
     log ""
     log "========== Test Output =========="
     
-    # Execute tests
-    eval "$test_cmd"
+    # Execute tests using array expansion (safe from injection)
+    "${test_cmd[@]}"
     local exit_code=$?
     
     log "========== End Test Output =========="

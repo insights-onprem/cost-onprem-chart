@@ -100,6 +100,11 @@ LISTENER_CPU_LIMIT="${LISTENER_CPU_LIMIT:-}"
 DEPLOY_S4="${DEPLOY_S4:-false}"
 S4_NAMESPACE="${S4_NAMESPACE:-s4-test}"
 
+# CPU boost state tracking (for cleanup on exit)
+CPU_BOOST_APPLIED=false
+ORIGINAL_LISTENER_CPU_LIMIT=""
+ORIGINAL_LISTENER_CPU_REQUEST=""
+
 # OpenShift authentication
 KUBECONFIG="${KUBECONFIG:-${HOME}/.kube/config}"
 OPENSHIFT_USERNAME="${OPENSHIFT_USERNAME:-kubeadmin}"
@@ -131,6 +136,23 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
+
+################################################################################
+# Cleanup trap for CPU boost
+################################################################################
+
+cleanup_on_exit() {
+    local exit_code=$?
+    if [[ "${CPU_BOOST_APPLIED}" == "true" ]] && [[ -n "${ORIGINAL_LISTENER_CPU_LIMIT}" ]]; then
+        echo ""
+        echo -e "${YELLOW}[CLEANUP] Resetting listener CPU to original values...${NC}"
+        reset_listener_cpu 2>/dev/null || true
+    fi
+    exit $exit_code
+}
+
+# Register cleanup trap for any exit (including errors from set -e)
+trap cleanup_on_exit EXIT
 
 ################################################################################
 # Logging functions
@@ -569,7 +591,7 @@ setup_tls() {
 
 run_tests() {
     # Apply listener CPU boost early - benefits both chart tests and IQE tests
-    local cpu_boost_applied=false
+    # Note: CPU_BOOST_APPLIED is a global variable, cleanup is handled by trap
     if [[ -n "${LISTENER_CPU_LIMIT}" ]]; then
         if validate_cpu_limit "${LISTENER_CPU_LIMIT}"; then
             local effective_cpu_limit="${LISTENER_CPU_LIMIT}"
@@ -582,17 +604,18 @@ run_tests() {
             
             log_step "Setting listener CPU limit to ${effective_cpu_limit}"
             if set_listener_cpu "${effective_cpu_limit}"; then
-                cpu_boost_applied=true
+                CPU_BOOST_APPLIED=true
             else
                 log_warning "Continuing with current listener CPU"
             fi
         fi
     fi
     
-    # Helper to reset CPU on exit
+    # Helper to reset CPU (also called by trap on exit)
     cleanup_cpu_boost() {
-        if [[ "${cpu_boost_applied}" == "true" ]]; then
+        if [[ "${CPU_BOOST_APPLIED}" == "true" ]]; then
             reset_listener_cpu
+            CPU_BOOST_APPLIED=false
         fi
     }
     

@@ -4,7 +4,10 @@ __pycache__/
 *$py.class
 
 # Virtual environments
-*[Vv][Ee][Nn][Vv]*/ 
+venv/
+.venv/
+env/
+ENV/
 .venv-*/
 cost-mgmt-venv/
 *-venv/

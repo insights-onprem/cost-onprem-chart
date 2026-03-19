@@ -63,10 +63,10 @@ For local testing, clone these repositories adjacent to `cost-onprem-chart`:
 cd /path/to/workspaces
 
 # IQE Core framework
-git clone https://github.com/RedHatQE/iqe-core.git
+git clone https://gitlab.cee.redhat.com/insights-qe/iqe-core.git
 
 # Cost Management IQE plugin
-git clone https://github.com/RedHatQE/iqe-cost-management-plugin.git
+git clone https://gitlab.cee.redhat.com/insights-qe/iqe-cost-management-plugin.git
 
 # Your directory structure should look like:
 # workspaces/
@@ -108,8 +108,8 @@ You need an OpenShift cluster with:
 # With test filter
 ./scripts/run-iqe-tests.sh --filter "not ai_workloads"
 
-# Increase timeout (default 1800s)
-./scripts/run-iqe-tests.sh --timeout 3600
+# Increase timeout (default 14400s / 4 hours)
+./scripts/run-iqe-tests.sh --timeout 7200
 ```
 
 ## Running Local Tests
@@ -164,7 +164,7 @@ This will:
 |-------------|----------|-------|
 | 3 control plane only | 1-2+ hours | May timeout on ingestion waits |
 | 3 CP + 2 workers | 30-60 minutes | Recommended configuration |
-| Containerized (default timeout) | 30 minutes | May need `--timeout 3600` |
+| Containerized (default timeout) | 4 hours | Adjust with `--timeout SECONDS` |
 
 ### Why Tests Take Long
 
@@ -227,12 +227,12 @@ The default `IQE_FILTER` in `run-iqe-tests-local.sh` skips:
 | `NAMESPACE` | `cost-onprem` | Target Kubernetes namespace |
 | `IQE_MARKER` | `cost_ocp_on_prem` | Pytest marker expression |
 | `IQE_FILTER` | (see script) | Pytest -k filter |
-| `IQE_TIMEOUT` | `1800` | Test timeout in seconds (containerized) |
+| `IQE_TIMEOUT` | `14400` | Test timeout in seconds (containerized, 4 hours) |
 | `IQE_CORE_PATH` | `../iqe-core` | Path to iqe-core repo |
 | `IQE_PLUGIN_PATH` | `../iqe-cost-management-plugin` | Path to plugin repo |
 | `VENV_PATH` | `.venv-iqe` | Virtual environment path |
 
 ## See Also
 
-- [IQE Core Documentation](https://github.com/RedHatQE/iqe-core)
-- [Cost Management Plugin](https://github.com/RedHatQE/iqe-cost-management-plugin)
+- [IQE Core](https://gitlab.cee.redhat.com/insights-qe/iqe-core) (Red Hat internal)
+- [Cost Management Plugin](https://gitlab.cee.redhat.com/insights-qe/iqe-cost-management-plugin) (Red Hat internal)
