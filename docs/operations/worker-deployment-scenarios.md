@@ -96,12 +96,12 @@ This document details the worker requirements and resource consumption for diffe
 
 ```
 OCP-Only:
-  Cost Management Operator → Kafka → ocp workers → summary → cost-model → Database
+  Cost Management Metrics Operator → Kafka → ocp workers → summary → cost-model → Database
 
 OCP-on-Cloud:
-  Cost Management Operator → Kafka → ocp workers ─┐
-                                                  ├→ refresh (correlate) → summary → cost-model → Database
-  Cloud Provider S3/Blob → download workers ──────┘
+  Cost Management Metrics Operator → Kafka → ocp workers ─┐
+                                                          ├→ refresh (correlate) → summary → cost-model → Database
+  Cloud Provider S3/Blob → download workers ──────────────┘
 ```
 
 ---

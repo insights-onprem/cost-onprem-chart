@@ -1,5 +1,5 @@
 #!/bin/bash
-# Script to force the Cost Management Operator to package and upload metrics immediately
+# Script to force the Cost Management Metrics Operator to package and upload metrics immediately
 # This bypasses the 6-hour packaging/upload cycle timers
 #
 # Usage: ./force-operator-package-upload.sh [--enable-monitoring] [--help]
@@ -17,7 +17,7 @@ ENABLE_MONITORING=false
 show_help() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
-    echo "Force the Cost Management Operator to package and upload metrics immediately."
+    echo "Force the Cost Management Metrics Operator to package and upload metrics immediately."
     echo "This bypasses the 6-hour packaging/upload cycle timers."
     echo ""
     echo "Options:"
@@ -25,7 +25,7 @@ show_help() {
     echo "  --help                 Show this help message"
     echo ""
     echo "Prerequisites:"
-    echo "  - OpenShift cluster with Cost Management Operator installed"
+    echo "  - OpenShift cluster with Cost Management Metrics Operator installed"
     echo "  - User Workload Monitoring enabled (use --enable-monitoring to enable)"
     echo "  - costmanagementmetricsconfig resource configured"
     echo ""

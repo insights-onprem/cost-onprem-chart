@@ -1,11 +1,11 @@
-# Cost Management Operator Upload Verification Checklist
+# Cost Management Metrics Operator Upload Verification Checklist
 
 This checklist ensures 100% confidence that the Cost Management Metrics Operator is successfully uploading payloads and that they are being processed through the entire ROS pipeline.
 
 ## Prerequisites
 
 - Namespace with `cost_management_optimizations=true` label exists
-- Cost Management Operator is deployed and configured
+- Cost Management Metrics Operator is deployed and configured
 - ROS components (ingress, processor, Kruize) are running
 
 ---
@@ -292,5 +292,5 @@ echo -e "\n=== Verification Complete ==="
 
 - `scripts/query-kruize.sh` - Query Kruize database for experiments and recommendations
 - `scripts/install-helm-chart.sh` - Deploy/upgrade ROS Helm chart
-- `scripts/setup-cost-mgmt-tls.sh` - Configure Cost Management Operator
+- `scripts/setup-cost-mgmt-tls.sh` - Configure Cost Management Metrics Operator
 

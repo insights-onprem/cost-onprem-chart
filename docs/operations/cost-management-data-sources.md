@@ -7,7 +7,7 @@ Guide for configuring and managing data sources (providers) in Cost Management O
 - [Overview](#overview)
 - [Provider Types](#provider-types)
 - [OpenShift Provider Configuration](#openshift-provider-configuration)
-- [Cost Management Operator Setup](#cost-management-operator-setup)
+- [Cost Management Metrics Operator Setup](#cost-management-metrics-operator-setup)
 - [Data Upload Process](#data-upload-process)
 - [Verification and Troubleshooting](#verification-and-troubleshooting)
 
@@ -23,7 +23,7 @@ Cost Management On-Premise collects cost and usage data from **providers**. A pr
 |---------|-------------|
 | **Provider** | An OpenShift cluster configured to send usage metrics |
 | **Source** | Configuration entry in Sources API that defines the provider |
-| **Cost Management Operator** | Kubernetes operator that collects metrics and uploads to Cost Management |
+| **Cost Management Metrics Operator** | Kubernetes operator that collects metrics and uploads to Cost Management |
 | **Cluster ID** | Unique identifier for the OpenShift cluster |
 | **Authentication** | JWT token-based authentication for secure uploads |
 
@@ -126,7 +126,7 @@ curl -X POST "https://${API_ROUTE}/api/cost-management/v1/sources" \
 
 ---
 
-## Cost Management Operator Setup
+## Cost Management Metrics Operator Setup
 
 The Cost Management Metrics Operator collects metrics from Prometheus and uploads them to the Cost Management ingress endpoint.
 
@@ -157,13 +157,13 @@ EOF
 
 ### Configure Operator
 
-**Create CostManagement Custom Resource:**
+**Create CostManagementMetricsConfig Custom Resource:**
 
 ```yaml
-apiVersion: cost-mgmt.openshift.io/v1alpha1
-kind: CostManagement
+apiVersion: costmanagement-metrics-cfg.openshift.io/v1beta1
+kind: CostManagementMetricsConfig
 metadata:
-  name: cost-mgmt-example
+  name: costmanagementmetricscfg
   namespace: costmanagement-metrics-operator
 spec:
   # Upload settings
@@ -211,7 +211,7 @@ oc create secret generic cost-mgmt-operator-token \
   --from-literal=token="${JWT_TOKEN}"
 ```
 
-**See:** [Cost Management Operator TLS Config Setup](../operations/cost-management-operator-tls-config-setup.md) for complete TLS/JWT configuration.
+**See:** [Cost Management Metrics Operator TLS Config Setup](../operations/cost-management-operator-tls-config-setup.md) for complete TLS/JWT configuration.
 
 ### Label Namespace for Monitoring
 
@@ -376,7 +376,7 @@ oc logs -n cost-onprem deployment/cost-onprem-koku-masu --tail=100 | grep ERROR
 - "Invalid JWT token" in logs
 
 **Resolution:**
-See [Cost Management Operator TLS Config Setup](../operations/cost-management-operator-tls-config-setup.md)
+See [Cost Management Metrics Operator TLS Config Setup](../operations/cost-management-operator-tls-config-setup.md)
 
 #### 3. Missing Namespace Data
 
@@ -459,7 +459,7 @@ Use the comprehensive verification checklist:
 ## Related Documentation
 
 - [Sources API Production Flow](../architecture/sources-api-production-flow.md) - Provider creation workflow
-- [Cost Management Operator TLS Config](../operations/cost-management-operator-tls-config-setup.md) - Authentication setup
+- [Cost Management Metrics Operator TLS Config](../operations/cost-management-operator-tls-config-setup.md) - Authentication setup
 - [Force Operator Upload](../operations/force-operator-upload.md) - Manual upload triggering
 - [Upload Verification Checklist](../operations/cost-management-operator-upload-verification-checklist.md) - Verify uploads
 - [Cost Management Concepts](../operations/cost-management-concepts.md) - Cost calculation and models

@@ -171,7 +171,7 @@ Cost models can be customized via the API to reflect actual infrastructure costs
 ### Data Flow
 
 ```
-Cost Management Operator → Ingress API (JWT) → S3 Storage → 
+Cost Management Metrics Operator → Ingress API (JWT) → S3 Storage → 
 Kafka Topic → MASU Processor → PostgreSQL → Reports
 ```
 
@@ -179,7 +179,7 @@ Kafka Topic → MASU Processor → PostgreSQL → Reports
 
 | Component | Schedule | Purpose |
 |-----------|----------|---------|
-| **Cost Management Operator** | Every 15 minutes | Collects current usage metrics from Prometheus |
+| **Cost Management Metrics Operator** | Every 15 minutes | Collects current usage metrics from Prometheus |
 | **MASU Processor** | Triggered by Kafka | Processes uploaded data files |
 | **Summary Generation** | Daily at midnight | Generates daily summary reports |
 | **Monthly Rollup** | 1st of month | Generates monthly aggregates |

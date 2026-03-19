@@ -39,6 +39,7 @@ set -euo pipefail
 #   OPENSHIFT_API            OpenShift API URL (auto-detected from kubeconfig)
 #   OPENSHIFT_USERNAME       OpenShift username (default: kubeadmin)
 #   OPENSHIFT_PASSWORD       OpenShift password (auto-detected from files)
+#   OPENSHIFT_VALUES_FILE    Helm values file path relative to repo root (default: openshift-values.yaml)
 #
 # Note: This script will automatically login to OpenShift using credentials from:
 #       1. KUBECONFIG file (for API URL)
@@ -67,6 +68,9 @@ set -euo pipefail
 #
 #   # Dry run to preview actions
 #   ./deploy-test-cost-onprem.sh --dry-run --verbose
+#
+#   # Deploy with external database (BYOI)
+#   OPENSHIFT_VALUES_FILE=docs/examples/byoi-values.yaml ./deploy-test-cost-onprem.sh
 #
 ################################################################################
 
@@ -103,7 +107,7 @@ SCRIPT_DEPLOY_KAFKA="deploy-kafka.sh"
 SCRIPT_DEPLOY_S4="deploy-s4-test.sh"  # S4 (Super Simple Storage Service)
 SCRIPT_INSTALL_HELM="install-helm-chart.sh"
 SCRIPT_SETUP_TLS="setup-cost-mgmt-tls.sh"
-OPENSHIFT_VALUES_FILE="openshift-values.yaml"
+OPENSHIFT_VALUES_FILE="${OPENSHIFT_VALUES_FILE:-openshift-values.yaml}"
 
 # Step flags (default: run all steps)
 SKIP_RHBK=false  # Red Hat Build of Keycloak
@@ -353,8 +357,8 @@ create_namespace() {
         log_success "Created namespace: ${NAMESPACE}"
     fi
 
-    # Label namespace for Cost Management Operator
-    log_info "Labeling namespace for Cost Management Operator..."
+    # Label namespace for Cost Management Metrics Operator
+    log_info "Labeling namespace for Cost Management Metrics Operator..."
     oc label namespace "${NAMESPACE}" cost_management_optimizations=true --overwrite
     log_success "Namespace labeled successfully"
 }
@@ -482,7 +486,7 @@ deploy_helm_chart() {
 
     log_step "Deploying Cost On-Prem Helm chart (4/6)"
 
-    # Use the official openshift-values.yaml from repo root
+    # Use the values file (default: openshift-values.yaml, configurable via OPENSHIFT_VALUES_FILE)
     local values_file="${PROJECT_ROOT}/${OPENSHIFT_VALUES_FILE}"
     download_openshift_values "${values_file}"
     export VALUES_FILE="${values_file}"
@@ -668,6 +672,7 @@ print_summary() {
     log_info "Deployment Configuration:"
     echo "  Namespace:           ${NAMESPACE}"
     [[ "${DEPLOY_S4}" == "true" ]] && echo "  S4 Namespace:        ${S4_NAMESPACE}"
+    [[ "${OPENSHIFT_VALUES_FILE}" != "openshift-values.yaml" ]] && echo "  Values File:         ${OPENSHIFT_VALUES_FILE}"
     echo "  Use Local Chart:     ${USE_LOCAL_CHART}"
     echo ""
     log_info "Steps to execute:"

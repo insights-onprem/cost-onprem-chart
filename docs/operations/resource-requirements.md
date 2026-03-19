@@ -363,7 +363,7 @@ The chart default is OCP-only: cloud-only Celery workers (download, refresh, hcs
 ### Why Cloud Workers Are Disabled
 
 #### Download Workers
-- **Reason**: OCP uses a **PUSH model** via Kafka - the Cost Management Operator sends data with presigned S3 URLs
+- **Reason**: OCP uses a **PUSH model** via Kafka - the Cost Management Metrics Operator sends data with presigned S3 URLs
 - **Cloud providers** use a **PULL model** - Koku polls and downloads reports from S3/Blob
 
 #### HCS Worker
