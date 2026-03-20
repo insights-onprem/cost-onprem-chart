@@ -17,11 +17,11 @@ Before running IQE tests:
 Runs tests in a container on the cluster. Requires Quay.io access.
 
 ```bash
-# Basic run (30 min timeout)
+# Basic run (default 4h timeout). There may be stricter timeouts outside of our control based how your cluster was provisioned (e.g. Prow clusters: 2hrs)
 ./scripts/run-iqe-tests.sh
 
-# Extended timeout for slow clusters
-./scripts/run-iqe-tests.sh --timeout 3600
+# Shorter timeout for quick tests
+./scripts/run-iqe-tests.sh --timeout 1800
 
 # Custom filter
 ./scripts/run-iqe-tests.sh --filter "test_api_ocp_source_crud"

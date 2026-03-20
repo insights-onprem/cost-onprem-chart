@@ -7,7 +7,7 @@
 # Options:
 #   --namespace NAME     Target namespace (default: cost-onprem)
 #   --marker EXPR        Pytest marker expression (default: cost_ocp_on_prem)
-#   --timeout SECONDS    Test timeout (default: 1800)
+#   --timeout SECONDS    Test timeout (default: 14400 / 4 hours)
 #   --keep-pod           Don't delete the IQE pod after tests
 #   --help               Show this help message
 #
