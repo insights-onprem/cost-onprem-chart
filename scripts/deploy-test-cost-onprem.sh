@@ -180,7 +180,6 @@ log_step() {
 
 log_verbose() {
     if [[ "${VERBOSE}" == "true" ]]; then
-        # Must use stderr: this script uses stdout for data (e.g. calculate_max_listener_cpu | command substitution).
         echo -e "${CYAN}[VERBOSE]${NC} $*" >&2
     fi
 }
