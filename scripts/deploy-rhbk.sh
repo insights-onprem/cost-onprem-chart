@@ -93,6 +93,15 @@ echo_warning() { log_warning "$1"; }
 echo_error() { log_error "$1"; }
 echo_header() { log_header "$1"; }
 
+# Read admin username and password from the keycloak-initial-admin secret.
+# RHBK operator may set the username to "temp-admin" instead of "admin".
+# Sets ADMIN_USERNAME and ADMIN_PASSWORD for the caller.
+get_admin_credentials() {
+    ADMIN_USERNAME=$(oc get secret keycloak-initial-admin -n "$NAMESPACE" -o jsonpath='{.data.username}' 2>/dev/null | base64 -d)
+    ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+    ADMIN_PASSWORD=$(oc get secret keycloak-initial-admin -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
+}
+
 # Function to check prerequisites
 check_prerequisites() {
     echo_header "CHECKING PREREQUISITES"
@@ -896,14 +905,13 @@ EOF
     local post_import_elapsed=0
     local clients_available=false
 
-    # Get admin password for testing
-    local ADMIN_PASSWORD=$(oc get secret keycloak-initial-admin -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
+    get_admin_credentials
 
     while [ $post_import_elapsed -lt $post_import_timeout ]; do
         # Try to list clients in the realm - this will fail if realm is not fully processed
         local token_response=$(curl -sk -X POST "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
             -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "username=admin" \
+            -d "username=$ADMIN_USERNAME" \
             -d "password=$ADMIN_PASSWORD" \
             -d "grant_type=password" \
             -d "client_id=admin-cli" 2>/dev/null)
@@ -1040,8 +1048,7 @@ configure_admin_console() {
 
     echo_info "Keycloak URL: https://$KEYCLOAK_URL"
 
-    # Get admin credentials
-    local ADMIN_PASSWORD=$(oc get secret keycloak-initial-admin -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
+    get_admin_credentials
     if [ -z "$ADMIN_PASSWORD" ]; then
         echo_error "Could not retrieve admin password"
         return 1
@@ -1056,7 +1063,7 @@ configure_admin_console() {
     while [ $attempt -lt $max_attempts ]; do
         token_response=$(curl -sk -X POST "https://$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
             -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "username=admin" \
+            -d "username=$ADMIN_USERNAME" \
             -d "password=$ADMIN_PASSWORD" \
             -d "grant_type=password" \
             -d "client_id=admin-cli" 2>/dev/null)
@@ -1136,9 +1143,7 @@ extract_client_secret() {
     KEYCLOAK_URL="https://$KEYCLOAK_URL"
     echo_info "Keycloak URL: $KEYCLOAK_URL"
 
-    # Get the admin password from the secret created by RHBK operator
-    # The operator auto-generates a password and stores it in keycloak-initial-admin
-    local ADMIN_PASSWORD=$(oc get secret keycloak-initial-admin -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
+    get_admin_credentials
 
     if [ -z "$ADMIN_PASSWORD" ]; then
         echo_error "Could not retrieve auto-generated admin password from keycloak-initial-admin secret"
@@ -1146,13 +1151,13 @@ extract_client_secret() {
         return 1
     fi
 
-    echo_info "Using auto-generated admin password from RHBK operator"
+    echo_info "Using auto-generated admin credentials from RHBK operator (user: $ADMIN_USERNAME)"
 
     # Get admin token
     echo_info "Obtaining admin access token..."
     local TOKEN_RESPONSE=$(curl -sk -X POST "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
         -H "Content-Type: application/x-www-form-urlencoded" \
-        -d "username=admin" \
+        -d "username=$ADMIN_USERNAME" \
         -d "password=$ADMIN_PASSWORD" \
         -d "grant_type=password" \
         -d "client_id=admin-cli" 2>/dev/null)
@@ -1243,8 +1248,7 @@ create_test_user() {
     KEYCLOAK_URL="https://$KEYCLOAK_URL"
     echo_info "Keycloak URL: $KEYCLOAK_URL"
 
-    # Get the admin password from the secret created by RHBK operator
-    local ADMIN_PASSWORD=$(oc get secret keycloak-initial-admin -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
+    get_admin_credentials
 
     if [ -z "$ADMIN_PASSWORD" ]; then
         echo_error "Could not retrieve auto-generated admin password from keycloak-initial-admin secret"
@@ -1255,7 +1259,7 @@ create_test_user() {
     echo_info "Obtaining admin access token..."
     local TOKEN_RESPONSE=$(curl -sk -X POST "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
         -H "Content-Type: application/x-www-form-urlencoded" \
-        -d "username=admin" \
+        -d "username=$ADMIN_USERNAME" \
         -d "password=$ADMIN_PASSWORD" \
         -d "grant_type=password" \
         -d "client_id=admin-cli" 2>/dev/null)
@@ -1398,7 +1402,8 @@ display_summary() {
     echo_info "  Namespace: $NAMESPACE"
     echo_info "  Keycloak URL: https://$hostname"
     echo_info "  Realm: $REALM_NAME"
-    echo_info "  Admin User: admin (auto-generated by operator)"
+    get_admin_credentials
+    echo_info "  Admin User: $ADMIN_USERNAME (from keycloak-initial-admin secret)"
     echo ""
 
     echo_info "Cost Management Metrics Operator Client Information:"

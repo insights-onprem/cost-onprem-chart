@@ -311,14 +311,16 @@ OAUTH_URL="https://${KEYCLOAK_HOST}/realms/kubernetes/protocol/openid-connect"
 # Get org_id from Keycloak test user (or use default)
 ORG_ID="org1234567"  # Default value
 if [ -n "$KEYCLOAK_HOST" ]; then
-    # Get admin password
+    # Get admin credentials
+    KEYCLOAK_ADMIN_USER=$(kubectl get secret keycloak-initial-admin -n keycloak -o jsonpath='{.data.username}' 2>/dev/null | base64 -d || echo "")
+    KEYCLOAK_ADMIN_USER="${KEYCLOAK_ADMIN_USER:-admin}"
     KEYCLOAK_ADMIN_PASS=$(kubectl get secret keycloak-initial-admin -n keycloak -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || echo "")
     if [ -n "$KEYCLOAK_ADMIN_PASS" ]; then
         # Get admin token
         ADMIN_TOKEN=$(curl -sk -X POST "https://${KEYCLOAK_HOST}/realms/master/protocol/openid-connect/token" \
             -d "client_id=admin-cli" \
             -d "grant_type=password" \
-            -d "username=admin" \
+            -d "username=${KEYCLOAK_ADMIN_USER}" \
             -d "password=${KEYCLOAK_ADMIN_PASS}" 2>/dev/null | jq -r '.access_token // empty')
         
         if [ -n "$ADMIN_TOKEN" ]; then
