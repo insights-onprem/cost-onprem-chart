@@ -1,8 +1,12 @@
 approvers:
   - jordigilh    # Jordi Gil <jgil@redhat.com>
   - masayag      # Moti Asayag <masayag@redhat.com>
+  - testetson22  # Thomas Stetson
+  - ELK4N4       # Elkana
+
 
 reviewers:
   - jordigilh    # Jordi Gil <jgil@redhat.com>
   - masayag      # Moti Asayag <masayag@redhat.com>
-
+  - testetson22  # Thomas Stetson
+  - ELK4N4       # Elkana
