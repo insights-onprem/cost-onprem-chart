@@ -181,11 +181,16 @@ when the script exits.
 
 ### Expected Test Duration
 
-| Environment | Duration | Notes |
-|-------------|----------|-------|
-| 3 control plane only | 1-2+ hours | May timeout on ingestion waits |
-| 3 CP + 2 workers | 30-60 minutes | Recommended configuration |
-| Containerized (default timeout) | 4 hours | Adjust with `--timeout SECONDS` |
+| Profile | Optimized | Unoptimized | Notes |
+|---------|-----------|-------------|-------|
+| `smoke` | ~17 min | ~30 min | PR validation |
+| `extended` | ~25 min | ~50 min | Daily CI |
+| `stable` | ~33 min | ~60 min | Weekly CI |
+| `full` | ~42 min | **8+ hours** | Release validation (fail-fast required) |
+
+> Optimized = listener CPU max + fail-fast + masu route (local).
+> Unoptimized = default listener CPU, no fail-fast, port-forward (local).
+> Full profile without fail-fast stalls indefinitely on GPU/MIG fixtures.
 
 ### Why Tests Take Long
 
@@ -193,15 +198,87 @@ IQE cost-management tests are I/O and backend-bound, not compute-bound:
 - Each source creation waits up to 10 minutes for data ingestion
 - Tests run sequentially (no `@pytest.mark.parallel` markers)
 - Multiple sources are created across the test suite
+- The listener processes uploaded files serially via a single Kafka consumer
 
 ### Resource Bottlenecks
 
 The backend processing speed depends on:
-- **Celery workers** - Process ingestion tasks
+- **Koku Listener** - Processes uploaded files (single-threaded, CPU-bound)
+- **Celery workers** - Run summarization tasks after ingestion
 - **PostgreSQL** - Handle cost data queries
 - **Kafka** - Message queue throughput
 
 A cluster with dedicated worker nodes allows these workloads to run without competing with the control plane.
+
+## Test Performance Optimizations
+
+Three optimizations significantly reduce test run times. All are safe for
+regular use.
+
+### 1. Listener CPU Boost (`--listener-cpu`)
+
+The koku listener is the primary bottleneck — it processes uploaded CSV files
+serially through a single Kafka consumer. By default it runs with a low CPU
+limit, which throttles parquet conversion and SQL insertion.
+
+**Containerized (CI):**
+```bash
+./scripts/deploy-test-cost-onprem.sh --tests-only --run-iqe \
+    --listener-cpu max --iqe-profile extended
+```
+
+**What `max` does:** Temporarily patches the listener deployment to use the
+node's full allocatable CPU (typically 4 cores), then restores the original
+limit after the test run. Any specific value like `1000m` or `2000m` also works.
+
+**Impact:** ~40-50% faster source processing. A source that takes 5 min at
+default CPU processes in ~2-3 min at max.
+
+> The local script (`run-iqe-tests-local.sh`) does not manage listener CPU.
+> To boost it for local runs, patch manually before running:
+> ```bash
+> kubectl patch deploy cost-onprem-koku-listener -n cost-onprem \
+>     -p '{"spec":{"template":{"spec":{"containers":[{"name":"koku-listener","resources":{"limits":{"cpu":"4"},"requests":{"cpu":"2"}}}]}}}}'
+> ```
+
+### 2. Fail-Fast Processing Detection (IQE Plugin)
+
+When backend processing fails permanently (e.g., GPU/MIG schema mismatch),
+the IQE plugin now detects it within ~10 seconds instead of polling for 30+
+minutes until timeout.
+
+**Branch:** `flpath-3369-updates-for-cost-onprem` in `iqe-cost-management-plugin`
+
+**What it does:** Two checks added to the ingestion polling loop:
+- `check_processing_failed()` — catches `status.processing.state == "failed"`
+- `check_manifest_stalled()` — catches partial file processing with null
+  `manifest_complete_date`
+
+Both call `pytest.fail()` with an actionable error message including the
+source UUID, period, file count, and assembly ID.
+
+**Impact:** Full profile drops from 8+ hours to ~42 min. Each stalled source
+saves 30+ min of wasted polling.
+
+**Safety:** Confirmed that backend `kafka_msg_handler.py` commits the Kafka
+offset on `ReportProcessorError`, meaning failed messages are never retried.
+Fail-fast does not interfere with any self-healing mechanism.
+
+### 3. Masu Route (Local Tests Only)
+
+The local test runner needs to reach the masu service from outside the cluster.
+Previously this used `kubectl port-forward`, which would silently die mid-run
+causing connection refused errors.
+
+**What it does:** The script now creates an edge-terminated OpenShift Route for
+the masu service and configures the IQE plugin to use HTTPS with the route
+hostname. The route is cleaned up on exit.
+
+**Impact:** Zero connection errors (previously 1,734 in a full profile run).
+No background processes, no PID tracking, no self-healing loop.
+
+See the "DNS / `/etc/hosts` Requirement" section above if the route hostname
+doesn't resolve.
 
 ## Troubleshooting
 
