@@ -28,8 +28,6 @@ HELM_RELEASE_NAME="${HELM_RELEASE_NAME:-cost-onprem}"
 IQE_MARKER="${IQE_MARKER:-cost_ocp_on_prem}"
 KEYCLOAK_NS="${KEYCLOAK_NS:-keycloak}"
 KEYCLOAK_SECRET_NAME="${KEYCLOAK_SECRET_NAME:-keycloak-client-secret-cost-management-operator}"
-MASU_LOCAL_PORT="${MASU_LOCAL_PORT:-8002}"
-
 # Local repository paths (can be overridden via env vars)
 IQE_CORE_PATH="${IQE_CORE_PATH:-${PROJECT_ROOT}/../iqe-core}"
 IQE_PLUGIN_PATH="${IQE_PLUGIN_PATH:-${PROJECT_ROOT}/../iqe-cost-management-plugin}"
@@ -40,15 +38,15 @@ PYPI_INDEX_URL="${PYPI_INDEX_URL:-https://nexus.corp.redhat.com/repository/cqt-p
 
 # Feature flags
 DO_SETUP=false
-SKIP_PORTFORWARD=false
 CLEAN_SOURCES=false
 NISE_VERSION=""
 VERBOSE=false
 DRY_RUN=false
 PYTHON_BIN="${PYTHON_BIN:-python3.12}"
 
-# Port-forward PID tracking
-PORTFORWARD_PID=""
+# Masu route tracking
+MASU_ROUTE_CREATED=false
+MASU_ROUTE_NAME="${HELM_RELEASE_NAME:-cost-onprem}-masu-iqe"
 
 show_help() {
     cat << EOF
@@ -72,8 +70,6 @@ Options:
     --filter EXPR        Pytest -k filter expression to select/deselect tests
     --profile PROFILE    Test profile (smoke, extended, stable, full)
     --nise-version VER   Override koku-nise version (e.g., 5.2.0 for pre-MIG)
-    --skip-portforward   Don't start masu port-forward (if already running)
-    --masu-port PORT     Local port for masu port-forward (default: 8002)
     --clean-sources      Delete all sources before running tests
     --verbose            Enable verbose output
     --dry-run            Show what would be done without executing
@@ -130,11 +126,10 @@ error() {
 
 cleanup() {
     log "Cleaning up..."
-    if [ -n "$PORTFORWARD_PID" ] && kill -0 "$PORTFORWARD_PID" 2>/dev/null; then
-        log "Stopping masu port-forward (PID: $PORTFORWARD_PID)"
-        kill "$PORTFORWARD_PID" 2>/dev/null || true
+    if [ "$MASU_ROUTE_CREATED" = true ]; then
+        log "Removing masu route ($MASU_ROUTE_NAME)"
+        kubectl delete route "$MASU_ROUTE_NAME" -n "$NAMESPACE" 2>/dev/null || true
     fi
-    # Clean up temp files
     rm -f /tmp/iqe-ca-bundle-*.crt 2>/dev/null || true
 }
 
@@ -150,8 +145,6 @@ while [[ $# -gt 0 ]]; do
         --filter) EXPLICIT_FILTER="$2"; shift 2 ;;
         --profile) TEST_PROFILE="$2"; shift 2 ;;
         --nise-version) NISE_VERSION="$2"; shift 2 ;;
-        --skip-portforward) SKIP_PORTFORWARD=true; shift ;;
-        --masu-port) MASU_LOCAL_PORT="$2"; shift 2 ;;
         --clean-sources) CLEAN_SOURCES=true; shift ;;
         --include-slow) SKIP_SLOW_TESTS=false; shift ;;
         --skip-slow) SKIP_SLOW_TESTS=true; shift ;;
@@ -385,9 +378,10 @@ extract_cluster_config() {
     fi
     export DYNACONF_ONPREM_OAUTH_URL="https://${keycloak_host}/realms/kubernetes/protocol/openid-connect"
     
-    # Masu configuration (via port-forward)
-    export DYNACONF_ONPREM_MASU_HOSTNAME="localhost"
-    export DYNACONF_ONPREM_MASU_PORT="$MASU_LOCAL_PORT"
+    # Masu configuration — set after ensure_masu_route populates MASU_ROUTE_HOST
+    export DYNACONF_ONPREM_MASU_HOSTNAME="${MASU_ROUTE_HOST:-pending}"
+    export DYNACONF_ONPREM_MASU_PORT=""
+    export DYNACONF_ONPREM_MASU_SCHEME="https"
     
     # Direct target values - bypass Jinja templates that don't evaluate correctly
     # These match what the containerized tests use in run-iqe-tests.sh
@@ -404,8 +398,8 @@ extract_cluster_config() {
     export DYNACONF_SERVICE_OBJECTS__KOKU__CONFIG__SCHEME="https"
     export DYNACONF_SERVICE_OBJECTS__KOKU__CONFIG__PORT=""
     export DYNACONF_SERVICE_OBJECTS__MASU__CONFIG__HOSTNAME="$DYNACONF_ONPREM_MASU_HOSTNAME"
-    export DYNACONF_SERVICE_OBJECTS__MASU__CONFIG__PORT="$DYNACONF_ONPREM_MASU_PORT"
-    export DYNACONF_SERVICE_OBJECTS__MASU__CONFIG__SCHEME="http"
+    export DYNACONF_SERVICE_OBJECTS__MASU__CONFIG__PORT=""
+    export DYNACONF_SERVICE_OBJECTS__MASU__CONFIG__SCHEME="https"
     export DYNACONF_SERVICE_OBJECTS__COST_MANAGEMENT_SOURCES__CONFIG__HOSTNAME="$DYNACONF_ONPREM_KOKU_HOSTNAME"
     export DYNACONF_SERVICE_OBJECTS__COST_MANAGEMENT_SOURCES__CONFIG__SCHEME="https"
     export DYNACONF_SERVICE_OBJECTS__COST_MANAGEMENT_SOURCES__CONFIG__PORT=""
@@ -429,13 +423,12 @@ extract_cluster_config() {
         log "  DYNACONF_ONPREM_KOKU_HOSTNAME: $DYNACONF_ONPREM_KOKU_HOSTNAME"
         log "  DYNACONF_ONPREM_OAUTH_URL: $DYNACONF_ONPREM_OAUTH_URL"
         log "  DYNACONF_ONPREM_MASU_HOSTNAME: $DYNACONF_ONPREM_MASU_HOSTNAME"
-        log "  DYNACONF_ONPREM_MASU_PORT: $DYNACONF_ONPREM_MASU_PORT"
     fi
     
     log "✓ Cluster configuration extracted"
     log "  - Koku API: https://$DYNACONF_ONPREM_KOKU_HOSTNAME"
     log "  - Keycloak: $DYNACONF_ONPREM_OAUTH_URL"
-    log "  - Masu: http://localhost:$MASU_LOCAL_PORT (via port-forward)"
+    log "  - Masu: https://$DYNACONF_ONPREM_MASU_HOSTNAME (via route)"
 }
 
 # =============================================================================
@@ -496,60 +489,90 @@ setup_ssl_certs() {
 }
 
 # =============================================================================
-# Port Forward Management
+# Masu Route Management
 # =============================================================================
 
-start_masu_portforward() {
-    if [ "$SKIP_PORTFORWARD" = true ]; then
-        log "Skipping masu port-forward (--skip-portforward)"
-        return
-    fi
-    
-    log "Starting masu port-forward..."
-    
-    if [ "$DRY_RUN" = true ]; then
-        log "[DRY RUN] Would start: kubectl port-forward svc/${HELM_RELEASE_NAME}-masu $MASU_LOCAL_PORT:8000 -n $NAMESPACE"
-        return
-    fi
-    
-    # Check if port is already in use
-    if lsof -i ":$MASU_LOCAL_PORT" &>/dev/null; then
-        log "Port $MASU_LOCAL_PORT already in use, assuming masu port-forward is running"
-        return
-    fi
-    
-    # Find the masu service (try multiple naming patterns)
-    local masu_svc=""
+resolve_masu_service() {
     for svc_name in "${HELM_RELEASE_NAME}-koku-masu" "${HELM_RELEASE_NAME}-masu" "koku-masu" "masu"; do
         if kubectl get svc "$svc_name" -n "$NAMESPACE" &>/dev/null; then
-            masu_svc="$svc_name"
-            break
+            echo "$svc_name"
+            return
         fi
     done
-    
-    if [ -z "$masu_svc" ]; then
-        error "Masu service not found in namespace $NAMESPACE"
-        error "Available services:"
-        kubectl get svc -n "$NAMESPACE" | grep -i masu || echo "  (none matching 'masu')"
+    error "Masu service not found in namespace $NAMESPACE"
+    error "Available services:"
+    kubectl get svc -n "$NAMESPACE" | grep -i masu || echo "  (none matching 'masu')"
+    exit 1
+}
+
+ensure_masu_route() {
+    log "Ensuring masu route exists..."
+
+    if [ "$DRY_RUN" = true ]; then
+        log "[DRY RUN] Would create edge-terminated route for masu service"
+        return
+    fi
+
+    local masu_svc
+    masu_svc=$(resolve_masu_service)
+
+    local masu_host
+    masu_host=$(kubectl get route "$MASU_ROUTE_NAME" -n "$NAMESPACE" \
+        -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+
+    if [ -n "$masu_host" ]; then
+        log "Masu route already exists: https://$masu_host"
+    else
+        kubectl apply -n "$NAMESPACE" -f - <<EOF
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: $MASU_ROUTE_NAME
+spec:
+  to:
+    kind: Service
+    name: $masu_svc
+  port:
+    targetPort: 8000
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+EOF
+        MASU_ROUTE_CREATED=true
+
+        masu_host=$(kubectl get route "$MASU_ROUTE_NAME" -n "$NAMESPACE" \
+            -o jsonpath='{.spec.host}')
+        log "Created masu route: https://$masu_host"
+    fi
+
+    export MASU_ROUTE_HOST="$masu_host"
+
+    # Verify the route hostname is resolvable. QE lab clusters often lack
+    # wildcard DNS, relying on /etc/hosts entries for known routes.
+    if ! grep -qw "$masu_host" /etc/hosts 2>/dev/null && ! host "$masu_host" &>/dev/null; then
+        local router_ip
+        router_ip=$(grep "apps.${masu_host#*apps.}" /etc/hosts 2>/dev/null \
+            | head -1 | awk '{print $1}')
+        if [ -n "$router_ip" ]; then
+            error "Cannot resolve $masu_host"
+            error "Add to /etc/hosts:  $router_ip $masu_host"
+        else
+            error "Cannot resolve $masu_host and no existing /etc/hosts entries found for this cluster"
+        fi
         exit 1
     fi
-    
-    # Start port-forward in background
-    kubectl port-forward "svc/$masu_svc" "$MASU_LOCAL_PORT:8000" -n "$NAMESPACE" &>/dev/null &
-    PORTFORWARD_PID=$!
-    
-    # Wait for port-forward to be ready
-    local retries=10
+
+    local retries=15
     while [ $retries -gt 0 ]; do
-        if lsof -i ":$MASU_LOCAL_PORT" &>/dev/null; then
-            log "✓ Masu port-forward ready (localhost:$MASU_LOCAL_PORT -> $masu_svc:8000)"
+        if curl -skf -o /dev/null "https://$masu_host/api/cost-management/v1/status/" 2>/dev/null; then
+            log "✓ Masu route ready (https://$masu_host -> $masu_svc:8000)"
             return
         fi
         sleep 1
         ((retries--))
     done
-    
-    error "Failed to start masu port-forward"
+
+    error "Masu route created but not responding after 15s"
     exit 1
 }
 
@@ -746,6 +769,9 @@ main() {
         exit 0
     fi
     
+    # Ensure masu is routable (must run before extract_cluster_config)
+    ensure_masu_route
+    
     # Extract cluster configuration
     extract_cluster_config
     
@@ -754,9 +780,6 @@ main() {
     
     # Clean sources if requested
     clean_sources
-    
-    # Start masu port-forward
-    start_masu_portforward
     
     # Run tests
     run_tests

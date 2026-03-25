@@ -76,9 +76,11 @@ Includes everything in `extended` plus:
 
 ### `full` (Release Validation)
 
-**~3324 tests, ~60 minutes**
+**~3353 tests, ~42 minutes** (with fail-fast + listener CPU max)
 
-All `cost_ocp_on_prem` marked tests. No filters applied. Expect failures from blocked test groups.
+All `cost_ocp_on_prem` marked tests. No filters applied. Expect ~2,900 errors
+from cascading GPU/MIG fixture failures and ~31 test failures from known issues.
+With fail-fast enabled, stalled sources are detected in seconds instead of 30+ min each.
 
 ---
 
@@ -92,9 +94,21 @@ These tests are skipped across all profiles due to known issues.
 **Status**: Blocked - waiting for backend fix  
 **Impact**: ~90 tests
 
-**Problem**: Backend cannot process GPU/MIG data. When ingestion fails, `completed_datetime` is never set, causing fixtures to timeout.
+**Problem**: Backend cannot process GPU/MIG data. NISE 5.3.6+ generates
+`mig_instance_uuid` column that the schema lacks, causing `ParquetReportProcessorError`
+in the listener. The Kafka offset is committed (no retry), making this a permanent failure.
+
+**Mitigation (IQE plugin)**: `check_manifest_stalled()` and `check_processing_failed()`
+in `helpers.py` detect this within ~10s and call `pytest.fail()` with an actionable
+message. Without fail-fast, each stalled source blocks for 30+ min. With fail-fast
+enabled (branch `flpath-3369-updates-for-cost-onprem`), 17 stalled sources are
+handled in seconds rather than 8+ hours.
 
 **Filter**: `ai_workloads or distro or test_api_ocp_gpu or test_api_gpu or test_api_cost_model_ocp_gpu or test_api_cost_model_ocp_cost_gpu or test_api_ocp_resource_types_gpu`
+
+> **Gap**: `test_api_ocp_mig_*` tests (MIG report endpoints) are not caught by
+> this filter. These return 404 since MIG reporting is not implemented. Consider
+> adding `test_api_ocp_mig` to the GPU filter.
 
 ---
 
