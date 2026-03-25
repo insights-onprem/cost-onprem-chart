@@ -143,6 +143,27 @@ This will:
 ./scripts/run-iqe-tests-local.sh --dry-run
 ```
 
+### DNS / `/etc/hosts` Requirement
+
+The local test runner creates an OpenShift Route to reach the masu service.
+QE lab clusters often lack wildcard DNS, so the route hostname may not resolve.
+If the script exits with `Cannot resolve <hostname>`, add the entry it suggests
+to `/etc/hosts`:
+
+```bash
+# The script will print the exact line to add, e.g.:
+# Cannot resolve cost-onprem-masu-iqe-cost-onprem.apps.ocp-edge94.qe.lab.redhat.com
+# Add to /etc/hosts:  10.46.46.73 cost-onprem-masu-iqe-cost-onprem.apps.ocp-edge94.qe.lab.redhat.com
+
+# Use the IP from your existing cluster route entries:
+grep apps /etc/hosts
+# Then add the new hostname on the same IP
+sudo vi /etc/hosts
+```
+
+This is only needed once per cluster. The Route is cleaned up automatically
+when the script exits.
+
 ### Local Test Options
 
 | Option | Description |
@@ -150,8 +171,8 @@ This will:
 | `--setup` | Create/update virtual environment |
 | `--clean-sources` | Delete all sources before running tests |
 | `--filter EXPR` | Pytest -k filter expression |
+| `--profile PROFILE` | Test profile (`smoke`, `extended`, `stable`, `full`) |
 | `--marker EXPR` | Pytest marker expression (default: `cost_ocp_on_prem`) |
-| `--skip-portforward` | Don't start masu port-forward |
 | `--nise-version VER` | Override koku-nise version |
 | `--dry-run` | Show configuration without executing |
 | `--verbose` | Enable verbose output |
@@ -197,6 +218,13 @@ You're not on the Red Hat network. Connect to VPN and retry.
 
 
 If this fails, verify your `app-interface` user file has been merged.
+
+### "Cannot resolve" Masu Route Hostname (Local Tests)
+
+The local script creates an OpenShift Route for masu. If the hostname can't be
+resolved (common on QE lab clusters without wildcard DNS), the script exits with
+the exact `/etc/hosts` entry to add. See the "DNS / `/etc/hosts` Requirement"
+section above.
 
 ### Tests Stuck on "Line item summary update not complete"
 
