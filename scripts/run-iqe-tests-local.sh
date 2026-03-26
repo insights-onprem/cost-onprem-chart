@@ -383,20 +383,32 @@ extract_cluster_config() {
     export DYNACONF_ONPREM_MASU_PORT=""
     export DYNACONF_ONPREM_MASU_SCHEME="https"
     
-    # S3/object storage configuration (used by cost_minio_settings fixture for ROS tests)
-    local s3_secret_name="${HELM_RELEASE_NAME}-storage-credentials"
-    local s3_internal_endpoint
-    s3_internal_endpoint=$(kubectl exec -n "$NAMESPACE" "deploy/${HELM_RELEASE_NAME}-koku-masu" -c masu \
-        -- printenv S3_ENDPOINT 2>/dev/null || echo "")
+    # S3/object storage configuration (used by cost_minio_settings fixture for ROS tests).
+    # Fetch all needed env vars from masu in a single kubectl exec to avoid repeated pod calls.
+    local masu_deploy="deploy/${HELM_RELEASE_NAME}-koku-masu"
+    local masu_env
+    masu_env=$(kubectl exec -n "$NAMESPACE" "$masu_deploy" -c masu -- env 2>/dev/null \
+        | grep -E '^(S3_ENDPOINT|REQUESTED_BUCKET|REQUESTED_ROS_BUCKET)=' || true)
 
-    # The MASU pod uses in-cluster DNS (e.g. https://s3.openshift-storage.svc).
+    local s3_internal_endpoint
+    s3_internal_endpoint=$(echo "$masu_env" | grep '^S3_ENDPOINT=' | cut -d= -f2- || true)
+    export S3_KOKU_BUCKET
+    S3_KOKU_BUCKET=$(echo "$masu_env" | grep '^REQUESTED_BUCKET=' | cut -d= -f2-)
+    S3_KOKU_BUCKET="${S3_KOKU_BUCKET:-koku-bucket}"
+    export S3_ROS_BUCKET
+    S3_ROS_BUCKET=$(echo "$masu_env" | grep '^REQUESTED_ROS_BUCKET=' | cut -d= -f2-)
+    S3_ROS_BUCKET="${S3_ROS_BUCKET:-ros-data}"
+    export S3_SECRET_NAME="${HELM_RELEASE_NAME}-storage-credentials"
+
+    # The masu pod uses in-cluster DNS (e.g. https://s3.openshift-storage.svc).
     # For local runs we need the external route instead.
     if [[ "$s3_internal_endpoint" =~ \.svc(/|$|:) ]] || [[ "$s3_internal_endpoint" =~ \.svc\.cluster ]]; then
-        local s3_ns
-        s3_ns=$(echo "$s3_internal_endpoint" | sed -E 's|https?://||; s|:.*||; s|/.*||; s|^[^.]+\.||; s|\.svc.*||')
-        local s3_svc_name
-        s3_svc_name=$(echo "$s3_internal_endpoint" | sed -E 's|https?://||; s|\..*||')
-        local s3_route_host
+        local s3_host s3_svc_name s3_ns s3_route_host
+        s3_host=$(echo "$s3_internal_endpoint" | sed -E 's|https?://||; s|[:/].*||')
+        s3_svc_name="${s3_host%%.*}"
+        s3_ns="${s3_host#*.}"
+        s3_ns="${s3_ns%.svc*}"
+
         s3_route_host=$(kubectl get route "$s3_svc_name" -n "$s3_ns" \
             -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
         if [ -n "$s3_route_host" ]; then
@@ -410,23 +422,15 @@ extract_cluster_config() {
         export S3_ENDPOINT="$s3_internal_endpoint"
     fi
 
-    export S3_SECRET_NAME="$s3_secret_name"
-    export S3_KOKU_BUCKET
-    S3_KOKU_BUCKET=$(kubectl exec -n "$NAMESPACE" "deploy/${HELM_RELEASE_NAME}-koku-masu" -c masu \
-        -- printenv REQUESTED_BUCKET 2>/dev/null || echo "koku-bucket")
-    export S3_ROS_BUCKET
-    S3_ROS_BUCKET=$(kubectl exec -n "$NAMESPACE" "deploy/${HELM_RELEASE_NAME}-koku-masu" -c masu \
-        -- printenv REQUESTED_ROS_BUCKET 2>/dev/null || echo "ros-data")
-
+    if [[ "$S3_ENDPOINT" =~ ^http:// ]]; then
+        export S3_USE_SSL="false"
+    else
+        export S3_USE_SSL="true"
+    fi
     if [[ "$S3_ENDPOINT" =~ :([0-9]+)/?$ ]]; then
         export S3_PORT="${BASH_REMATCH[1]}"
     else
         export S3_PORT="443"
-    fi
-    if [[ "$S3_PORT" == "7480" ]] || [[ "$S3_PORT" == "9000" ]]; then
-        export S3_USE_SSL="false"
-    else
-        export S3_USE_SSL="true"
     fi
 
     if [ -n "$S3_ENDPOINT" ]; then
