@@ -318,25 +318,38 @@ IQE (Insights QE) tests provide comprehensive integration testing for cost-manag
 ### Running IQE Tests
 
 ```bash
-# Containerized (requires Quay access)
-./scripts/run-iqe-tests.sh --timeout 3600
+# Containerized with listener CPU boost (recommended)
+./scripts/deploy-test-cost-onprem.sh --tests-only --run-iqe \
+    --listener-cpu max --iqe-profile smoke
+
+# Containerized standalone
+./scripts/run-iqe-tests.sh --profile smoke
 
 # Local (requires VPN + local repos)
-./scripts/run-iqe-tests-local.sh --setup      # First time
-./scripts/run-iqe-tests-local.sh --clean-sources  # Run tests
+./scripts/run-iqe-tests-local.sh --setup              # First time
+./scripts/run-iqe-tests-local.sh --profile smoke       # Run tests
 ```
 
-### Test Duration
+### Test Profiles
 
-- **3 control plane only**: 1-2+ hours (backend bottleneck)
-- **3 CP + 2 workers**: 30-60 minutes (recommended)
+| Profile | Tests | Duration | Use Case |
+|---------|-------|----------|----------|
+| `smoke` | ~43 | ~17 min | PR checks |
+| `extended` | ~2100 | ~33 min | Daily CI |
+| `stable` | ~2350 | ~40 min | Weekly CI |
+| `full` | ~3324 | ~60 min | Release validation |
 
-Tests are I/O-bound waiting for backend data processing, not compute-bound.
+Tests are I/O-bound waiting for backend data processing. Use `--listener-cpu max`
+to boost the listener deployment's CPU during the run (~40-50% faster ingestion).
 
 ### Known Issues
 
-Default filters skip problematic tests:
-- `ai_workloads`, `distro` - Not applicable to on-prem
-- `test_api_cost_model_rates_update_to_tag_based` - Backend timeout
+Tests are organized into skip groups with `SKIP_*` env vars. Key blockers:
+- **COST-7179** — GPU/MIG schema mismatch blocks ~90 tests + cascading failures
+- **90-day data** — NISE generates ~60 days; 90-day range tests fail (~228 tests)
+- **FLPATH-3423** — Source CRUD update returns 500 (1 test)
+
+See `docs/development/skipped-iqe-tests.md` for full details on all skip groups,
+pytest markers, and test profiles.
 
 See `docs/development/iqe-testing-setup.md` for full setup guide.
