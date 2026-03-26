@@ -137,10 +137,12 @@ PLAYWRIGHT_BROWSER=firefox pytest -m ui
 ```
 suites/ui/
 ├── __init__.py
-├── conftest.py           # Playwright fixtures
-├── README.md             # This file
-├── test_login_flow.py    # Keycloak OAuth login tests
-└── test_navigation.py    # Main page navigation tests
+├── conftest.py                       # Playwright fixtures
+├── README.md                         # This file
+├── test_login_flow.py                # Keycloak OAuth login tests
+├── test_navigation.py                # Main page navigation tests
+├── test_authorization_ui.py          # Role-based UI visibility (admin/viewer)
+└── test_opt_in_authorization_ui.py   # Opt-in access model UI tests (test1/test2/test3)
 ```
 
 ## Test Coverage
@@ -180,6 +182,41 @@ suites/ui/
 - AWS (`/openshift/cost-management/aws`)
 - GCP (`/openshift/cost-management/gcp`)
 - Azure (`/openshift/cost-management/azure`)
+
+### Authorization UI Tests (`test_authorization_ui.py`)
+
+| Test Class | Test | Description |
+|------------|------|-------------|
+| `TestAdminVsViewerLogin` | `test_admin_lands_on_overview` | Admin login redirects to Overview |
+| | `test_viewer_lands_on_overview` | Viewer login redirects to Overview |
+| `TestOpenShiftPageBothRoles` | `test_admin_sees_ocp_content` | Admin sees OCP page |
+| | `test_viewer_sees_ocp_content` | Viewer sees OCP page |
+| `TestSettingsVisibility` | `test_admin_sees_settings_controls` | Admin sees settings controls |
+| | `test_viewer_settings_page_loads` | Viewer sees restricted settings |
+| `TestCloudProviderVisibility` | `test_admin_aws_page_loads` | Admin reaches AWS page |
+| | `test_viewer_aws_page_restricted` | Viewer sees empty AWS page |
+| `TestOptimizationsVisibility` | `test_admin_sees_optimizations` | Admin sees Optimizations |
+| | `test_viewer_sees_optimizations` | Viewer sees Optimizations |
+| `TestCostExplorerVisibility` | `test_admin_sees_explorer_content` | Admin sees Cost Explorer |
+| | `test_viewer_sees_explorer_content` | Viewer sees Cost Explorer |
+
+### Opt-In Access Model UI Tests (`test_opt_in_authorization_ui.py`)
+
+Tests for three opt-in demo users (test1, test2, test3) who hold
+`cost-openshift-viewer` roles bound to different team workspaces.
+Requires `kessel-admin.sh demo` bootstrap.
+
+See [opt-in-access-model-test-scenarios.md](../../docs/opt-in-access-model-test-scenarios.md)
+for the full reference scenario and test mapping.
+
+| Test Class | Tests | Description |
+|------------|-------|-------------|
+| `TestOptInLogin` | 3 | All three users land on Overview |
+| `TestOpenShiftVisibility` | 3 | OCP page loads for all three |
+| `TestAWSVisibility` | 3 | AWS page empty for all three |
+| `TestSettingsVisibility` | 3 | Settings restricted for all three |
+| `TestOptimizationsVisibility` | 3 | Optimizations visible for all three |
+| `TestCostExplorerVisibility` | 3 | Cost Explorer loads for all three |
 
 ### Extending Navigation Tests
 

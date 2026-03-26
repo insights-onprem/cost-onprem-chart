@@ -23,7 +23,6 @@ set -euo pipefail
 #   --deploy-s4               Deploy S4 (Super Simple Storage Service) for S3-compatible storage
 #   --s4-namespace NAME       S4 deployment namespace (default: s4-test)
 #   --namespace NAME          Target namespace (default: cost-onprem)
-#   --image-tag TAG           Custom image tag for cost-onprem-ocp-backend services
 #   --use-local-chart         Use local Helm chart instead of GitHub release
 #   --verbose                 Enable verbose output
 #   --dry-run                 Show what would be executed without running
@@ -59,7 +58,7 @@ set -euo pipefail
 #
 # Example:
 #   # Full deployment with custom image
-#   ./deploy-test-cost-onprem.sh --image-tag main-abc123
+#   ./deploy-test-cost-onprem.sh --use-local-chart
 #
 #   # Deploy with S4 storage for testing
 #   ./deploy-test-cost-onprem.sh --deploy-s4 --namespace cost-onprem-test
@@ -116,6 +115,7 @@ SHARED_DIR="${SHARED_DIR:-}"
 # Local scripts directory (this script sits alongside the other scripts)
 LOCAL_SCRIPTS_DIR="${SCRIPT_DIR}"
 SCRIPT_DEPLOY_RHBK="deploy-rhbk.sh"  # Red Hat Build of Keycloak (RHBK)
+SCRIPT_DEPLOY_KESSEL="deploy-kessel.sh"  # Kessel (SpiceDB + Relations + Inventory)
 SCRIPT_DEPLOY_KAFKA="deploy-kafka.sh"
 SCRIPT_DEPLOY_S4="deploy-s4-test.sh"  # S4 (Super Simple Storage Service)
 SCRIPT_INSTALL_HELM="install-helm-chart.sh"
@@ -406,7 +406,6 @@ deploy_rhbk() {
     log_step "Deploying Red Hat Build of Keycloak (RHBK) (1/6)"
 
     # Export environment variables for RHBK script
-    # export NAMESPACE="${NAMESPACE}"
 
     if [[ "${VERBOSE}" == "true" ]]; then
         export VERBOSE="true"
@@ -420,6 +419,21 @@ deploy_rhbk() {
     log_success "Red Hat Build of Keycloak (RHBK) deployment completed"
 }
 
+deploy_kessel() {
+    log_step "Deploying Kessel (SpiceDB + Relations API + Inventory API)"
+
+    if [[ "${VERBOSE}" == "true" ]]; then
+        export LOG_LEVEL="INFO"
+    fi
+
+    if ! execute_script "${SCRIPT_DEPLOY_KESSEL}"; then
+        log_error "Kessel deployment failed"
+        exit 1
+    fi
+
+    log_success "Kessel deployment completed"
+}
+
 deploy_kafka() {
     if [[ "${SKIP_KAFKA}" == "true" ]]; then
         log_warning "Skipping Kafka/AMQ Streams deployment (--skip-kafka)"
@@ -428,8 +442,6 @@ deploy_kafka() {
 
     log_step "Deploying Kafka/AMQ Streams (2/6)"
 
-    # Export environment variables for AMQ Streams script
-    # export KAFKA_NAMESPACE="${NAMESPACE}"
     export STORAGE_CLASS="${STORAGE_CLASS:-}"
 
     log_verbose "Using storage class: ${STORAGE_CLASS}"
@@ -565,6 +577,176 @@ download_openshift_values() {
         head -30 "${values_file}" | while IFS= read -r line; do
             log_verbose "  ${line}"
         done
+    fi
+}
+
+bootstrap_kessel() {
+    log_step "Bootstrapping Kessel authorization"
+
+    local KEYCLOAK_NS="${KEYCLOAK_NAMESPACE:-keycloak}"
+    local KEYCLOAK_HOST
+    KEYCLOAK_HOST=$(oc get route keycloak -n "$KEYCLOAK_NS" -o jsonpath='{.spec.host}' 2>/dev/null || true)
+    if [[ -z "$KEYCLOAK_HOST" ]]; then
+        log_warning "Keycloak route not found, skipping Kessel bootstrap"
+        return 0
+    fi
+    local KEYCLOAK_URL="https://$KEYCLOAK_HOST"
+    local REALM="kubernetes"
+
+    local ADMIN_PASSWORD
+    ADMIN_PASSWORD=$(oc get secret keycloak-initial-admin -n "$KEYCLOAK_NS" \
+        -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+    if [[ -z "$ADMIN_PASSWORD" ]]; then
+        log_warning "Keycloak admin password not found, skipping Kessel bootstrap"
+        return 0
+    fi
+
+    local KC_TOKEN
+    KC_TOKEN=$(curl -sk -X POST "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
+        -d "username=admin" -d "password=$ADMIN_PASSWORD" \
+        -d "grant_type=password" -d "client_id=admin-cli" 2>/dev/null \
+        | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null || true)
+    if [[ -z "$KC_TOKEN" ]]; then
+        log_warning "Could not obtain Keycloak admin token, skipping Kessel bootstrap"
+        return 0
+    fi
+
+    # --- Create 'admin' user in Keycloak (same org as 'test') ---
+    log_info "Creating 'admin' user in Keycloak..."
+    local HTTP_CODE
+    HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" -X POST \
+        "$KEYCLOAK_URL/admin/realms/$REALM/users" \
+        -H "Authorization: Bearer $KC_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "username": "admin",
+            "email": "admin@test.com",
+            "emailVerified": true,
+            "enabled": true,
+            "firstName": "Admin",
+            "lastName": "User",
+            "attributes": {
+                "org_id": ["org1234567"],
+                "account_number": ["7890123"]
+            }
+        }' 2>/dev/null)
+
+    if [[ "$HTTP_CODE" == "201" ]]; then
+        log_success "User 'admin' created"
+    elif [[ "$HTTP_CODE" == "409" ]]; then
+        log_info "User 'admin' already exists"
+    else
+        log_warning "Unexpected response creating 'admin' user: HTTP $HTTP_CODE"
+    fi
+
+    # Set admin password
+    local ADMIN_USER_ID
+    ADMIN_USER_ID=$(curl -sk "$KEYCLOAK_URL/admin/realms/$REALM/users?username=admin&exact=true" \
+        -H "Authorization: Bearer $KC_TOKEN" 2>/dev/null \
+        | python3 -c "import sys,json; users=json.load(sys.stdin); print(users[0]['id'] if users else '')" 2>/dev/null || true)
+
+    if [[ -n "$ADMIN_USER_ID" ]]; then
+        curl -sk -X PUT "$KEYCLOAK_URL/admin/realms/$REALM/users/$ADMIN_USER_ID/reset-password" \
+            -H "Authorization: Bearer $KC_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"type":"password","value":"admin","temporary":false}' 2>/dev/null
+        log_success "Password set for 'admin' user"
+    fi
+
+    # --- Run kessel-admin.sh demo (full opt-in scenario with groups and workspaces) ---
+    log_info "Running kessel-admin.sh demo (opt-in access model)..."
+    if bash "${LOCAL_SCRIPTS_DIR}/kessel-admin.sh" demo org1234567; then
+        log_success "Kessel demo scenario deployed"
+    else
+        log_error "kessel-admin.sh demo failed"
+        return 1
+    fi
+
+    # --- Backward compat: also grant 'test' user (legacy e2e tests) ---
+    log_info "Granting legacy 'test' user cost-openshift-viewer at org workspace..."
+    bash "${LOCAL_SCRIPTS_DIR}/kessel-admin.sh" grant test cost-openshift-viewer org1234567
+
+    log_success "Kessel authorization bootstrap complete"
+    log_info "  admin → cost-administrator @ org1234567 (sees everything)"
+    log_info "  test  → cost-openshift-viewer @ org1234567 (legacy e2e)"
+    log_info "  test1 → cost-openshift-viewer @ ws-demo (group:demo) + ws-test1 (direct)"
+    log_info "  test2 → cost-openshift-viewer @ ws-infra (group:infra)"
+    log_info "  test3 → cost-openshift-viewer @ ws-payment (group:payment)"
+}
+
+register_test_source() {
+    log_step "Registering test OCP source for authorization tests"
+
+    local RELEASE="${HELM_RELEASE_NAME:-cost-onprem}"
+    local KOKU_SVC="http://${RELEASE}-koku-api.${NAMESPACE}.svc.cluster.local:8000"
+    local API_BASE="${KOKU_SVC}/api/cost-management/v1"
+
+    local IDENTITY
+    IDENTITY=$(printf '{"org_id":"org1234567","identity":{"org_id":"org1234567","account_number":"7890123","type":"User","user":{"username":"admin","email":"admin@example.com","is_org_admin":false}},"entitlements":{"cost_management":{"is_entitled":true}}}' | base64 | tr -d '\n')
+
+    local KOKU_POD
+    KOKU_POD=$(oc get pods -n "${NAMESPACE}" \
+        -l "app.kubernetes.io/component=cost-management-api,app.kubernetes.io/instance=${RELEASE}" \
+        --field-selector=status.phase=Running \
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+
+    if [[ -z "${KOKU_POD}" ]]; then
+        log_warning "Koku API pod not found — skipping source registration"
+        return 0
+    fi
+
+    log_info "Using pod ${KOKU_POD} to register source via internal API"
+
+    local SOURCE_TYPE_ID
+    SOURCE_TYPE_ID=$(oc exec -n "${NAMESPACE}" "${KOKU_POD}" -- \
+        curl -sf "${API_BASE}/source_types" \
+            -H "X-Rh-Identity: ${IDENTITY}" \
+            -H "Content-Type: application/json" 2>/dev/null \
+        | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for st in data.get('data', []):
+    if st.get('name') == 'openshift':
+        print(st['id']); break
+" 2>/dev/null || true)
+
+    if [[ -z "${SOURCE_TYPE_ID}" ]]; then
+        log_warning "Could not determine OCP source type ID — skipping source registration"
+        return 0
+    fi
+
+    log_info "OCP source type ID: ${SOURCE_TYPE_ID}"
+
+    local EXISTING
+    EXISTING=$(oc exec -n "${NAMESPACE}" "${KOKU_POD}" -- \
+        curl -sf "${API_BASE}/sources/?name=authz-test-cluster" \
+            -H "X-Rh-Identity: ${IDENTITY}" \
+            -H "Content-Type: application/json" 2>/dev/null \
+        | python3 -c "import sys,json; print(json.load(sys.stdin)['meta']['count'])" 2>/dev/null || echo "0")
+
+    if [[ "${EXISTING}" -ge 1 ]]; then
+        log_info "Source 'authz-test-cluster' already exists — skipping"
+        return 0
+    fi
+
+    local RESP
+    RESP=$(oc exec -n "${NAMESPACE}" "${KOKU_POD}" -- \
+        curl -sf -w '\n%{http_code}' -X POST "${API_BASE}/sources/" \
+            -H "X-Rh-Identity: ${IDENTITY}" \
+            -H "Content-Type: application/json" \
+            -d "{\"name\":\"authz-test-cluster\",\"source_type_id\":\"${SOURCE_TYPE_ID}\",\"source_ref\":\"authz-test-cluster-001\"}" \
+        2>/dev/null || true)
+
+    local HTTP_CODE
+    HTTP_CODE=$(echo "${RESP}" | tail -1)
+    local BODY
+    BODY=$(echo "${RESP}" | sed '$d')
+
+    if [[ "${HTTP_CODE}" == "201" ]]; then
+        log_success "Registered OCP source 'authz-test-cluster' (source_ref=authz-test-cluster-001)"
+    else
+        log_warning "Source registration returned HTTP ${HTTP_CODE}: ${BODY}"
+        log_warning "Authorization source-count tests may fail"
     fi
 }
 
@@ -1078,10 +1260,6 @@ main() {
                 NAMESPACE="$2"
                 shift 2
                 ;;
-            --image-tag)
-                IMAGE_TAG="$2"
-                shift 2
-                ;;
             --use-local-chart)
                 USE_LOCAL_CHART=true
                 shift
@@ -1163,6 +1341,8 @@ main() {
     fi
 
     deploy_rhbk
+    deploy_kessel
+    bootstrap_kessel
     deploy_kafka
     deploy_s4
 
@@ -1175,7 +1355,8 @@ main() {
 
     deploy_helm_chart
     setup_tls
-    
+    register_test_source
+
     # Run tests and capture result (don't exit on failure)
     local test_result=0
     run_tests || test_result=$?
