@@ -15,6 +15,11 @@ data:
     # - X-Rh-Identity header injection
     # - Path-based routing to backend services (koku, ros, sources, ingress)
     # - Method-based routing for Koku read/write split
+    location /api/me {
+      default_type application/json;
+      return 200 "{\"username\":\"$http_x_auth_request_preferred_username\", \"email\":\"$http_x_forwarded_email\"}";
+    }
+
     location /api/ {
       proxy_pass http://{{ include "cost-onprem.gateway.serviceName" . }}:{{ include "cost-onprem.gateway.servicePort" . }};
       proxy_set_header Host $host;

@@ -58,6 +58,7 @@ spec:
         - --skip-auth-preflight
         - --pass-authorization-header
         - --code-challenge-method=S256
+        - --set-xauthrequest
         - --email-domain=*
         - --cookie-secure=true
         - --cookie-expire={{ .Values.ui.oauthProxy.cookie.expire }}
