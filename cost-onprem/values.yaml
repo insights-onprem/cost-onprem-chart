@@ -47,8 +47,8 @@ ros:
   # All ROS services (api, processor, recommendationPoller, housekeeper, partitionCleaner)
   # use the same image
   image:
-    repository: quay.io/insights-onprem/ros-ocp-backend
-    tag: "latest"
+    repository: quay.io/redhat-services-prod/insights-management-tenant/insights-ocp-resource-optimization/ros-ocp-backend
+    tag: "45e36af"
     pullPolicy: Always
 
   # Service Account
@@ -441,7 +441,7 @@ costManagement:
 kruize:
   image:
     repository: quay.io/redhat-services-prod/kruize-autotune-tenant/autotune
-    tag: "d0b4337"
+    tag: "5eeae99"
 
   port: 8080
 
