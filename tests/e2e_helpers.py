@@ -356,20 +356,7 @@ def generate_nise_data(
 # =============================================================================
 
 def generate_cluster_id(prefix: str = "") -> str:
-    """Generate a unique cluster ID for E2E tests.
-    
-    Args:
-        prefix: Optional prefix to add after the standard e2e-pytest- prefix
-    
-    Returns:
-        Unique cluster ID like "e2e-pytest-cost-val-abc12345"
-    """
-    timestamp = int(time.time())
-    unique = uuid.uuid4().hex[:8]
-    
-    if prefix:
-        return f"{E2E_CLUSTER_PREFIX}{prefix}-{unique}"
-    return f"{E2E_CLUSTER_PREFIX}{timestamp}-{unique}"
+    return str(uuid.uuid4())
 
 
 # =============================================================================

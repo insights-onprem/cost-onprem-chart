@@ -333,9 +333,8 @@ class TestCompleteDataFlow:
 
     @pytest.fixture(scope="class")
     def e2e_cluster_id(self) -> str:
-        """Generate a unique cluster ID for this E2E test run."""
         import uuid
-        return f"e2e-pytest-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+        return str(uuid.uuid4())
 
     @pytest.fixture(scope="class")
     def e2e_test_data(self, e2e_cluster_id: str) -> dict:
