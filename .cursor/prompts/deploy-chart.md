@@ -96,3 +96,12 @@ Check for resource constraints:
 kubectl describe pod -n cost-onprem <pod-name>
 kubectl get events -n cost-onprem --sort-by='.lastTimestamp'
 ```
+
+## After Modifying deploy-test-cost-onprem.sh
+
+If you change flag parsing or summary output, validate all permutations locally:
+```bash
+./scripts/qe/test-gh-workflow-locally.sh .github/workflows/validate-deploy-test-script.yml
+```
+
+This also runs automatically on PRs that touch the script.

@@ -1,0 +1,202 @@
+# Runs deploy-test-cost-onprem.sh --dry-run with every flag permutation
+# and asserts the summary output matches expected mode, deploy, and test states.
+
+name: Validate deploy-test-cost-onprem.sh Script
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'scripts/deploy-test-cost-onprem.sh'
+      - '.github/workflows/validate-deploy-test-script.yml'
+  workflow_dispatch:
+
+jobs:
+  dry-run-matrix:
+    name: "dry-run: ${{ matrix.name }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Default: full deployment + chart tests, no IQE
+          - name: "(defaults)"
+            flags: ""
+            expect_mode: "Full deployment"
+            expect_deploy: true
+            expect_chart_tests: true
+            expect_iqe: false
+
+          # --run-iqe: full deployment + chart tests + IQE
+          - name: "--run-iqe"
+            flags: "--run-iqe"
+            expect_mode: "Full deployment"
+            expect_deploy: true
+            expect_chart_tests: true
+            expect_iqe: true
+
+          # --skip-chart-tests: deploy only, no tests
+          - name: "--skip-chart-tests"
+            flags: "--skip-chart-tests"
+            expect_mode: "Full deployment"
+            expect_deploy: true
+            expect_chart_tests: false
+            expect_iqe: false
+
+          # --skip-chart-tests --run-iqe: deploy + IQE only
+          - name: "--skip-chart-tests --run-iqe"
+            flags: "--skip-chart-tests --run-iqe"
+            expect_mode: "Full deployment"
+            expect_deploy: true
+            expect_chart_tests: false
+            expect_iqe: true
+
+          # --skip-deploy: chart tests only
+          - name: "--skip-deploy"
+            flags: "--skip-deploy"
+            expect_mode: "Tests-only"
+            expect_deploy: false
+            expect_chart_tests: true
+            expect_iqe: false
+
+          # --skip-deploy --run-iqe: chart tests + IQE
+          - name: "--skip-deploy --run-iqe"
+            flags: "--skip-deploy --run-iqe"
+            expect_mode: "Tests-only"
+            expect_deploy: false
+            expect_chart_tests: true
+            expect_iqe: true
+
+          # --iqe-only: IQE only, nothing else
+          - name: "--iqe-only"
+            flags: "--iqe-only"
+            expect_mode: "IQE-only"
+            expect_deploy: false
+            expect_chart_tests: false
+            expect_iqe: true
+
+          # Backward compat: --tests-only == --skip-deploy
+          - name: "--tests-only (alias)"
+            flags: "--tests-only"
+            expect_mode: "Tests-only"
+            expect_deploy: false
+            expect_chart_tests: true
+            expect_iqe: false
+
+          # Backward compat: --skip-test == --skip-chart-tests
+          - name: "--skip-test (alias)"
+            flags: "--skip-test"
+            expect_mode: "Full deployment"
+            expect_deploy: true
+            expect_chart_tests: false
+            expect_iqe: false
+
+          # Backward compat: --tests-only --skip-test --run-iqe == --iqe-only
+          - name: "--tests-only --skip-test --run-iqe (alias)"
+            flags: "--tests-only --skip-test --run-iqe"
+            expect_mode: "IQE-only"
+            expect_deploy: false
+            expect_chart_tests: false
+            expect_iqe: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run dry-run
+        id: dryrun
+        run: |
+          set +e
+          OUTPUT=$(bash scripts/deploy-test-cost-onprem.sh \
+            --dry-run ${{ matrix.flags }} 2>&1)
+          EXIT_CODE=$?
+          set -e
+
+          echo "$OUTPUT"
+          echo "---"
+
+          # dry-run exits 0 on success
+          if [ "$EXIT_CODE" -ne 0 ]; then
+            echo "::error::Script exited with code $EXIT_CODE"
+            exit 1
+          fi
+
+          # Save output for assertions (use delimiter for multiline)
+          DELIM=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "output<<${DELIM}" >> "$GITHUB_OUTPUT"
+          echo "$OUTPUT" >> "$GITHUB_OUTPUT"
+          echo "${DELIM}" >> "$GITHUB_OUTPUT"
+
+      - name: Assert mode
+        env:
+          EXPECT_MODE: ${{ matrix.expect_mode }}
+          OUTPUT: ${{ steps.dryrun.outputs.output }}
+        run: |
+          echo "$OUTPUT" | grep -qF "Mode: ${EXPECT_MODE}"
+          echo "✓ Mode is '${EXPECT_MODE}'"
+
+      - name: Assert deployment steps
+        env:
+          EXPECT_DEPLOY: ${{ matrix.expect_deploy }}
+          OUTPUT: ${{ steps.dryrun.outputs.output }}
+        run: |
+          # Each entry: "enabled_pattern|skipped_pattern"
+          deploy_checks=(
+            "✓ Deploy Red Hat Build of Keycloak|✗ Deploy RHBK (SKIPPED)"
+            "✓ Deploy Kafka/AMQ Streams|✗ Deploy Kafka/AMQ Streams (SKIPPED)"
+            "✓ Deploy Cost On-Prem Helm Chart|✗ Deploy Cost On-Prem Helm Chart (SKIPPED)"
+            "✓ Setup TLS Certificates|✗ Setup TLS Certificates (SKIPPED)"
+          )
+          failures=0
+
+          for check in "${deploy_checks[@]}"; do
+            enabled="${check%%|*}"
+            skipped="${check##*|}"
+            label="${enabled#✓ }"
+
+            if [ "$EXPECT_DEPLOY" = "true" ]; then
+              if echo "$OUTPUT" | grep -qF "$enabled"; then
+                echo "✓ ${label} enabled"
+              else
+                echo "✗ Expected '${enabled}' in output"
+                failures=$((failures + 1))
+              fi
+            else
+              if echo "$OUTPUT" | grep -qF "$skipped"; then
+                echo "✓ ${label} skipped"
+              else
+                echo "✗ Expected '${skipped}' in output"
+                failures=$((failures + 1))
+              fi
+            fi
+          done
+
+          [ "$failures" -eq 0 ] || exit 1
+
+      - name: Assert chart tests
+        env:
+          EXPECT_CHART_TESTS: ${{ matrix.expect_chart_tests }}
+          OUTPUT: ${{ steps.dryrun.outputs.output }}
+        run: |
+          if [ "$EXPECT_CHART_TESTS" = "true" ]; then
+            echo "$OUTPUT" | grep -qF "✓ Run Chart Tests"
+            echo "✓ Chart tests enabled"
+          else
+            echo "$OUTPUT" | grep -qF "✗ Run Chart Tests (SKIPPED)"
+            echo "✓ Chart tests skipped"
+          fi
+
+      - name: Assert IQE tests
+        env:
+          EXPECT_IQE: ${{ matrix.expect_iqe }}
+          OUTPUT: ${{ steps.dryrun.outputs.output }}
+        run: |
+          if [ "$EXPECT_IQE" = "true" ]; then
+            echo "$OUTPUT" | grep -qF "✓ Run IQE Tests"
+            echo "✓ IQE tests enabled"
+          else
+            echo "$OUTPUT" | grep -qF "✗ Run IQE Tests (OPTIONAL)"
+            echo "✓ IQE tests not requested"
+          fi

@@ -77,6 +77,11 @@ set -euo pipefail
 #   # Deploy with external database (BYOI)
 #   OPENSHIFT_VALUES_FILE=docs/examples/byoi-values.yaml ./deploy-test-cost-onprem.sh
 #
+# Validation:
+#   Flag parsing is tested by .github/workflows/validate-deploy-test-script.yml
+#   which runs --dry-run for every flag permutation. Run locally with:
+#     ./scripts/qe/test-gh-workflow-locally.sh .github/workflows/validate-deploy-test-script.yml
+#
 ################################################################################
 
 # Script metadata
@@ -1183,10 +1188,12 @@ main() {
     deploy_s4
 
     # Run Helm sanity test before deploying complex chart
-    log_info "Running Helm sanity test to verify basic functionality..."
-    if ! bash "${SCRIPT_DIR}/helm-sanity-test.sh"; then
-        log_error "Helm sanity test failed - aborting deployment"
-        exit 1
+    if [[ "${SKIP_HELM}" == "false" ]] && [[ "${DRY_RUN}" == "false" ]]; then
+        log_info "Running Helm sanity test to verify basic functionality..."
+        if ! bash "${SCRIPT_DIR}/helm-sanity-test.sh"; then
+            log_error "Helm sanity test failed - aborting deployment"
+            exit 1
+        fi
     fi
 
     deploy_helm_chart
