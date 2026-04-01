@@ -211,26 +211,52 @@ release/ci-operator/step-registry/insights-onprem/cost-onprem-chart/e2e/
 3. Installs Cost On-Prem Helm chart
 4. Configures TLS certificates
 5. **Runs pytest via `scripts/run-pytest.sh`** (CI mode - excludes extended tests)
-6. Optionally saves deployment version info
+6. Optionally runs IQE integration tests
+7. Optionally saves deployment version info
 
-**Usage:**
+**Common workflows:**
 ```bash
-# Full deployment + tests
+# Full deployment + chart tests (default)
 ./deploy-test-cost-onprem.sh
 
-# Run tests only (skip deployments)
-./deploy-test-cost-onprem.sh --tests-only
+# Full deployment + chart tests + IQE tests
+./deploy-test-cost-onprem.sh --run-iqe --iqe-profile smoke
 
-# Skip specific steps
+# Run only IQE tests against an existing deployment
+./deploy-test-cost-onprem.sh --iqe-only --iqe-profile smoke
+
+# Run only chart tests against an existing deployment
+./deploy-test-cost-onprem.sh --skip-deploy
+
+# Deploy without running any tests
+./deploy-test-cost-onprem.sh --skip-chart-tests
+
+# Skip specific deployment steps
 ./deploy-test-cost-onprem.sh --skip-rhbk --skip-kafka
 
-# Save deployment version info for CI traceability
-./deploy-test-cost-onprem.sh --save-versions
-./deploy-test-cost-onprem.sh --save-versions custom-versions.json
-
-# Dry run to preview actions
+# Dry run to preview what would execute
 ./deploy-test-cost-onprem.sh --dry-run --verbose
 ```
+
+**Flag interaction matrix:**
+
+| Flags | Deploy | Chart Tests | IQE Tests |
+|-------|--------|-------------|-----------|
+| *(none)* | yes | yes | no |
+| `--run-iqe` | yes | yes | yes |
+| `--skip-chart-tests` | yes | no | no |
+| `--skip-chart-tests --run-iqe` | yes | no | yes |
+| `--skip-deploy` | no | yes | no |
+| `--skip-deploy --run-iqe` | no | yes | yes |
+| `--iqe-only` | no | no | yes |
+
+**Flag aliases** for backward compatibility:
+
+| Preferred | Alias | Description |
+|-----------|-------|-------------|
+| `--skip-deploy` | `--tests-only` | Skip all deployment steps |
+| `--skip-chart-tests` | `--skip-test` | Skip chart pytest suite |
+| `--iqe-only` | `--tests-only --skip-test --run-iqe` | Run only IQE tests |
 
 **Version tracking:** The `--save-versions` flag generates a `version_info.json` file containing:
 - Helm chart version (source and deployed)
@@ -386,8 +412,8 @@ The pytest test suite validates:
 # Run pytest authentication tests
 NAMESPACE=cost-onprem ./run-pytest.sh --auth
 
-# Or run tests only on existing deployment
-./deploy-test-cost-onprem.sh --tests-only
+# Or run chart tests only on existing deployment (no redeploy)
+./deploy-test-cost-onprem.sh --skip-deploy
 
 # Or run full pytest suite
 NAMESPACE=cost-onprem ./run-pytest.sh
@@ -477,7 +503,7 @@ All scripts use color-coded output:
 
 ---
 
-**Last Updated**: January 2026
+**Last Updated**: April 2026
 **Maintainer**: CoP Engineering Team
 **Supported Platform**: OpenShift 4.18+
 **Tested With**: OpenShift 4.18.24

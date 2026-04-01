@@ -373,7 +373,7 @@ in NISE for on-prem environments, rather than requiring a backend schema migrati
 ./scripts/run-iqe-tests.sh --profile smoke
 
 # With boosted listener CPU for faster processing
-./scripts/deploy-test-cost-onprem.sh --tests-only --run-iqe --iqe-profile extended --listener-cpu 1000m
+./scripts/deploy-test-cost-onprem.sh --iqe-only --iqe-profile extended --listener-cpu 1000m
 ```
 
 ### Custom Filters

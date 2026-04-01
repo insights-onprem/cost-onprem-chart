@@ -18,7 +18,7 @@ set -euo pipefail
 #   --skip-kafka              Skip Kafka/AMQ Streams deployment
 #   --skip-helm               Skip COST Helm chart installation
 #   --skip-tls                Skip TLS certificate setup
-#   --skip-test               Skip cost-onprem chart tests
+#   --skip-test               Skip chart tests (alias: --skip-chart-tests)
 #   --skip-image-override     Skip creating custom values file for image override
 #   --deploy-s4               Deploy S4 (Super Simple Storage Service) for S3-compatible storage
 #   --s4-namespace NAME       S4 deployment namespace (default: s4-test)
@@ -27,9 +27,10 @@ set -euo pipefail
 #   --use-local-chart         Use local Helm chart instead of GitHub release
 #   --verbose                 Enable verbose output
 #   --dry-run                 Show what would be executed without running
-#   --tests-only              Run only cost-onprem chart tests (skip all deployments)
+#   --skip-deploy             Skip all deployment steps, run tests only (alias: --tests-only)
 #   --include-ui              Include UI tests (requires Playwright system dependencies)
 #   --run-iqe                 Run IQE cost-management tests after deployment
+#   --iqe-only                Run only IQE tests (skip deployment and chart tests)
 #   --iqe-marker EXPR         Pytest marker for IQE tests (default: cost_ocp_on_prem)
 #   --iqe-profile PROFILE     IQE test profile: smoke, extended, stable, full (default: stable)
 #   --listener-cpu LIMIT      Temporarily set listener CPU limit (e.g., 500m, 1000m, or 'max')
@@ -1002,6 +1003,16 @@ save_version_info() {
 
 print_summary() {
     echo ""
+
+    # Show execution mode
+    if [[ "${TESTS_ONLY}" == "true" ]] && [[ "${SKIP_TEST}" == "true" ]] && [[ "${RUN_IQE}" == "true" ]]; then
+        log_info "Mode: IQE-only (--iqe-only)"
+    elif [[ "${TESTS_ONLY}" == "true" ]]; then
+        log_info "Mode: Tests-only (--skip-deploy)"
+    else
+        log_info "Mode: Full deployment"
+    fi
+
     log_info "Deployment Configuration:"
     echo "  Namespace:           ${NAMESPACE}"
     [[ "${DEPLOY_S4}" == "true" ]] && echo "  S4 Namespace:        ${S4_NAMESPACE}"
@@ -1014,7 +1025,7 @@ print_summary() {
     [[ "${DEPLOY_S4}" == "true" ]] && echo "  ✓ Deploy S4 Storage (namespace: ${S4_NAMESPACE})" || echo "  ✗ Deploy S4 Storage (OPTIONAL)"
     [[ "${SKIP_HELM}" == "false" ]] && echo "  ✓ Deploy Cost On-Prem Helm Chart" || echo "  ✗ Deploy Cost On-Prem Helm Chart (SKIPPED)"
     [[ "${SKIP_TLS}" == "false" ]] && echo "  ✓ Setup TLS Certificates" || echo "  ✗ Setup TLS Certificates (SKIPPED)"
-    [[ "${SKIP_TEST}" == "false" ]] && echo "  ✓ Test JWT Flow" || echo "  ✗ Test JWT Flow (SKIPPED)"
+    [[ "${SKIP_TEST}" == "false" ]] && echo "  ✓ Run Chart Tests" || echo "  ✗ Run Chart Tests (SKIPPED)"
     if [[ "${RUN_IQE}" == "true" ]]; then
         local iqe_opts="profile: ${IQE_PROFILE}, marker: ${IQE_MARKER}"
         [[ -n "${LISTENER_CPU_LIMIT}" ]] && iqe_opts="${iqe_opts}, listener-cpu: ${LISTENER_CPU_LIMIT}"
@@ -1062,7 +1073,7 @@ main() {
                 SKIP_TLS=true
                 shift
                 ;;
-            --skip-test)
+            --skip-test|--skip-chart-tests)
                 SKIP_TEST=true
                 shift
                 ;;
@@ -1094,7 +1105,7 @@ main() {
                 DRY_RUN=true
                 shift
                 ;;
-            --tests-only)
+            --tests-only|--skip-deploy)
                 TESTS_ONLY=true
                 shift
                 ;;
@@ -1103,6 +1114,12 @@ main() {
                 shift
                 ;;
             --run-iqe)
+                RUN_IQE=true
+                shift
+                ;;
+            --iqe-only)
+                TESTS_ONLY=true
+                SKIP_TEST=true
                 RUN_IQE=true
                 shift
                 ;;
@@ -1138,13 +1155,12 @@ main() {
         esac
     done
 
-    # In tests-only mode, skip all deployment steps and run tests
+    # In tests-only / skip-deploy mode, skip all deployment steps
     if [[ "${TESTS_ONLY}" == "true" ]]; then
         SKIP_RHBK=true
         SKIP_KAFKA=true
         SKIP_HELM=true
         SKIP_TLS=true
-        SKIP_TEST=false
     fi
 
     # Show deployment summary

@@ -59,14 +59,18 @@ helm upgrade cost-onprem ./cost-onprem \
 # Skip TLS configuration
 ./scripts/deploy-test-cost-onprem.sh --skip-tls
 
-# Skip tests
-./scripts/deploy-test-cost-onprem.sh --skip-test
+# Deploy only — skip chart tests
+./scripts/deploy-test-cost-onprem.sh --skip-chart-tests
 ```
 
-## Tests Only (Existing Deployment)
+## Tests Against Existing Deployment
 
 ```bash
-./scripts/deploy-test-cost-onprem.sh --tests-only
+# Run chart tests only (no redeploy)
+./scripts/deploy-test-cost-onprem.sh --skip-deploy
+
+# Run only IQE integration tests (no deploy, no chart tests)
+./scripts/deploy-test-cost-onprem.sh --iqe-only --iqe-profile smoke
 ```
 
 ## Dry Run
