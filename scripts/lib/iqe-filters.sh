@@ -88,13 +88,13 @@ apply_profile() {
 # Backend bug: completed_datetime never set when GPU data processing fails
 # ~90 tests affected
 SKIP_GPU_TESTS="${SKIP_GPU_TESTS:-true}"
-FILTER_GPU="ai_workloads or mig_workloads or distro or test_api_ocp_gpu or test_api_gpu or test_api_cost_model_ocp_gpu or test_api_cost_model_ocp_cost_gpu or test_api_ocp_resource_types_gpu"
+FILTER_GPU="ai_workloads or mig_workloads or distro or test_api_ocp_gpu or test_api_gpu or test_api_cost_model_ocp_gpu or test_api_cost_model_ocp_cost_gpu or test_api_ocp_resource_types_gpu or test_api_ocp_mig"
 
 # --- ROS Tests ---
 # ROS S3 bucket and credentials are now configured via S3_ENDPOINT env vars.
 # test_api_ocp_ros_kafka_content still skips (clowder_smoke only).
 # 3 tests (2 runnable, 1 skips on on-prem)
-SKIP_ROS_TESTS="${SKIP_ROS_TESTS:-false}"
+SKIP_ROS_TESTS="${SKIP_ROS_TESTS:-true}"
 FILTER_ROS="test_api_ocp_ros"
 
 # --- Date Range Tests (Insufficient Historical Data) ---

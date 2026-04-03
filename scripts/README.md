@@ -258,6 +258,13 @@ release/ci-operator/step-registry/insights-onprem/cost-onprem-chart/e2e/
 | `--skip-chart-tests` | `--skip-test` | Skip chart pytest suite |
 | `--iqe-only` | `--tests-only --skip-test --run-iqe` | Run only IQE tests |
 
+**Validation:** Flag parsing is tested automatically on PRs by
+`.github/workflows/validate-deploy-test-script.yml`, which runs `--dry-run` for all
+10 flag permutations and asserts the expected output. Run locally with:
+```bash
+./scripts/qe/test-gh-workflow-locally.sh .github/workflows/validate-deploy-test-script.yml
+```
+
 **Version tracking:** The `--save-versions` flag generates a `version_info.json` file containing:
 - Helm chart version (source and deployed)
 - Git SHA and branch

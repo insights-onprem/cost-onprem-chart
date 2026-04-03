@@ -14,28 +14,40 @@ set -euo pipefail
 #   ./deploy-test-cost-onprem.sh [OPTIONS]
 #
 # Options:
+#
+#   Execution mode:
+#   --skip-deploy             Skip all deployment steps, run tests only
+#   --skip-chart-tests        Skip chart pytest suite
+#   --iqe-only                Run only IQE tests (skip deployment and chart tests)
+#   --run-iqe                 Run IQE cost-management tests after deployment
+#   --dry-run                 Show what would be executed without running
+#
+#   Deployment control:
 #   --skip-rhbk               Skip Red Hat Build of Keycloak (RHBK) deployment
 #   --skip-kafka              Skip Kafka/AMQ Streams deployment
 #   --skip-helm               Skip COST Helm chart installation
 #   --skip-tls                Skip TLS certificate setup
-#   --skip-test               Skip chart tests (alias: --skip-chart-tests)
 #   --skip-image-override     Skip creating custom values file for image override
 #   --deploy-s4               Deploy S4 (Super Simple Storage Service) for S3-compatible storage
 #   --s4-namespace NAME       S4 deployment namespace (default: s4-test)
 #   --namespace NAME          Target namespace (default: cost-onprem)
 #   --image-tag TAG           Custom image tag for cost-onprem-ocp-backend services
 #   --use-local-chart         Use local Helm chart instead of GitHub release
-#   --verbose                 Enable verbose output
-#   --dry-run                 Show what would be executed without running
-#   --skip-deploy             Skip all deployment steps, run tests only (alias: --tests-only)
-#   --include-ui              Include UI tests (requires Playwright system dependencies)
-#   --run-iqe                 Run IQE cost-management tests after deployment
-#   --iqe-only                Run only IQE tests (skip deployment and chart tests)
+#
+#   Test options:
 #   --iqe-marker EXPR         Pytest marker for IQE tests (default: cost_ocp_on_prem)
 #   --iqe-profile PROFILE     IQE test profile: smoke, extended, stable, full (default: stable)
 #   --listener-cpu LIMIT      Temporarily set listener CPU limit (e.g., 500m, 1000m, or 'max')
+#   --include-ui              Include UI tests (requires Playwright system dependencies)
+#
+#   Other:
 #   --save-versions [FILE]    Save deployment version info to JSON file (default: version_info.json)
+#   --verbose                 Enable verbose output
 #   --help                    Display this help message
+#
+#   Backward-compatible aliases:
+#   --tests-only              Alias for --skip-deploy
+#   --skip-test               Alias for --skip-chart-tests
 #
 # Environment Variables:
 #   KUBECONFIG               Path to kubeconfig file (default: ~/.kube/config)
@@ -58,24 +70,27 @@ set -euo pipefail
 #   - yq installed for YAML/JSON processing
 #   - OpenShift cluster with admin access
 #
-# Example:
-#   # Full deployment with custom image
-#   ./deploy-test-cost-onprem.sh --image-tag main-abc123
+# Examples:
+#   # Full deployment + chart tests (default)
+#   ./deploy-test-cost-onprem.sh --namespace cost-onprem --verbose
 #
-#   # Deploy with S4 storage for testing
-#   ./deploy-test-cost-onprem.sh --deploy-s4 --namespace cost-onprem-test
+#   # Deploy only — skip all tests
+#   ./deploy-test-cost-onprem.sh --skip-chart-tests
 #
-#   # Deploy S4 to custom namespace and use it
-#   ./deploy-test-cost-onprem.sh --deploy-s4 --s4-namespace my-s4-ns
+#   # Run chart tests against existing deployment
+#   ./deploy-test-cost-onprem.sh --skip-deploy
+#
+#   # Run only IQE tests with listener CPU boost
+#   ./deploy-test-cost-onprem.sh --iqe-only --listener-cpu max --iqe-profile smoke
+#
+#   # Full deployment + chart tests + IQE tests
+#   ./deploy-test-cost-onprem.sh --run-iqe --iqe-profile smoke
 #
 #   # Skip RHBK if already deployed
-#   ./deploy-test-cost-onprem.sh --skip-rhbk --namespace cost-onprem-production
+#   ./deploy-test-cost-onprem.sh --skip-rhbk
 #
-#   # Dry run to preview actions
+#   # Dry run to preview what would execute
 #   ./deploy-test-cost-onprem.sh --dry-run --verbose
-#
-#   # Deploy with external database (BYOI)
-#   OPENSHIFT_VALUES_FILE=docs/examples/byoi-values.yaml ./deploy-test-cost-onprem.sh
 #
 # Validation:
 #   Flag parsing is tested by .github/workflows/validate-deploy-test-script.yml
@@ -625,7 +640,7 @@ run_tests() {
     }
     
     if [[ "${SKIP_TEST}" == "true" ]]; then
-        log_warning "Skipping cost-onprem chart tests (--skip-test)"
+        log_warning "Skipping cost-onprem chart tests (--skip-chart-tests)"
         # Still run IQE tests if requested
         if [[ "${RUN_IQE}" == "true" ]]; then
             run_iqe_tests

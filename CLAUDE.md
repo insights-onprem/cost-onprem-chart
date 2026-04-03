@@ -276,6 +276,14 @@ kubectl logs -n cost-onprem -l app.kubernetes.io/component=ros-optimization --ta
 
 # Chart tests only (skip deployment)
 ./scripts/deploy-test-cost-onprem.sh --skip-deploy
+
+# Dry run to preview what would execute
+./scripts/deploy-test-cost-onprem.sh --dry-run --verbose
+```
+
+After modifying flag parsing in `deploy-test-cost-onprem.sh`, validate all permutations:
+```bash
+./scripts/qe/test-gh-workflow-locally.sh .github/workflows/validate-deploy-test-script.yml
 ```
 
 ### Troubleshoot
