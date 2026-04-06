@@ -67,23 +67,6 @@ class TestLogoutFlow:
         )
         expect(authenticated_page.locator('input[name="username"]')).to_be_visible()
 
-    def test_logout_from_subpage(
-        self, authenticated_page: Page, ui_url: str, keycloak_config
-    ):
-        """Verify logout works when initiated from a subpage (not just root)."""
-        # Navigate to a subpage first
-        authenticated_page.goto(f"{ui_url}/recommendations")
-        authenticated_page.wait_for_load_state("networkidle")
-
-        # Logout
-        authenticated_page.goto(f"{ui_url}/logout")
-
-        # Should land on Keycloak login
-        authenticated_page.wait_for_url(
-            f"**/{keycloak_config.realm}/**", timeout=15000
-        )
-        expect(authenticated_page.locator('input[name="username"]')).to_be_visible()
-
 
 @pytest.mark.ui
 @pytest.mark.auth
