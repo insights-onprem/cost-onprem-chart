@@ -1,0 +1,131 @@
+# Runs deploy-test-cost-onprem.sh --dry-run with every flag permutation
+# and asserts the summary output matches expected mode, deploy, and test states.
+
+name: Validate deploy-test-cost-onprem.sh Script
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'scripts/deploy-test-cost-onprem.sh'
+      - '.github/workflows/validate-deploy-test-script.yml'
+  workflow_dispatch:
+
+jobs:
+  validate-flags:
+    name: Validate flag permutations
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate all flag permutations
+        run: |
+          SCRIPT="scripts/deploy-test-cost-onprem.sh"
+          failures=0
+          passed=0
+
+          # assert_output OUTPUT PATTERN LABEL
+          assert_output() {
+            local output="$1" pattern="$2" label="$3"
+            if echo "$output" | grep -qF "$pattern"; then
+              echo "    ✓ ${label}"
+            else
+              echo "    ✗ ${label} — expected '${pattern}'"
+              return 1
+            fi
+          }
+
+          # run_case NAME FLAGS EXPECT_MODE EXPECT_DEPLOY EXPECT_CHART EXPECT_IQE
+          run_case() {
+            local name="$1" flags="$2" expect_mode="$3"
+            local expect_deploy="$4" expect_chart="$5" expect_iqe="$6"
+            local case_failures=0
+
+            echo ""
+            echo "━━━ ${name} ━━━"
+
+            local output exit_code
+            set +e
+            output=$(bash "$SCRIPT" --dry-run $flags 2>&1)
+            exit_code=$?
+            set -e
+
+            if [ "$exit_code" -ne 0 ]; then
+              echo "    ✗ Script exited with code ${exit_code}"
+              echo "$output" | tail -5
+              failures=$((failures + 1))
+              return
+            fi
+
+            # Mode
+            assert_output "$output" "Mode: ${expect_mode}" "Mode: ${expect_mode}" \
+              || case_failures=$((case_failures + 1))
+
+            # Deploy steps
+            local deploy_enabled=(
+              "✓ Deploy Red Hat Build of Keycloak"
+              "✓ Deploy Kafka/AMQ Streams"
+              "✓ Deploy Cost On-Prem Helm Chart"
+              "✓ Setup TLS Certificates"
+            )
+            local deploy_skipped=(
+              "✗ Deploy RHBK (SKIPPED)"
+              "✗ Deploy Kafka/AMQ Streams (SKIPPED)"
+              "✗ Deploy Cost On-Prem Helm Chart (SKIPPED)"
+              "✗ Setup TLS Certificates (SKIPPED)"
+            )
+            for i in "${!deploy_enabled[@]}"; do
+              if [ "$expect_deploy" = "true" ]; then
+                assert_output "$output" "${deploy_enabled[$i]}" "${deploy_enabled[$i]#✓ }" \
+                  || case_failures=$((case_failures + 1))
+              else
+                assert_output "$output" "${deploy_skipped[$i]}" "${deploy_skipped[$i]#✗ }" \
+                  || case_failures=$((case_failures + 1))
+              fi
+            done
+
+            # Chart tests
+            if [ "$expect_chart" = "true" ]; then
+              assert_output "$output" "✓ Run Chart Tests" "Chart tests enabled" \
+                || case_failures=$((case_failures + 1))
+            else
+              assert_output "$output" "✗ Run Chart Tests (SKIPPED)" "Chart tests skipped" \
+                || case_failures=$((case_failures + 1))
+            fi
+
+            # IQE tests
+            if [ "$expect_iqe" = "true" ]; then
+              assert_output "$output" "✓ Run IQE Tests" "IQE tests enabled" \
+                || case_failures=$((case_failures + 1))
+            else
+              assert_output "$output" "✗ Run IQE Tests (OPTIONAL)" "IQE tests not requested" \
+                || case_failures=$((case_failures + 1))
+            fi
+
+            if [ "$case_failures" -gt 0 ]; then
+              failures=$((failures + 1))
+            else
+              passed=$((passed + 1))
+            fi
+          }
+
+          #                NAME                                        FLAGS                                MODE               DEPLOY  CHART  IQE
+          run_case         "(defaults)"                                ""                                   "Full deployment"  true    true   false
+          run_case         "--run-iqe"                                 "--run-iqe"                          "Full deployment"  true    true   true
+          run_case         "--skip-chart-tests"                        "--skip-chart-tests"                 "Full deployment"  true    false  false
+          run_case         "--skip-chart-tests --run-iqe"              "--skip-chart-tests --run-iqe"       "Full deployment"  true    false  true
+          run_case         "--skip-deploy"                             "--skip-deploy"                      "Tests-only"       false   true   false
+          run_case         "--skip-deploy --run-iqe"                   "--skip-deploy --run-iqe"            "Tests-only"       false   true   true
+          run_case         "--iqe-only"                                "--iqe-only"                         "IQE-only"         false   false  true
+          run_case         "--tests-only (alias)"                      "--tests-only"                       "Tests-only"       false   true   false
+          run_case         "--skip-test (alias)"                       "--skip-test"                        "Full deployment"  true    false  false
+          run_case         "--tests-only --skip-test --run-iqe (alias)" "--tests-only --skip-test --run-iqe" "IQE-only"        false   false  true
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Results: ${passed} passed, ${failures} failed"
+
+          [ "$failures" -eq 0 ] || exit 1

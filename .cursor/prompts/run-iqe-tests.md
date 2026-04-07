@@ -6,11 +6,11 @@ Run IQE (Insights QE) integration tests against the cost-onprem deployment.
 
 | Goal | Command |
 |------|---------|
-| Containerized tests with CPU boost (recommended) | `./scripts/deploy-test-cost-onprem.sh --tests-only --run-iqe --listener-cpu max --iqe-profile smoke` |
+| Containerized tests with CPU boost (recommended) | `./scripts/deploy-test-cost-onprem.sh --iqe-only --listener-cpu max --iqe-profile smoke` |
 | Containerized tests (standalone) | `./scripts/run-iqe-tests.sh --profile smoke` |
 | Local tests from IQE repo clones | `./scripts/run-iqe-tests-local.sh --profile smoke` |
 
-`deploy-test-cost-onprem.sh --tests-only --run-iqe` wraps `run-iqe-tests.sh` and adds
+`deploy-test-cost-onprem.sh --iqe-only` wraps `run-iqe-tests.sh` and adds
 listener CPU boosting (`--listener-cpu`) which significantly speeds up data ingestion.
 Use the standalone `run-iqe-tests.sh` when you only need a simple pod-based run without
 CPU management.
@@ -42,11 +42,11 @@ Use `--profile` (or `--iqe-profile` with `deploy-test-cost-onprem.sh`) to select
 
 ```bash
 # Smoke tests with CPU boost — skip deployment, just run IQE
-./scripts/deploy-test-cost-onprem.sh --tests-only --run-iqe \
+./scripts/deploy-test-cost-onprem.sh --iqe-only \
     --listener-cpu max --iqe-profile smoke
 
 # Extended daily CI run
-./scripts/deploy-test-cost-onprem.sh --tests-only --run-iqe \
+./scripts/deploy-test-cost-onprem.sh --iqe-only \
     --listener-cpu max --iqe-profile extended
 ```
 

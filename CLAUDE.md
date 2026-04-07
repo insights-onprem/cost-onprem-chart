@@ -268,11 +268,22 @@ kubectl logs -n cost-onprem -l app.kubernetes.io/component=ros-optimization --ta
 
 ### Deploy Chart
 ```bash
-# Full deployment + tests
+# Full deployment + chart tests
 ./scripts/deploy-test-cost-onprem.sh --namespace cost-onprem --verbose
 
-# Tests only (existing deployment)
-./scripts/deploy-test-cost-onprem.sh --tests-only
+# Deploy only — skip chart tests
+./scripts/deploy-test-cost-onprem.sh --skip-chart-tests
+
+# Chart tests only (skip deployment)
+./scripts/deploy-test-cost-onprem.sh --skip-deploy
+
+# Dry run to preview what would execute
+./scripts/deploy-test-cost-onprem.sh --dry-run --verbose
+```
+
+After modifying flag parsing in `deploy-test-cost-onprem.sh`, validate all permutations:
+```bash
+./scripts/qe/test-gh-workflow-locally.sh .github/workflows/validate-deploy-test-script.yml
 ```
 
 ### Troubleshoot
@@ -318,11 +329,11 @@ IQE (Insights QE) tests provide comprehensive integration testing for cost-manag
 ### Running IQE Tests
 
 ```bash
-# Containerized with listener CPU boost (recommended)
-./scripts/deploy-test-cost-onprem.sh --tests-only --run-iqe \
+# IQE only — skip deploy + chart tests, boost listener CPU (recommended)
+./scripts/deploy-test-cost-onprem.sh --iqe-only \
     --listener-cpu max --iqe-profile smoke
 
-# Containerized standalone
+# Containerized standalone (no CPU boost)
 ./scripts/run-iqe-tests.sh --profile smoke
 
 # Local (requires VPN + local repos)

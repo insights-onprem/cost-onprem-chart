@@ -223,7 +223,8 @@ limit, which throttles parquet conversion and SQL insertion.
 
 **Containerized (CI):**
 ```bash
-./scripts/deploy-test-cost-onprem.sh --tests-only --run-iqe \
+# Run only IQE tests (skip deploy + chart tests)
+./scripts/deploy-test-cost-onprem.sh --iqe-only \
     --listener-cpu max --iqe-profile extended
 ```
 

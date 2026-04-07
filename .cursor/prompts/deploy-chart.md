@@ -59,14 +59,18 @@ helm upgrade cost-onprem ./cost-onprem \
 # Skip TLS configuration
 ./scripts/deploy-test-cost-onprem.sh --skip-tls
 
-# Skip tests
-./scripts/deploy-test-cost-onprem.sh --skip-test
+# Deploy only — skip chart tests
+./scripts/deploy-test-cost-onprem.sh --skip-chart-tests
 ```
 
-## Tests Only (Existing Deployment)
+## Tests Against Existing Deployment
 
 ```bash
-./scripts/deploy-test-cost-onprem.sh --tests-only
+# Run chart tests only (no redeploy)
+./scripts/deploy-test-cost-onprem.sh --skip-deploy
+
+# Run only IQE integration tests (no deploy, no chart tests)
+./scripts/deploy-test-cost-onprem.sh --iqe-only --iqe-profile smoke
 ```
 
 ## Dry Run
@@ -92,3 +96,12 @@ Check for resource constraints:
 kubectl describe pod -n cost-onprem <pod-name>
 kubectl get events -n cost-onprem --sort-by='.lastTimestamp'
 ```
+
+## After Modifying deploy-test-cost-onprem.sh
+
+If you change flag parsing or summary output, validate all permutations locally:
+```bash
+./scripts/qe/test-gh-workflow-locally.sh .github/workflows/validate-deploy-test-script.yml
+```
+
+This also runs automatically on PRs that touch the script.
