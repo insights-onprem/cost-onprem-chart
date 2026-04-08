@@ -156,8 +156,9 @@ class TestDatabaseMigrations:
                 )
         
         # Job completed - verify it succeeded
-        assert succeeded == "1" or int(succeeded) >= 1, (
-            "Migration job did not succeed. "
+        succeeded_count = int(succeeded) if succeeded else 0
+        assert succeeded_count >= 1, (
+            f"Migration job did not succeed (succeeded={succeeded}). "
             "Check logs: oc logs -l app.kubernetes.io/component=cost-management-migration"
         )
 
