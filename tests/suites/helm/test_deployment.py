@@ -96,6 +96,16 @@ class TestDeploymentHealth:
             "app.kubernetes.io/component=cost-management-api"
         ), "Koku API pod is not ready"
 
+    def test_ui_pod_ready(self, cluster_config):
+        """Verify UI pod is ready.
+        
+        FLPATH-3855: Verify UI Component Deployment
+        """
+        assert check_pod_ready(
+            cluster_config.namespace,
+            "app.kubernetes.io/component=ui"
+        ), "UI pod is not ready"
+
 
 @pytest.mark.helm
 @pytest.mark.component

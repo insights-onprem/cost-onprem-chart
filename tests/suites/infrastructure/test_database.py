@@ -6,7 +6,7 @@ Tests for database schema validation and migration status.
 
 import pytest
 
-from utils import exec_in_pod, execute_db_query
+from utils import exec_in_pod, execute_db_query, run_oc_command
 
 
 @pytest.mark.infrastructure
@@ -111,6 +111,55 @@ class TestDatabaseMigrations:
         expected_apps = ["api", "reporting", "reporting_common"]
         for app in expected_apps:
             assert app in apps, f"Migrations for '{app}' not found"
+
+    def test_migration_job_completed(self, cluster_config):
+        """Verify database migration job completed successfully.
+        
+        FLPATH-3858: Verify Database Initialization Jobs
+        
+        The koku-migrate job is a Helm pre-install/pre-upgrade hook that runs
+        Django migrations before the application pods start.
+        """
+        # Get the migration job status
+        result = run_oc_command([
+            "get", "job",
+            "-n", cluster_config.namespace,
+            "-l", "app.kubernetes.io/component=cost-management-migration",
+            "-o", "jsonpath={.items[*].status.succeeded}"
+        ], check=False)
+        
+        if result.returncode != 0:
+            pytest.skip("Migration job not found (may be cleaned up by Helm hook policy)")
+        
+        # Check if job completed successfully
+        succeeded = result.stdout.strip()
+        
+        if not succeeded:
+            # Job exists but hasn't completed - check for failures
+            failure_result = run_oc_command([
+                "get", "job",
+                "-n", cluster_config.namespace,
+                "-l", "app.kubernetes.io/component=cost-management-migration",
+                "-o", "jsonpath={.items[*].status.failed}"
+            ], check=False)
+            
+            failed = failure_result.stdout.strip()
+            if failed and int(failed) > 0:
+                pytest.fail(
+                    f"Migration job failed {failed} time(s). "
+                    "Check logs: oc logs -l app.kubernetes.io/component=cost-management-migration"
+                )
+            else:
+                pytest.skip(
+                    "Migration job not completed yet (this is informational - "
+                    "tables already validated in other tests)"
+                )
+        
+        # Job completed - verify it succeeded
+        assert succeeded == "1" or int(succeeded) >= 1, (
+            "Migration job did not succeed. "
+            "Check logs: oc logs -l app.kubernetes.io/component=cost-management-migration"
+        )
 
 
 @pytest.mark.infrastructure
