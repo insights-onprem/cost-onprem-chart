@@ -2,8 +2,8 @@ apiVersion: v2
 name: cost-onprem
 description: Cost Management On-Premise solution for OpenShift
 type: application
-version: 0.2.18
-appVersion: "0.2.18"
+version: 0.2.19
+appVersion: "0.2.19"
 
 keywords:
   - cost-management
