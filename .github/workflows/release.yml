@@ -15,6 +15,7 @@ jobs:
     outputs:
       version: ${{ steps.chart.outputs.version }}
       changed: ${{ steps.check.outputs.changed }}
+      is_rc: ${{ steps.rc_check.outputs.is_rc }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,6 +27,18 @@ jobs:
         run: |
           VERSION=$(grep '^version:' cost-onprem/Chart.yaml | awk '{print $2}')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check if version is RC
+        id: rc_check
+        run: |
+          VERSION="${{ steps.chart.outputs.version }}"
+          if echo "$VERSION" | grep -qE '\-rc[0-9]+$'; then
+            echo "is_rc=true" >> $GITHUB_OUTPUT
+            echo "Version $VERSION is a release candidate"
+          else
+            echo "is_rc=false" >> $GITHUB_OUTPUT
+            echo "Version $VERSION is a stable release"
+          fi
 
       - name: Check if release already exists
         id: check
@@ -64,8 +77,17 @@ jobs:
         with:
           charts_dir: .
           config: .github/cr.yaml
+          mark_as_latest: ${{ needs.check-version.outputs.is_rc != 'true' }}
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Mark RC release as pre-release
+        if: needs.check-version.outputs.is_rc == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="cost-onprem-${{ needs.check-version.outputs.version }}"
+          gh release edit "$TAG" --prerelease
 
   release-oci:
     needs: check-version
