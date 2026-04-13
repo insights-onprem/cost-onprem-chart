@@ -363,4 +363,7 @@ Tests are organized into skip groups with `SKIP_*` env vars. Key blockers:
 See `docs/development/skipped-iqe-tests.md` for full details on all skip groups,
 pytest markers, and test profiles.
 
+See `docs/development/test-impact-map.md` for the automated test recommendation
+system that maps component changes to IQE profiles (`scripts/qe/test-impact-map.yaml`).
+
 See `docs/development/iqe-testing-setup.md` for full setup guide.

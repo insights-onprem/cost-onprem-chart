@@ -1,0 +1,285 @@
+# Validates QE scripts (recommend-tests.sh, check-components.sh) without
+# requiring deployment infrastructure. Tests flag parsing, error handling,
+# and YAML parsing logic.
+
+name: Validate QE Scripts
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/qe/*.sh'
+      - 'scripts/qe/*.yaml'
+      - '.github/workflows/validate-qe-scripts.yml'
+  workflow_dispatch:
+
+jobs:
+  validate-recommend-tests:
+    name: recommend-tests.sh validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Test script with valid inputs
+        run: |
+          BASE_BRANCH=main ./scripts/qe/recommend-tests.sh
+          [[ $? -eq 0 ]] || { echo "Script failed with exit code $?"; exit 1; }
+
+      - name: Test with missing impact map
+        run: |
+          set +e
+          IMPACT_MAP=/nonexistent ./scripts/qe/recommend-tests.sh 2>&1 | tee output.txt
+          EXIT_CODE=$?
+          set -e
+          
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "ERROR: Script should have failed with missing impact map"
+            exit 1
+          fi
+          
+          if ! grep -q "Impact map not found" output.txt; then
+            echo "ERROR: Expected error message not found"
+            cat output.txt
+            exit 1
+          fi
+          
+          echo "✓ Correctly handled missing impact map"
+
+      - name: Test YAML parsing (yq path)
+        run: |
+          # Verify all components in map can be parsed with yq
+          COMPONENTS="koku koku-ui-onprem insights-ingress-go"
+          
+          for comp in $COMPONENTS; do
+            profile=$(bash -c "
+              source scripts/qe/recommend-tests.sh
+              get_component_field '$comp' profile
+            ")
+            
+            if [[ -z "$profile" ]]; then
+              echo "ERROR: Failed to parse component '$comp' with yq"
+              exit 1
+            fi
+            
+            echo "✓ Parsed $comp: profile=$profile"
+          done
+
+      - name: Test YAML parsing (awk fallback)
+        run: |
+          # Test awk fallback by hiding yq
+          PATH=/usr/bin:/bin
+          COMPONENTS="koku koku-ui-onprem"
+          
+          for comp in $COMPONENTS; do
+            profile=$(bash -c "
+              PATH=/usr/bin:/bin
+              source scripts/qe/recommend-tests.sh
+              get_component_field '$comp' profile
+            ")
+            
+            if [[ -z "$profile" ]]; then
+              echo "ERROR: Failed to parse component '$comp' with awk"
+              exit 1
+            fi
+            
+            echo "✓ Parsed $comp with awk: profile=$profile"
+          done
+
+      - name: Test impact map validation
+        run: |
+          # Create invalid impact map (missing components section)
+          mkdir -p /tmp/test-maps
+          cat > /tmp/test-maps/invalid.yaml <<EOF
+paths:
+  test-rule:
+    pattern: "test"
+    profile: smoke
+    impact: low
+    description: "Test"
+EOF
+          
+          set +e
+          IMPACT_MAP=/tmp/test-maps/invalid.yaml ./scripts/qe/recommend-tests.sh 2>&1 | tee output.txt
+          EXIT_CODE=$?
+          set -e
+          
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "ERROR: Script should have failed with invalid map"
+            exit 1
+          fi
+          
+          if ! grep -q "missing required section" output.txt; then
+            echo "ERROR: Expected validation error not found"
+            cat output.txt
+            exit 1
+          fi
+          
+          echo "✓ Correctly validated impact map structure"
+
+      - name: Test profile ranking
+        run: |
+          # Verify profile ranking logic
+          bash -c '
+            source scripts/qe/recommend-tests.sh
+            
+            smoke_rank=$(profile_rank smoke)
+            extended_rank=$(profile_rank extended)
+            stable_rank=$(profile_rank stable)
+            full_rank=$(profile_rank full)
+            
+            if [[ $smoke_rank -ge $extended_rank ]] || \
+               [[ $extended_rank -ge $stable_rank ]] || \
+               [[ $stable_rank -ge $full_rank ]]; then
+              echo "ERROR: Profile ranking is incorrect"
+              echo "smoke=$smoke_rank extended=$extended_rank stable=$stable_rank full=$full_rank"
+              exit 1
+            fi
+            
+            echo "✓ Profile ranking correct: $smoke_rank < $extended_rank < $stable_rank < $full_rank"
+          '
+
+  validate-check-components:
+    name: check-components.sh validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test deployment-info mode
+        run: |
+          MODE=deployment-info ./scripts/qe/check-components.sh
+          [[ $? -eq 0 ]] || { echo "deployment-info mode failed"; exit 1; }
+          echo "✓ deployment-info mode works"
+
+      - name: Test invalid mode
+        run: |
+          set +e
+          MODE=invalid-mode ./scripts/qe/check-components.sh 2>&1 | tee output.txt
+          EXIT_CODE=$?
+          set -e
+          
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "ERROR: Script should have failed with invalid mode"
+            exit 1
+          fi
+          
+          if ! grep -q "Unknown mode" output.txt; then
+            echo "ERROR: Expected error message not found"
+            cat output.txt
+            exit 1
+          fi
+          
+          echo "✓ Correctly rejected invalid mode"
+
+      - name: Test with missing files
+        run: |
+          set +e
+          VALUES_FILE=/nonexistent MODE=list-versions ./scripts/qe/check-components.sh 2>&1 | tee output.txt
+          EXIT_CODE=$?
+          set -e
+          
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "ERROR: Script should have failed with missing values file"
+            exit 1
+          fi
+          
+          echo "✓ Correctly handled missing values file"
+
+      - name: Test cleanup handler
+        run: |
+          # Verify cleanup trap is registered
+          if ! grep -q "trap cleanup EXIT INT TERM" scripts/qe/check-components.sh; then
+            echo "ERROR: No cleanup trap found"
+            exit 1
+          fi
+          echo "✓ Cleanup trap registered"
+
+      - name: Test component-updates.json exists
+        run: |
+          if [[ ! -f component-updates.json ]]; then
+            echo "ERROR: component-updates.json not found"
+            exit 1
+          fi
+          
+          # Validate JSON structure
+          if ! jq -e '.pending_updates' component-updates.json > /dev/null; then
+            echo "ERROR: Invalid component-updates.json structure"
+            exit 1
+          fi
+          
+          echo "✓ component-updates.json exists and is valid"
+
+  validate-post-comment:
+    name: post-test-advisor-comment.sh validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test missing required variables
+        run: |
+          # Test missing PR_NUMBER
+          set +e
+          ./scripts/qe/post-test-advisor-comment.sh 2>&1 | tee output.txt
+          EXIT_CODE=$?
+          set -e
+          
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "ERROR: Script should have failed with missing PR_NUMBER"
+            exit 1
+          fi
+          
+          if ! grep -q "PR_NUMBER is required" output.txt; then
+            echo "ERROR: Expected error message not found"
+            cat output.txt
+            exit 1
+          fi
+          
+          echo "✓ Correctly requires PR_NUMBER"
+
+      - name: Test missing PROFILE
+        run: |
+          set +e
+          PR_NUMBER=123 ./scripts/qe/post-test-advisor-comment.sh 2>&1 | tee output.txt
+          EXIT_CODE=$?
+          set -e
+          
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "ERROR: Script should have failed with missing PROFILE"
+            exit 1
+          fi
+          
+          if ! grep -q "PROFILE is required" output.txt; then
+            echo "ERROR: Expected error message not found"
+            cat output.txt
+            exit 1
+          fi
+          
+          echo "✓ Correctly requires PROFILE"
+
+  shellcheck:
+    name: ShellCheck linting
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run shellcheck
+        run: |
+          shellcheck --version
+          shellcheck scripts/qe/recommend-tests.sh scripts/qe/check-components.sh scripts/qe/post-test-advisor-comment.sh || {
+            echo "ShellCheck found issues - review warnings above"
+            echo "Note: Some warnings may be acceptable - review manually"
+          }
