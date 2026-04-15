@@ -147,7 +147,7 @@ costManagement:
 
     image:
       repository: quay.io/redhat-services-prod/cost-mgmt-dev-tenant/koku
-      tag: "917373e"
+      tag: "b5b6fc3"
       pullPolicy: Always
 
     replicas: 1
