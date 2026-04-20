@@ -33,6 +33,8 @@ User → OpenShift Route → OAuth2 Proxy → Keycloak OIDC → Validate
 
 ## Architecture
 
+![UI Login Flow](../ui-login-flow.svg)
+
 ### Deployment Architecture
 
 ```mermaid

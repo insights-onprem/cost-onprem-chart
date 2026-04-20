@@ -2,6 +2,14 @@
 
 System design, component interactions, and technical architecture documentation for Cost Management On-Premise.
 
+## SaaS to On-Prem Transition
+
+![SaaS to On-Prem Transition](../saas-to-onprem-transition-diagram.svg)
+
+## Gateway Routing
+
+![Gateway Routing](../gateway-routing-diagram.svg)
+
 ## Documents
 
 | Document | Description |

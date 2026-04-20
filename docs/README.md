@@ -15,6 +15,21 @@ docs/
 └── README.md        # This file - documentation index and navigation
 ```
 
+## 📊 Diagrams
+
+Visual overviews of the system architecture, data flows, and key transitions.
+
+| Diagram | Purpose |
+|---------|---------|
+| **[Architecture Overview](cost-onprem-architecture-diagram.svg)** | Component layout of the on-prem deployment |
+| **[SaaS to On-Prem Transition](saas-to-onprem-transition-diagram.svg)** | What changes between SaaS and on-prem |
+| **[Data Processing Flow](data-processing-flow.svg)** | End-to-end data pipeline from operator upload to cost insights |
+| **[Gateway Routing](gateway-routing-diagram.svg)** | Envoy gateway route configuration and request flow |
+| **[UI Login Flow](ui-login-flow.svg)** | OAuth/Keycloak authentication sequence for the UI |
+> **Tip:** These SVGs are also embedded inline in the relevant documentation pages listed below.
+
+---
+
 ## 📚 Documentation Index
 
 Browse documentation by category:
