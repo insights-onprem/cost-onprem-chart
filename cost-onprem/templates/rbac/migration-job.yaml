@@ -1,0 +1,136 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "cost-onprem.rbac.migration.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-onprem.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac-migration
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "cost-onprem.labels" . | nindent 8 }}
+        app.kubernetes.io/component: rbac-migration
+    spec:
+      restartPolicy: Never
+
+      securityContext:
+        {{- include "cost-onprem.securityContext.pod" . | nindent 8 }}
+
+      containers:
+      - name: migrate
+        image: "{{ include "cost-onprem.rbac.image" . }}"
+        imagePullPolicy: {{ .Values.rbac.image.pullPolicy }}
+        workingDir: /opt/rbac/rbac
+
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -e
+
+            DB_HOST="{{ include "cost-onprem.rbac.database.host" . }}"
+            DB_PORT="{{ .Values.database.server.port | default "5432" }}"
+            MAX_WAIT=300
+            ELAPSED=0
+
+            echo "=== insights-rbac migration job ==="
+
+            echo "Waiting for PostgreSQL at ${DB_HOST}:${DB_PORT}..."
+            while ! timeout 5 bash -c "cat < /dev/null > /dev/tcp/${DB_HOST}/${DB_PORT}" 2>/dev/null; do
+              if [ $ELAPSED -ge $MAX_WAIT ]; then
+                echo "ERROR: PostgreSQL not ready after ${MAX_WAIT} seconds"
+                exit 1
+              fi
+              echo "PostgreSQL not ready (${ELAPSED}s elapsed), waiting..."
+              sleep 5
+              ELAPSED=$((ELAPSED + 5))
+            done
+            echo "✓ PostgreSQL is ready (waited ${ELAPSED}s)"
+
+            echo "Running Django migrations..."
+            python manage.py migrate --noinput
+            echo "✓ Migrations complete"
+
+            echo "Seeding permissions, roles, and groups..."
+            python manage.py seeds --skip-notifications
+            echo "✓ Built-in seeding complete"
+
+            echo "Seeding cost-management permissions and roles (from RedHatInsights/rbac-config)..."
+            python manage.py shell <<'SEED_SCRIPT'
+            import json
+            from api.models import Tenant
+            from management.models import Permission, Role, Access
+
+            public_tenant = Tenant.objects.get(tenant_name='public')
+
+            perms = [
+                ("aws.account", "*"), ("aws.account", "read"),
+                ("aws.organizational_unit", "*"), ("aws.organizational_unit", "read"),
+                ("azure.subscription_guid", "*"), ("azure.subscription_guid", "read"),
+                ("gcp.account", "*"), ("gcp.account", "read"),
+                ("gcp.project", "*"), ("gcp.project", "read"),
+                ("openshift.cluster", "*"), ("openshift.cluster", "read"),
+                ("openshift.node", "*"), ("openshift.node", "read"),
+                ("openshift.project", "*"), ("openshift.project", "read"),
+                ("cost_model", "*"), ("cost_model", "read"), ("cost_model", "write"),
+                ("settings", "*"), ("settings", "read"), ("settings", "write"),
+                ("*", "*"),
+            ]
+
+            perm_count = 0
+            for res, verb in perms:
+                _, created = Permission.objects.get_or_create(
+                    application="cost-management", resource_type=res, verb=verb,
+                    defaults={"permission": f"cost-management:{res}:{verb}", "tenant": public_tenant}
+                )
+                if created:
+                    perm_count += 1
+            print(f"Seeded {perm_count} cost-management permissions")
+
+            roles = [
+                ("Cost Administrator", "Perform any available operation on cost management resources.", True, False, ["*:*"]),
+                ("Cost Price List Administrator", "Perform read and write operations on cost models.", False, False, ["cost_model:*", "settings:*"]),
+                ("Cost Price List Viewer", "Perform read operations on cost models.", False, False, ["cost_model:read", "settings:read"]),
+                ("Cost Cloud Viewer", "Perform read operations on cost reports related to cloud sources.", False, False, ["aws.account:*", "aws.organizational_unit:*", "azure.subscription_guid:*", "gcp.account:*", "gcp.project:*"]),
+                ("Cost OpenShift Viewer", "Perform read operations on cost reports related to OpenShift sources.", False, False, ["openshift.cluster:*"]),
+            ]
+
+            role_count = 0
+            for name, desc, admin_default, platform_default, access_list in roles:
+                role, created = Role.objects.get_or_create(
+                    name=name, tenant=public_tenant,
+                    defaults={"description": desc, "system": True, "platform_default": platform_default, "admin_default": admin_default, "version": 2}
+                )
+                if created:
+                    role_count += 1
+                for perm_suffix in access_list:
+                    res, verb = perm_suffix.split(":")
+                    perm = Permission.objects.get(application="cost-management", resource_type=res, verb=verb, tenant=public_tenant)
+                    Access.objects.get_or_create(role=role, permission=perm, defaults={"tenant": public_tenant})
+
+            print(f"Seeded {role_count} cost-management roles (total: {Role.objects.count()})")
+            print("Cost-management RBAC seeding complete.")
+            SEED_SCRIPT
+            echo "✓ Cost-management seeding complete"
+
+            echo "=== insights-rbac migration job completed ==="
+
+        env:
+        {{- include "cost-onprem.rbac.commonEnv" . | nindent 8 }}
+
+        securityContext:
+          {{- include "cost-onprem.securityContext.container" . | nindent 10 }}
+
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
