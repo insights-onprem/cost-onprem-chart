@@ -586,6 +586,8 @@ create_database_credentials_secret() {
     local ros_password=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)
     local kruize_password=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)
     local koku_password=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)
+    local rbac_password=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)
+    local rbac_django_secret=$(openssl rand -base64 50 | tr -d "=+/" | cut -c1-50)
 
     # Create the secret
     kubectl create secret generic "$secret_name" \
@@ -597,7 +599,10 @@ create_database_credentials_secret() {
         --from-literal=kruize-user=kruize_user \
         --from-literal=kruize-password="$kruize_password" \
         --from-literal=koku-user=koku_user \
-        --from-literal=koku-password="$koku_password"
+        --from-literal=koku-password="$koku_password" \
+        --from-literal=rbac-user=rbac_user \
+        --from-literal=rbac-password="$rbac_password" \
+        --from-literal=django-secret-key="$rbac_django_secret"
 
     if [ $? -eq 0 ]; then
         echo_success "Database credentials secret created successfully"
