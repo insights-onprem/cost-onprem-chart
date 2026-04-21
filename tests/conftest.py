@@ -769,8 +769,6 @@ cost_admin_role = Role.objects.filter(name='Cost Administrator', tenant=public_t
 if not cost_admin_role:
     print('RBAC bootstrap: Cost Administrator role not found')
 else:
-    # Create the RBAC tenant directly — the /status/ endpoint doesn't
-    # trigger RBAC tenant creation, so we must ensure it exists here.
     tenant, created = Tenant.objects.get_or_create(
         org_id=org_id,
         defaults={{'tenant_name': 'acct' + acct_number, 'ready': True}}
@@ -802,7 +800,20 @@ else:
         ["python", "/opt/rbac/rbac/manage.py", "shell", "-c", bootstrap_script],
         timeout=120,
     )
-    logger.info(f"RBAC bootstrap result: {result.strip() if result else 'no output'}")
+    logger.info(f"RBAC bootstrap ORM result: {result.strip() if result else 'no output'}")
+
+    # Run V2 tenant bootstrap so that TenantMapping, workspaces, and role
+    # bindings are created — without this RBAC returns 400 on /access/ queries.
+    v2_result = exec_in_pod(
+        cluster_config.namespace,
+        rbac_pod,
+        [
+            "python", "/opt/rbac/rbac/manage.py",
+            "bootstrap_tenants", "--org-id", org_id_value, "--force",
+        ],
+        timeout=120,
+    )
+    logger.info(f"RBAC bootstrap V2 result: {v2_result.strip() if v2_result else 'no output'}")
 
 
 # =============================================================================
