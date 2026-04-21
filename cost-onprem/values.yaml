@@ -681,9 +681,9 @@ rbac:
     BYPASS_BOP_VERIFICATION: "True"
     KAFKA_ENABLED: "false"
     PGSSLMODE: "disable"
-    PERMISSION_SEEDING_ENABLED: "True"
-    ROLE_SEEDING_ENABLED: "True"
-    GROUP_SEEDING_ENABLED: "True"
+    # Seeding is handled exclusively by the migration job (pre-install hook).
+    # Do NOT enable these here — they apply to all RBAC components including
+    # the API, which would re-seed on every restart and undo migration cleanup.
     DJANGO_LOG_LEVEL: "INFO"
     RBAC_LOG_LEVEL: "INFO"
     DJANGO_LOG_FORMATTER: "simple"
