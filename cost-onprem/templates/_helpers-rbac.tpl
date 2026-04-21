@@ -94,6 +94,16 @@ Provides DB, Redis, and application configuration for non-Clowder mode.
     secretKeyRef:
       name: {{ include "cost-onprem.rbac.database.secretName" . }}
       key: django-secret-key
+- name: V2_BOOTSTRAP_TENANT
+  value: "True"
+- name: SYSTEM_DEFAULT_ROOT_WORKSPACE_ROLE_UUID
+  value: "00000000-0000-4000-a000-000000000001"
+- name: SYSTEM_DEFAULT_TENANT_ROLE_UUID
+  value: "00000000-0000-4000-a000-000000000002"
+- name: SYSTEM_ADMIN_ROOT_WORKSPACE_ROLE_UUID
+  value: "00000000-0000-4000-a000-000000000003"
+- name: SYSTEM_ADMIN_TENANT_ROLE_UUID
+  value: "00000000-0000-4000-a000-000000000004"
 {{- range $key, $value := .Values.rbac.env }}
 - name: {{ $key }}
   value: {{ $value | quote }}

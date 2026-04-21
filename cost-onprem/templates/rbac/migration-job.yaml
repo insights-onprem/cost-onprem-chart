@@ -19,6 +19,7 @@ spec:
         app.kubernetes.io/component: rbac-migration
     spec:
       restartPolicy: Never
+      automountServiceAccountToken: false
 
       securityContext:
         {{- include "cost-onprem.securityContext.pod" . | nindent 8 }}
@@ -118,6 +119,39 @@ spec:
             print("Cost-management RBAC seeding complete.")
             SEED_SCRIPT
             echo "✓ Cost-management seeding complete"
+
+            echo "Creating admin_default group for org tenants..."
+            python manage.py shell <<'ADMIN_DEFAULT_SCRIPT'
+            from api.models import Tenant
+            from management.models import Group, Policy, Role
+
+            public_tenant = Tenant.objects.get(tenant_name='public')
+            cost_admin_role = Role.objects.filter(name='Cost Administrator', tenant=public_tenant).first()
+            if not cost_admin_role:
+                print("WARNING: Cost Administrator role not found, skipping admin_default group")
+            else:
+                user_tenants = Tenant.objects.exclude(tenant_name='public').filter(org_id__isnull=False)
+                count = 0
+                for tenant in user_tenants:
+                    grp, _ = Group.objects.get_or_create(
+                        name='Cost Admin Default', tenant=tenant,
+                        defaults={'admin_default': True, 'system': True,
+                                  'description': 'Admin default: grants Cost Administrator to is_org_admin users'}
+                    )
+                    grp.admin_default = True
+                    grp.save()
+                    policy, _ = Policy.objects.get_or_create(
+                        name='Cost Admin Default Policy', tenant=tenant, group=grp
+                    )
+                    policy.roles.add(cost_admin_role)
+                    count += 1
+                print(f"Created/updated admin_default group for {count} tenant(s)")
+            ADMIN_DEFAULT_SCRIPT
+            echo "✓ Admin default group seeding complete"
+
+            echo "Bootstrapping tenant mappings for all existing tenants..."
+            python manage.py bootstrap_tenants --all -v 2 || true
+            echo "✓ Tenant bootstrap complete"
 
             echo "=== insights-rbac migration job completed ==="
 
