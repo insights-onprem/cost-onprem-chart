@@ -5,7 +5,7 @@ These tests validate the OAuth/OIDC logout flow through the browser,
 ensuring users are properly logged out via Keycloak and the SSO session
 is fully terminated.
 
-Verifies: FLPATH-2959 - Implement logout for the UI via Keycloak
+Verifies: FLPATH-2966 - Add logout to the UI
 """
 
 import re
@@ -67,6 +67,59 @@ class TestLogoutFlow:
         )
         expect(authenticated_page.locator('input[name="username"]')).to_be_visible()
 
+    def test_oauth_cookie_cleared_after_logout(
+        self, authenticated_page: Page, ui_url: str, keycloak_config
+    ):
+        """Verify the _oauth2_proxy session cookie is removed after logout."""
+        authenticated_page.goto(ui_url)
+        authenticated_page.wait_for_load_state("networkidle")
+
+        cookies_before = authenticated_page.context.cookies()
+        session_cookies_before = [
+            c for c in cookies_before
+            if c["name"].startswith("_oauth2_proxy")
+            and c["name"] != "_oauth2_proxy_csrf"
+        ]
+        assert session_cookies_before, (
+            "Expected _oauth2_proxy session cookie(s) to exist before logout"
+        )
+
+        authenticated_page.goto(f"{ui_url}/logout")
+        authenticated_page.wait_for_url(
+            f"**/{keycloak_config.realm}/**", timeout=15000
+        )
+
+        cookies_after = authenticated_page.context.cookies()
+        session_cookies_after = [
+            c for c in cookies_after
+            if c["name"].startswith("_oauth2_proxy")
+            and c["name"] != "_oauth2_proxy_csrf"
+        ]
+        assert not session_cookies_after, (
+            "Expected _oauth2_proxy session cookie(s) to be cleared after logout"
+        )
+
+    def test_back_button_after_logout_does_not_restore_session(
+        self, authenticated_page: Page, ui_url: str, keycloak_config
+    ):
+        """Verify pressing back after logout does not restore an authenticated session."""
+        authenticated_page.goto(ui_url)
+        authenticated_page.wait_for_load_state("networkidle")
+
+        authenticated_page.goto(f"{ui_url}/logout")
+        authenticated_page.wait_for_url(
+            f"**/{keycloak_config.realm}/**", timeout=15000
+        )
+
+        authenticated_page.go_back()
+        authenticated_page.wait_for_load_state("networkidle")
+
+        # Should still be on the login page or redirected back to it
+        authenticated_page.wait_for_url(
+            f"**/{keycloak_config.realm}/**", timeout=15000
+        )
+        expect(authenticated_page.locator('input[name="username"]')).to_be_visible()
+
 
 @pytest.mark.ui
 @pytest.mark.auth
@@ -83,4 +136,24 @@ class TestLogoutBoundary:
         assert response is not None
         assert response.status < 500, (
             f"Unauthenticated /logout returned server error: {response.status}"
+        )
+
+    def test_double_logout_no_error(
+        self, authenticated_page: Page, ui_url: str, keycloak_config
+    ):
+        """Verify logging out twice does not produce an error."""
+        authenticated_page.goto(ui_url)
+        authenticated_page.wait_for_load_state("networkidle")
+
+        # First logout
+        authenticated_page.goto(f"{ui_url}/logout")
+        authenticated_page.wait_for_url(
+            f"**/{keycloak_config.realm}/**", timeout=15000
+        )
+
+        # Second logout while already logged out
+        response = authenticated_page.goto(f"{ui_url}/logout")
+        assert response is not None
+        assert response.status < 500, (
+            f"Double /logout returned server error: {response.status}"
         )
