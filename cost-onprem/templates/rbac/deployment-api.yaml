@@ -44,6 +44,12 @@ spec:
 
         env:
         {{- include "cost-onprem.rbac.commonEnv" . | nindent 8 }}
+        - name: PERMISSION_SEEDING_ENABLED
+          value: "False"
+        - name: ROLE_SEEDING_ENABLED
+          value: "False"
+        - name: GROUP_SEEDING_ENABLED
+          value: "False"
 
         livenessProbe:
           httpGet:
