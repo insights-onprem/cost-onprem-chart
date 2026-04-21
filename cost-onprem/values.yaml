@@ -195,6 +195,7 @@ costManagement:
       CACHED_VIEWS_DISABLED: "False"
       RETAIN_NUM_MONTHS: "3"
       NOTIFICATION_CHECK_TIME: "24"
+      ENHANCED_ORG_ADMIN: "False"
       RBAC_CACHE_TIMEOUT: "300"
       CACHE_TIMEOUT: "3600"
       TAG_ENABLED_LIMIT: "200"
@@ -658,7 +659,6 @@ rbac:
 
   api:
     replicas: 1
-    port: 8000
     resources:
       requests:
         cpu: 250m
@@ -678,7 +678,6 @@ rbac:
         memory: 2Gi
 
   env:
-    API_PATH_PREFIX: "/api/rbac"
     CLOWDER_ENABLED: "false"
     BYPASS_BOP_VERIFICATION: "True"
     KAFKA_ENABLED: "false"
@@ -691,10 +690,6 @@ rbac:
     DJANGO_LOG_FORMATTER: "simple"
     DJANGO_LOG_HANDLERS: "console"
     ACCESS_CACHE_ENABLED: "True"
-
-  service:
-    type: ClusterIP
-    port: 8000
 
 # -----------------------------------------------------------------------------
 # Shared Infrastructure - Kafka

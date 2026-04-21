@@ -69,6 +69,8 @@ Common environment variables for insights-rbac containers.
 Provides DB, Redis, and application configuration for non-Clowder mode.
 */}}
 {{- define "cost-onprem.rbac.commonEnv" -}}
+- name: API_PATH_PREFIX
+  value: {{ include "cost-onprem.rbac.apiPathPrefix" . | quote }}
 - name: DATABASE_NAME
   value: {{ .Values.database.rbac.name | quote }}
 - name: DATABASE_USER
@@ -108,6 +110,20 @@ Provides DB, Redis, and application configuration for non-Clowder mode.
 - name: {{ $key }}
   value: {{ $value | quote }}
 {{- end }}
+{{- end -}}
+
+{{/*
+RBAC API path prefix (always /api/rbac — not user-configurable).
+*/}}
+{{- define "cost-onprem.rbac.apiPathPrefix" -}}
+/api/rbac
+{{- end -}}
+
+{{/*
+RBAC service port (always 8000 — internal only, not user-configurable).
+*/}}
+{{- define "cost-onprem.rbac.service.port" -}}
+8000
 {{- end -}}
 
 {{/*

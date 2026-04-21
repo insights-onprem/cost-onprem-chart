@@ -23,6 +23,10 @@ spec:
             matchLabels:
               app.kubernetes.io/instance: {{ .Release.Name }}
               app.kubernetes.io/component: cost-management-masu
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: ros-api
       ports:
         - protocol: TCP
-          port: {{ .Values.rbac.api.port }}
+          port: {{ include "cost-onprem.rbac.service.port" . }}

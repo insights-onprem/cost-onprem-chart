@@ -7,11 +7,11 @@ metadata:
     {{- include "cost-onprem.labels" . | nindent 4 }}
     app.kubernetes.io/component: rbac-api
 spec:
-  type: {{ .Values.rbac.service.type }}
+  type: ClusterIP
   ports:
   - name: http
-    port: {{ .Values.rbac.service.port }}
-    targetPort: {{ .Values.rbac.api.port }}
+    port: {{ include "cost-onprem.rbac.service.port" . }}
+    targetPort: {{ include "cost-onprem.rbac.service.port" . }}
     protocol: TCP
   selector:
     {{- include "cost-onprem.rbac.api.selectorLabels" . | nindent 4 }}
