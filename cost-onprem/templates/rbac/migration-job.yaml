@@ -62,6 +62,26 @@ spec:
             python manage.py seeds --skip-notifications
             echo "✓ Built-in seeding complete"
 
+            echo "Removing cost-management roles from platform_default groups..."
+            python manage.py shell <<'CLEANUP_DEFAULTS'
+            from management.models import Group, Policy, Role, Access
+            from api.models import Tenant
+            public_tenant = Tenant.objects.get(tenant_name='public')
+            cm_roles = Role.objects.filter(
+                access__permission__application='cost-management',
+                tenant=public_tenant
+            ).distinct()
+            removed = 0
+            for group in Group.objects.filter(platform_default=True):
+                for policy in Policy.objects.filter(group=group):
+                    for role in cm_roles:
+                        if policy.roles.filter(pk=role.pk).exists():
+                            policy.roles.remove(role)
+                            removed += 1
+            print(f"Removed {removed} cost-management role binding(s) from platform_default groups")
+            CLEANUP_DEFAULTS
+            echo "✓ Platform default cleanup complete"
+
             echo "Seeding cost-management permissions and roles (from RedHatInsights/rbac-config)..."
             python manage.py shell <<'SEED_SCRIPT'
             import json

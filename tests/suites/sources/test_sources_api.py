@@ -462,13 +462,13 @@ class TestAuthenticationErrors:
 
         assert response.status_code == 403, f"Expected 403, got {response.status_code}: {response.text[:200]}"
 
-    def test_non_admin_source_creation_returns_424(
+    def test_non_admin_source_creation_denied(
         self, pod_session_no_auth: requests.Session, koku_api_url: str, invalid_identity_headers
     ):
-        """Verify non-admin source creation fails when RBAC is unavailable.
+        """Verify non-admin source creation is denied by RBAC.
 
-        Koku checks RBAC for source creation. In on-prem deployments without
-        RBAC service, this returns 424 Failed Dependency.
+        Koku checks RBAC for source creation permissions. A user without
+        explicit RBAC group membership receives 403 Forbidden.
         """
         response = pod_session_no_auth.post(
             f"{koku_api_url}/sources",
@@ -483,22 +483,28 @@ class TestAuthenticationErrors:
             },
         )
 
-        assert response.status_code == 424, f"Expected 424, got {response.status_code}: {response.text[:200]}"
+        assert response.status_code in (403, 424), (
+            f"Expected 403 (RBAC denied) or 424 (RBAC unavailable), "
+            f"got {response.status_code}: {response.text[:200]}"
+        )
 
-    def test_missing_email_in_identity_returns_401(
+    def test_missing_email_in_identity_rejected(
         self, pod_session_no_auth: requests.Session, koku_api_url: str, invalid_identity_headers
     ):
-        """Verify missing email in identity header returns 401 Unauthorized.
+        """Verify missing email in identity header is rejected.
 
-        Koku's KokuTenantMiddleware requires email in the identity header
-        and returns HttpResponseUnauthorizedRequest (401) when missing.
+        Koku's KokuTenantMiddleware requires email in the identity header.
+        Returns 401 (missing email) or 403 (RBAC denies the request first).
         """
         response = pod_session_no_auth.get(
             f"{koku_api_url}/sources",
             headers={"X-Rh-Identity": invalid_identity_headers["no_email"]},
         )
 
-        assert response.status_code == 401, f"Expected 401, got {response.status_code}: {response.text[:200]}"
+        assert response.status_code in (401, 403), (
+            f"Expected 401 (missing email) or 403 (RBAC denied), "
+            f"got {response.status_code}: {response.text[:200]}"
+        )
 
 
 # =============================================================================

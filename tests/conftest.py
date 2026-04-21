@@ -654,6 +654,108 @@ def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> st
 
 
 # =============================================================================
+# RBAC Bootstrap (ensures CI service account has permissions)
+# =============================================================================
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _rbac_bootstrap(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig, gateway_url: str):
+    """Bootstrap RBAC permissions for the CI service account.
+
+    With is_org_admin=false in the Envoy gateway, the CI service account needs
+    explicit RBAC group membership. This fixture:
+    1. Triggers tenant creation by making a request through the gateway
+    2. Creates a "CI Test Admin" group and adds the service account principal
+       to it with Cost Administrator role
+
+    Only the service account principal is added to the admin group — individual
+    test users (alice, bob, carol) are NOT affected, preserving granular RBAC
+    test coverage in test_rbac_access.py.
+    """
+    logger = logging.getLogger(__name__)
+
+    # Step 1: Get a token and trigger tenant creation
+    try:
+        token = obtain_jwt_token(keycloak_config)
+    except Exception as e:
+        logger.warning(f"RBAC bootstrap: could not obtain JWT token: {e}")
+        return
+
+    # Decode the token to get the service account username
+    try:
+        payload = token.access_token.split(".")[1]
+        payload += "=" * (4 - len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+        sa_username = claims.get("preferred_username") or claims.get("sub", "service-account")
+    except Exception:
+        sa_username = f"service-account-{keycloak_config.client_id}"
+
+    logger.info(f"RBAC bootstrap: service account username = {sa_username}")
+
+    try:
+        resp = requests.get(
+            f"{gateway_url}/cost-management/v1/status/",
+            headers={"Authorization": f"Bearer {token.access_token}"},
+            verify=False,
+            timeout=30,
+        )
+        logger.info(f"RBAC bootstrap: tenant trigger response: {resp.status_code}")
+    except Exception as e:
+        logger.warning(f"RBAC bootstrap: gateway request failed: {e}")
+
+    # Give RBAC a moment to process the tenant creation
+    time.sleep(3)
+
+    # Step 2: Exec into RBAC pod and grant Cost Administrator to the SA principal
+    rbac_pod = get_pod_by_label(
+        cluster_config.namespace, "app.kubernetes.io/component=rbac-api"
+    )
+    if not rbac_pod:
+        logger.warning("RBAC bootstrap: rbac-api pod not found, skipping")
+        return
+
+    bootstrap_script = f"""
+from api.models import Tenant
+from management.models import Group, Policy, Role, Principal
+from django.core.cache import cache
+
+sa_username = "{sa_username}"
+public_tenant = Tenant.objects.get(tenant_name='public')
+cost_admin_role = Role.objects.filter(name='Cost Administrator', tenant=public_tenant).first()
+if not cost_admin_role:
+    print('RBAC bootstrap: Cost Administrator role not found')
+else:
+    count = 0
+    for tenant in Tenant.objects.exclude(tenant_name='public').filter(org_id__isnull=False):
+        grp, _ = Group.objects.get_or_create(
+            name='CI Test Admin', tenant=tenant,
+            defaults={{'admin_default': False, 'system': True,
+                      'description': 'CI service account admin access'}}
+        )
+        policy, _ = Policy.objects.get_or_create(
+            name='CI Test Admin Policy', tenant=tenant, group=grp
+        )
+        policy.roles.add(cost_admin_role)
+        principal, _ = Principal.objects.get_or_create(
+            username=sa_username, tenant=tenant,
+            defaults={{'type': 'user'}}
+        )
+        grp.principals.add(principal)
+        count += 1
+    cache.clear()
+    print(f'RBAC bootstrap: CI Test Admin group with Cost Administrator created for {{count}} tenant(s), principal={{sa_username}}')
+"""
+
+    result = exec_in_pod(
+        cluster_config.namespace,
+        rbac_pod,
+        ["python", "/opt/rbac/rbac/manage.py", "shell", "-c", bootstrap_script],
+        timeout=120,
+    )
+    logger.info(f"RBAC bootstrap result: {result.strip() if result else 'no output'}")
+
+
+# =============================================================================
 # Function-Scoped Fixtures (fresh for each test)
 # =============================================================================
 
