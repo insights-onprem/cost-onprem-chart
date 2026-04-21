@@ -485,19 +485,21 @@ def create_rh_identity_header(org_id: str, account_number: str = None) -> str:
 def create_identity_header_custom(
     org_id: str,
     is_org_admin: bool = True,
-    email: Optional[str] = "test@example.com",
+    username: str = "test",
+    email: Optional[str] = None,
     entitlements: Optional[dict] = None,
     account_number: Optional[str] = None,
 ) -> str:
-    """Create X-Rh-Identity header with customizable fields for error testing.
+    """Create X-Rh-Identity header with customizable fields.
 
     This function allows creating identity headers with various configurations
-    to test authentication error scenarios.
+    to test authentication and RBAC scenarios.
 
     Args:
         org_id: Organization ID for the tenant
         is_org_admin: Whether the user is an org admin (default: True)
-        email: User email address (set to None to omit the field)
+        username: Username for the identity (must match RBAC principal for per-user tests)
+        email: User email address (defaults to {username}@example.com, set to None to omit)
         entitlements: Custom entitlements dict (default: cost_management is_entitled=True)
         account_number: Account number (defaults to org_id if not provided)
 
@@ -507,6 +509,9 @@ def create_identity_header_custom(
     if account_number is None:
         account_number = org_id
 
+    if email is None:
+        email = f"{username}@example.com"
+
     if entitlements is None:
         entitlements = {
             "cost_management": {
@@ -515,7 +520,7 @@ def create_identity_header_custom(
         }
 
     user_dict: dict[str, Any] = {
-        "username": "test",
+        "username": username,
         "is_org_admin": is_org_admin,
     }
     if email is not None:
