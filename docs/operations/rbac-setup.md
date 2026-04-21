@@ -31,22 +31,26 @@ Key properties:
 
 ## Architecture
 
-```
-┌──────────┐     JWT      ┌─────────────┐   x-rh-identity   ┌──────────┐
-│ Keycloak │────────────▶ │   Envoy GW   │──────────────────▶│ Koku API │
-└──────────┘              └─────────────┘                    └────┬─────┘
-                                                                  │
-                                                    GET /access/  │
-                                                                  ▼
-                                                          ┌──────────────┐
-                                                          │ insights-rbac│
-                                                          │     API      │
-                                                          └──────┬───────┘
-                                                                 │
-                                                          ┌──────┴───────┐
-                                                          │  PostgreSQL  │
-                                                          │  (rbac DB)   │
-                                                          └──────────────┘
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant KC as Keycloak
+    participant GW as Envoy Gateway
+    participant K as Koku API
+    participant R as insights-rbac API
+    participant DB as PostgreSQL (rbac)
+
+    U->>KC: Authenticate
+    KC-->>U: JWT token
+    U->>GW: API request + JWT
+    GW->>GW: Validate JWT, build x-rh-identity<br/>(is_org_admin = false)
+    GW->>K: Forward request + x-rh-identity
+    K->>R: GET /api/rbac/v1/access/<br/>?application=cost-management
+    R->>DB: Resolve groups → policies → roles
+    DB-->>R: Permissions + resourceDefinitions
+    R-->>K: Access response (JSON)
+    K->>K: Apply resourceDefinitions<br/>as SQL WHERE filters
+    K-->>U: Filtered cost data
 ```
 
 1. User authenticates via Keycloak and obtains a JWT
@@ -79,6 +83,20 @@ Before configuring RBAC, ensure:
 ## How Authorization Works
 
 ### Two-Layer Authorization in Koku
+
+```mermaid
+flowchart TD
+    REQ[Incoming API Request] --> L1{Layer 1: Permission Gate}
+    L1 -->|No matching permission| F403[403 Forbidden]
+    L1 -->|Has matching permission| L2{Layer 2: resourceDefinitions?}
+    L2 -->|No resourceDefinitions<br/>wildcard access| ALL[Return all org data]
+    L2 -->|Has resourceDefinitions| FILTER[Apply as SQL WHERE clauses]
+    FILTER --> RESULT[Return filtered data]
+
+    style F403 fill:#ffcdd2
+    style ALL fill:#c8e6c9
+    style RESULT fill:#c8e6c9
+```
 
 **Layer 1: Permission Gate (DRF)**
 
@@ -163,8 +181,20 @@ Users are managed in Keycloak. Each user must have:
 
 RBAC uses the following hierarchy:
 
-```
-Group → Policy → Role → Access → Permission + ResourceDefinition
+```mermaid
+graph LR
+    P[Principal<br/><i>username</i>] --> G[Group<br/><i>per-tenant</i>]
+    G --> Po[Policy]
+    Po --> R[Role<br/><i>public tenant</i>]
+    R --> A[Access]
+    A --> Perm[Permission<br/><i>app:resource:verb</i>]
+    A --> RD[ResourceDefinition<br/><i>attributeFilter</i>]
+
+    style P fill:#e1f5fe
+    style G fill:#e8f5e9
+    style R fill:#fff3e0
+    style Perm fill:#fce4ec
+    style RD fill:#f3e5f5
 ```
 
 To grant a user access:
@@ -367,6 +397,21 @@ EOF
 
 ## Cache Behavior
 
+```mermaid
+flowchart LR
+    K[Koku API] -->|GET /access/| C1{Koku Valkey Cache}
+    C1 -->|HIT<br/>TTL ≤ 300s| K
+    C1 -->|MISS| R[insights-rbac API]
+    R --> C2{RBAC Django Cache}
+    C2 -->|HIT| R
+    C2 -->|MISS| DB[(PostgreSQL)]
+    DB --> C2
+    R -->|response stored| C1
+
+    style C1 fill:#fff9c4
+    style C2 fill:#fff9c4
+```
+
 ### RBAC Response Cache (Koku side)
 
 Koku caches responses from the RBAC `/access/` endpoint in Valkey:
@@ -421,10 +466,29 @@ kubectl exec -it $RBAC_POD -n <namespace> -- \
 ```
 
 **Common causes**:
-1. User has no principal record → Add principal to a group
-2. User's group has no policy binding → Create policy with role
-3. Cache is stale → Flush both caches
-4. Tenant not bootstrapped → Check `TenantMapping` exists
+
+```mermaid
+flowchart TD
+    ERR[User gets 403] --> Q1{Principal exists<br/>for this tenant?}
+    Q1 -->|No| FIX1[Create Principal and<br/>add to a Group]
+    Q1 -->|Yes| Q2{Principal belongs<br/>to a Group?}
+    Q2 -->|No| FIX2[Add Principal<br/>to a Group]
+    Q2 -->|Yes| Q3{Group has a Policy<br/>bound to a Role?}
+    Q3 -->|No| FIX3[Create Policy<br/>binding Group → Role]
+    Q3 -->|Yes| Q4{Cache stale?}
+    Q4 -->|Possible| FIX4[Flush both<br/>Valkey + Django caches]
+    Q4 -->|No| Q5{TenantMapping<br/>exists?}
+    Q5 -->|No| FIX5[Run bootstrap_tenants]
+    Q5 -->|Yes| FIX6[Check role permissions<br/>and resourceDefinitions]
+
+    style ERR fill:#ffcdd2
+    style FIX1 fill:#c8e6c9
+    style FIX2 fill:#c8e6c9
+    style FIX3 fill:#c8e6c9
+    style FIX4 fill:#c8e6c9
+    style FIX5 fill:#c8e6c9
+    style FIX6 fill:#c8e6c9
+```
 
 ### User Sees All Data (No Filtering)
 
@@ -483,6 +547,18 @@ kubectl exec -it $RBAC_POD -n <namespace> -- \
 ## Operational Runbook
 
 ### Adding a New Organization
+
+```mermaid
+flowchart LR
+    A[Create user<br/>in Keycloak] --> B[User makes first<br/>API request]
+    B --> C[Koku creates<br/>Tenant record]
+    C --> D[Run<br/>bootstrap_tenants]
+    D --> E[Create admin_default<br/>Group for tenant]
+    E --> F[Add user Principals<br/>to Groups]
+
+    style A fill:#e1f5fe
+    style F fill:#c8e6c9
+```
 
 When a new org is created in Keycloak:
 
@@ -550,6 +626,19 @@ EOF
 After revoking, flush caches (see [Cache Behavior](#cache-behavior)).
 
 ### Upgrading RBAC
+
+```mermaid
+flowchart LR
+    HU[helm upgrade] --> MJ[Migration Job]
+    MJ --> MIG[Django migrate<br/><i>idempotent</i>]
+    MIG --> SEED[manage.py seeds<br/><i>get_or_create</i>]
+    SEED --> CLEAN[Remove cost-mgmt roles<br/>from platform_default groups]
+    CLEAN --> RBAC_SEED[Seed rbac-config<br/>permissions]
+    RBAC_SEED --> OK[RBAC ready ✓]
+
+    style HU fill:#e1f5fe
+    style OK fill:#c8e6c9
+```
 
 The migration job runs automatically on `helm upgrade`. It is idempotent:
 - Migrations are safe to re-run
