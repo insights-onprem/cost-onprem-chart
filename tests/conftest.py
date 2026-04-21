@@ -751,36 +751,49 @@ def _rbac_bootstrap(cluster_config: ClusterConfig, keycloak_config: KeycloakConf
         logger.warning("RBAC bootstrap: rbac-api pod not found, skipping")
         return
 
+    # Resolve org_id from the token claims or fall back to default
+    org_id_value = claims.get("org_id") or "org1234567"
+    acct_number = claims.get("account_number") or "1234567"
+
     bootstrap_script = f"""
 from api.models import Tenant
 from management.models import Group, Policy, Role, Principal
 from django.core.cache import cache
 
 sa_username = "{sa_username}"
+org_id = "{org_id_value}"
+acct_number = "{acct_number}"
+
 public_tenant = Tenant.objects.get(tenant_name='public')
 cost_admin_role = Role.objects.filter(name='Cost Administrator', tenant=public_tenant).first()
 if not cost_admin_role:
     print('RBAC bootstrap: Cost Administrator role not found')
 else:
-    count = 0
-    for tenant in Tenant.objects.exclude(tenant_name='public').filter(org_id__isnull=False):
-        grp, _ = Group.objects.get_or_create(
-            name='CI Test Admin', tenant=tenant,
-            defaults={{'admin_default': False, 'system': True,
-                      'description': 'CI service account admin access'}}
-        )
-        policy, _ = Policy.objects.get_or_create(
-            name='CI Test Admin Policy', tenant=tenant, group=grp
-        )
-        policy.roles.add(cost_admin_role)
-        principal, _ = Principal.objects.get_or_create(
-            username=sa_username, tenant=tenant,
-            defaults={{'type': 'user'}}
-        )
-        grp.principals.add(principal)
-        count += 1
+    # Create the RBAC tenant directly — the /status/ endpoint doesn't
+    # trigger RBAC tenant creation, so we must ensure it exists here.
+    tenant, created = Tenant.objects.get_or_create(
+        org_id=org_id,
+        defaults={{'tenant_name': 'acct' + acct_number, 'ready': True}}
+    )
+    if created:
+        print(f'RBAC bootstrap: created tenant for org_id={{org_id}}')
+
+    grp, _ = Group.objects.get_or_create(
+        name='CI Test Admin', tenant=tenant,
+        defaults={{'admin_default': False, 'system': True,
+                  'description': 'CI service account admin access'}}
+    )
+    policy, _ = Policy.objects.get_or_create(
+        name='CI Test Admin Policy', tenant=tenant, group=grp
+    )
+    policy.roles.add(cost_admin_role)
+    principal, _ = Principal.objects.get_or_create(
+        username=sa_username, tenant=tenant,
+        defaults={{'type': 'user'}}
+    )
+    grp.principals.add(principal)
     cache.clear()
-    print(f'RBAC bootstrap: CI Test Admin group with Cost Administrator created for {{count}} tenant(s), principal={{sa_username}}')
+    print(f'RBAC bootstrap: CI Test Admin group with Cost Administrator created for org={{org_id}}, principal={{sa_username}}')
 """
 
     result = exec_in_pod(
