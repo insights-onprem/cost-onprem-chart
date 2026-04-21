@@ -787,6 +787,140 @@ else:
     else:
         logger.warning("RBAC bootstrap V2: success")
 
+    # =========================================================================
+    # Diagnostic: check RBAC state and Koku accessibility after bootstrap
+    # =========================================================================
+    koku_svc_host = f"{cluster_config.helm_release_name}-koku-api.{cluster_config.namespace}.svc"
+    diag_script = f"""
+import json, base64, urllib.request, urllib.error
+
+sa_username = "{sa_username}"
+org_id = "{org_id_value}"
+acct_number = "{acct_number}"
+
+# --- V1 ORM diagnostics ---
+from api.models import Tenant
+from management.models import Group, Policy, Role, Principal, Access
+
+public_tenant = Tenant.objects.get(tenant_name='public')
+
+# Check CI Test Admin group
+try:
+    tenant = Tenant.objects.get(org_id=org_id)
+    ci_grp = Group.objects.filter(name='CI Test Admin', tenant=tenant).first()
+    if ci_grp:
+        principals = list(ci_grp.principals.values_list('username', flat=True))
+        policies = Policy.objects.filter(group=ci_grp)
+        roles = []
+        for p in policies:
+            roles.extend(list(p.roles.values_list('name', flat=True)))
+        print(f"DIAG V1: CI Test Admin group found. principals={{principals}}, roles={{roles}}")
+    else:
+        print("DIAG V1: CI Test Admin group NOT found")
+except Tenant.DoesNotExist:
+    print(f"DIAG V1: Tenant org_id={{org_id}} not found")
+
+# Check platform_default groups
+pd_groups = Group.objects.filter(platform_default=True)
+for g in pd_groups:
+    policies = Policy.objects.filter(group=g)
+    for p in policies:
+        for r in p.roles.all():
+            cm_access = Access.objects.filter(role=r).filter(
+                permission__application='cost-management'
+            ).exists()
+            wildcard_access = Access.objects.filter(role=r).filter(
+                permission__resource_type='*'
+            ).exists()
+            if cm_access or wildcard_access:
+                print(f"DIAG V1: platform_default group '{{g.name}}' (tenant={{g.tenant.org_id or g.tenant.tenant_name}}) has role '{{r.name}}' with cm_access={{cm_access}}, wildcard={{wildcard_access}}")
+
+# Check roles with platform_default=True flag
+pd_roles = Role.objects.filter(platform_default=True)
+for r in pd_roles:
+    perms = list(Access.objects.filter(role=r).values_list('permission__permission', flat=True))
+    print(f"DIAG V1: Role '{{r.name}}' has platform_default=True, permissions={{perms[:5]}}")
+
+# --- V2 diagnostics ---
+try:
+    from management.models import BindingMapping
+    bm_count = BindingMapping.objects.filter(resource_id=str(tenant.id)).count()
+    print(f"DIAG V2: BindingMapping count for tenant={{bm_count}}")
+except Exception as e:
+    print(f"DIAG V2: BindingMapping check error: {{e}}")
+
+try:
+    from management.relation_replicator.logging_replicator import get_relations_for_org
+    # V2 might not have this, ignore errors
+    pass
+except ImportError:
+    pass
+
+# --- Direct RBAC /access/ query ---
+xrhid = json.dumps({{
+    "org_id": org_id,
+    "identity": {{
+        "org_id": org_id,
+        "account_number": acct_number,
+        "type": "User",
+        "user": {{
+            "username": sa_username,
+            "email": sa_username + "@example.com",
+            "is_org_admin": False
+        }}
+    }},
+    "entitlements": {{"cost_management": {{"is_entitled": True}}}}
+}})
+xrhid_b64 = base64.b64encode(xrhid.encode()).decode()
+
+try:
+    req = urllib.request.Request(
+        "http://localhost:8000/api/rbac/v1/access/?application=cost-management&limit=50",
+        headers={{"X-Rh-Identity": xrhid_b64, "Accept": "application/json"}}
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        body = resp.read().decode()
+        data = json.loads(body)
+        perm_count = data.get("meta", {{}}).get("count", 0)
+        perms = [d.get("permission") for d in data.get("data", [])[:10]]
+        print(f"DIAG RBAC-API: /access/ returned {{perm_count}} permissions: {{perms}}")
+except urllib.error.HTTPError as e:
+    body = e.read().decode()[:300]
+    print(f"DIAG RBAC-API: /access/ returned HTTP {{e.code}}: {{body}}")
+except Exception as e:
+    print(f"DIAG RBAC-API: /access/ error: {{e}}")
+
+# --- Direct Koku query (bypass gateway) ---
+koku_host = "{koku_svc_host}"
+try:
+    req = urllib.request.Request(
+        f"http://{{koku_host}}:8000/api/cost-management/v1/cost-models/",
+        headers={{"X-Rh-Identity": xrhid_b64, "Accept": "application/json"}}
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        print(f"DIAG KOKU-DIRECT: /cost-models/ returned HTTP {{resp.status}}")
+except urllib.error.HTTPError as e:
+    body = e.read().decode()[:300]
+    print(f"DIAG KOKU-DIRECT: /cost-models/ returned HTTP {{e.code}}: {{body}}")
+except Exception as e:
+    print(f"DIAG KOKU-DIRECT: /cost-models/ error: {{e}}")
+"""
+
+    # koku_svc_host already resolved above before the f-string
+
+    diag_result = exec_in_pod_raw(
+        cluster_config.namespace,
+        rbac_pod,
+        ["python", "/opt/rbac/rbac/manage.py", "shell", "-c", diag_script],
+        timeout=60,
+    )
+    if diag_result.stdout:
+        for line in diag_result.stdout.strip().split("\n"):
+            if "DIAG" in line:
+                logger.warning(line.strip())
+    if diag_result.returncode != 0:
+        logger.warning(f"RBAC diagnostics stderr: {diag_result.stderr.strip()[:500] if diag_result.stderr else 'none'}")
+
 
 # =============================================================================
 # Function-Scoped Fixtures (fresh for each test)
