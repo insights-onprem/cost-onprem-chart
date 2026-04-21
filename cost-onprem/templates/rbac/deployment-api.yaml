@@ -31,7 +31,7 @@ spec:
         command: ["gunicorn"]
         args:
           - "rbac.wsgi"
-          - "--bind=0.0.0.0:{{ .Values.rbac.api.port }}"
+          - "--bind=0.0.0.0:{{ include "cost-onprem.rbac.service.port" . }}"
           - "--workers=2"
           - "--threads=2"
           - "--timeout=120"
@@ -39,7 +39,7 @@ spec:
 
         ports:
         - name: http
-          containerPort: {{ .Values.rbac.api.port }}
+          containerPort: {{ include "cost-onprem.rbac.service.port" . }}
           protocol: TCP
 
         env:

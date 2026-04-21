@@ -366,13 +366,11 @@ Common environment variables for Koku API and Celery
 - name: RBAC_SERVICE_HOST
   value: {{ include "cost-onprem.rbac.serviceHost" . | quote }}
 - name: RBAC_SERVICE_PORT
-  value: {{ .Values.rbac.service.port | default "8000" | quote }}
+  value: {{ include "cost-onprem.rbac.service.port" . | quote }}
 - name: RBAC_SERVICE_PATH
   value: "/api/rbac/v1/access/"
 - name: RBAC_SERVICE_PROTOCOL
   value: "http"
-- name: ENHANCED_ORG_ADMIN
-  value: "False"
 {{- end -}}
 
 {{/*

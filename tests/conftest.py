@@ -24,6 +24,7 @@ import urllib3
 from utils import (
     check_pod_exists,
     exec_in_pod,
+    exec_in_pod_raw,
     get_pod_by_label,
     get_route_url,
     get_secret_value,
@@ -690,7 +691,7 @@ def _rbac_bootstrap(cluster_config: ClusterConfig, keycloak_config: KeycloakConf
     except Exception:
         sa_username = f"service-account-{keycloak_config.client_id}"
 
-    logger.info(f"RBAC bootstrap: service account username = {sa_username}")
+    logger.warning(f"RBAC bootstrap: service account username = {sa_username}")
 
     try:
         resp = requests.get(
@@ -699,7 +700,7 @@ def _rbac_bootstrap(cluster_config: ClusterConfig, keycloak_config: KeycloakConf
             verify=False,
             timeout=30,
         )
-        logger.info(f"RBAC bootstrap: tenant trigger response: {resp.status_code}")
+        logger.warning(f"RBAC bootstrap: tenant trigger response: {resp.status_code}")
     except Exception as e:
         logger.warning(f"RBAC bootstrap: gateway request failed: {e}")
 
@@ -757,17 +758,21 @@ else:
     print(f'RBAC bootstrap: CI Test Admin group with Cost Administrator created for org={{org_id}}, principal={{sa_username}}')
 """
 
-    result = exec_in_pod(
+    result = exec_in_pod_raw(
         cluster_config.namespace,
         rbac_pod,
         ["python", "/opt/rbac/rbac/manage.py", "shell", "-c", bootstrap_script],
         timeout=120,
     )
-    logger.info(f"RBAC bootstrap ORM result: {result.strip() if result else 'no output'}")
+    logger.warning(f"RBAC bootstrap ORM stdout: {result.stdout.strip() if result.stdout else 'none'}")
+    if result.returncode != 0:
+        logger.error(f"RBAC bootstrap ORM FAILED (rc={result.returncode}): {result.stderr.strip()}")
+    else:
+        logger.warning("RBAC bootstrap ORM: success")
 
     # Run V2 tenant bootstrap so that TenantMapping, workspaces, and role
     # bindings are created — without this RBAC returns 400 on /access/ queries.
-    v2_result = exec_in_pod(
+    v2_result = exec_in_pod_raw(
         cluster_config.namespace,
         rbac_pod,
         [
@@ -776,7 +781,11 @@ else:
         ],
         timeout=120,
     )
-    logger.info(f"RBAC bootstrap V2 result: {v2_result.strip() if v2_result else 'no output'}")
+    logger.warning(f"RBAC bootstrap V2 stdout: {v2_result.stdout.strip() if v2_result.stdout else 'none'}")
+    if v2_result.returncode != 0:
+        logger.error(f"RBAC bootstrap V2 FAILED (rc={v2_result.returncode}): {v2_result.stderr.strip()}")
+    else:
+        logger.warning("RBAC bootstrap V2: success")
 
 
 # =============================================================================
