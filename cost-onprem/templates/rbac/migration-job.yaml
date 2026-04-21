@@ -163,7 +163,9 @@ spec:
             for group in Group.objects.filter(platform_default=True):
                 for policy in Policy.objects.filter(group=group):
                     for role in policy.roles.all():
-                        has_cm_access = role.access_set.filter(
+                        has_cm_access = Access.objects.filter(
+                            role=role
+                        ).filter(
                             Q(permission__application='cost-management')
                             | Q(permission__resource_type='*')
                         ).exists()
