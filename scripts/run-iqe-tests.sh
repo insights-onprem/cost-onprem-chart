@@ -709,11 +709,11 @@ spec:
     - name: DYNACONF_DEFAULT_USER
       value: "cost_onprem_user"
     - name: DYNACONF_users__cost_onprem_user__auth__username
-      value: "test"
+      value: "admin"
     - name: DYNACONF_users__cost_onprem_user__auth__password
-      value: "test"
+      value: "admin"
     - name: DYNACONF_users__cost_onprem_user__auth__jwt_grant_type
-      value: "client_credentials"
+      value: "password"
     - name: DYNACONF_users__cost_onprem_user__auth__client_id
       value: "${KEYCLOAK_CLIENT_ID}"
     - name: DYNACONF_users__cost_onprem_user__auth__client_secret
