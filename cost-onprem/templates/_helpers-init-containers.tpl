@@ -110,6 +110,26 @@ Usage: {{ include "cost-onprem.initContainer.waitForKruize" . | nindent 8 }}
 {{- end -}}
 
 {{/*
+Wait for RBAC API init container - waits for insights-rbac authorization service
+Usage: {{ include "cost-onprem.initContainer.waitForRbac" . | nindent 8 }}
+*/}}
+{{- define "cost-onprem.initContainer.waitForRbac" -}}
+- name: wait-for-rbac
+  image: "{{ .Values.global.initContainers.waitFor.repository }}:{{ .Values.global.initContainers.waitFor.tag }}"
+  securityContext:
+    {{- include "cost-onprem.securityContext.nonRoot" . | nindent 4 }}
+  command: ['bash', '-c']
+  args:
+    - |
+      echo "Waiting for RBAC at {{ include "cost-onprem.rbac.api.name" . }}:{{ include "cost-onprem.rbac.service.port" . }}..."
+      until timeout 3 bash -c "echo > /dev/tcp/{{ include "cost-onprem.rbac.api.name" . }}/{{ include "cost-onprem.rbac.service.port" . }}" 2>/dev/null; do
+        echo "RBAC not ready yet, retrying in 5 seconds..."
+        sleep 5
+      done
+      echo "RBAC is ready"
+{{- end -}}
+
+{{/*
 Wait for Koku API init container - waits for the unified koku-api service
 Usage: {{ include "cost-onprem.initContainer.waitForKoku" . | nindent 8 }}
 */}}

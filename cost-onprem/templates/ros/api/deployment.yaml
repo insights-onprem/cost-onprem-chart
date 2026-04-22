@@ -28,6 +28,7 @@ spec:
         {{- if .Values.kafka.bootstrapServers }}
         {{- include "cost-onprem.initContainer.waitForKafka" . | nindent 8 }}
         {{- end }}
+        {{- include "cost-onprem.initContainer.waitForRbac" . | nindent 8 }}
       containers:
         # ROS API - receives pre-authenticated traffic from centralized gateway
         # Gateway validates JWT and injects X-Rh-Identity header
