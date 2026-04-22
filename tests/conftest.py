@@ -738,16 +738,24 @@ def _rbac_bootstrap(cluster_config: ClusterConfig, keycloak_config: KeycloakConf
         logger.warning(f"RBAC bootstrap: could not obtain JWT token: {e}")
         return
 
-    # Decode the token to get the service account username
+    # Decode the token to get the service account username.
+    # The Keycloak client has a preferred-username-override mapper that sets
+    # preferred_username to "cost-mgmt-operator", but due to a race condition
+    # the mapper may not be active when this first token is issued. Register
+    # both the decoded username AND the expected mapper value so RBAC lookups
+    # succeed regardless of timing.
+    sa_default = f"service-account-{keycloak_config.client_id}"
+    sa_mapper_override = "cost-mgmt-operator"
     try:
         payload = token.access_token.split(".")[1]
         payload += "=" * (4 - len(payload) % 4)
         claims = json.loads(base64.urlsafe_b64decode(payload))
-        sa_username = claims.get("preferred_username") or claims.get("sub", "service-account")
+        sa_username = claims.get("preferred_username") or claims.get("sub", sa_default)
     except Exception:
-        sa_username = f"service-account-{keycloak_config.client_id}"
+        sa_username = sa_default
 
-    logger.warning(f"RBAC bootstrap: service account username = {sa_username}")
+    sa_usernames = list(dict.fromkeys([sa_username, sa_mapper_override, sa_default]))
+    logger.warning(f"RBAC bootstrap: SA usernames to register = {sa_usernames}")
 
     try:
         resp = requests.get(
@@ -775,12 +783,13 @@ def _rbac_bootstrap(cluster_config: ClusterConfig, keycloak_config: KeycloakConf
     org_id_value = claims.get("org_id") or "org1234567"
     acct_number = claims.get("account_number") or "1234567"
 
+    sa_usernames_repr = repr(sa_usernames)
     bootstrap_script = f"""
 from api.models import Tenant
 from management.models import Group, Policy, Role, Principal
 from django.core.cache import cache
 
-sa_username = "{sa_username}"
+sa_usernames = {sa_usernames_repr}
 org_id = "{org_id_value}"
 acct_number = "{acct_number}"
 
@@ -805,11 +814,13 @@ else:
         name='CI Test Admin Policy', tenant=tenant, group=grp
     )
     policy.roles.add(cost_admin_role)
-    principal, _ = Principal.objects.get_or_create(
-        username=sa_username, tenant=tenant,
-        defaults={{'type': 'user'}}
-    )
-    grp.principals.add(principal)
+
+    for sa_name in sa_usernames:
+        principal, _ = Principal.objects.get_or_create(
+            username=sa_name, tenant=tenant,
+            defaults={{'type': 'user'}}
+        )
+        grp.principals.add(principal)
 
     # Also grant the Keycloak "admin" user (used by UI/Playwright tests)
     admin_principal, _ = Principal.objects.get_or_create(
@@ -819,7 +830,7 @@ else:
     grp.principals.add(admin_principal)
 
     cache.clear()
-    print(f'RBAC bootstrap: CI Test Admin group with Cost Administrator created for org={{org_id}}, principals=[{{sa_username}}, admin]')
+    print(f'RBAC bootstrap: CI Test Admin group with Cost Administrator created for org={{org_id}}, principals={{sa_usernames + ["admin"]}}')
 """
 
     result = exec_in_pod_raw(
