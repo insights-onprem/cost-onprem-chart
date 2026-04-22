@@ -684,21 +684,10 @@ class TestRBACAccessControl:
         response = session.get(f"{url}/reports/openshift/costs/?filter[project]=payment")
         assert response.status_code == 200, f"Alice got {response.status_code}: {response.text[:300]}"
 
-    def test_bob_explicit_cluster_filter_rejected(
+    def test_bob_explicit_cluster_filter_allowed(
         self, cluster_config, test_runner_pod, org_id, rbac_access_setup, rbac_cluster_data
     ):
-        """Bob's explicit filter[cluster]=<alpha> is rejected with 403.
-
-        Koku's get_replacement_result() compares the user's explicit filter value
-        against the RBAC access list. The access list stores the cluster_id string
-        we set in the resourceDefinition, but Koku's internal comparison uses a
-        different format (likely provider UUID). This causes a set-difference check
-        to fail, raising PermissionDenied even though the user IS authorized.
-
-        This is a Koku limitation with the "equal" operation on openshift.cluster
-        resourceDefinitions -- explicit filters don't work, but auto-injection
-        (tested in test_bob_unfiltered_sees_only_alpha) correctly restricts data.
-        """
+        """Bob can explicitly filter to his authorized cluster and get data."""
         session = self._user_session(cluster_config, test_runner_pod, org_id, "bob")
         url = rbac_access_setup["koku_api_url"]
         alpha_id = rbac_cluster_data["cluster_ids"]["alpha"]
@@ -706,8 +695,8 @@ class TestRBACAccessControl:
             f"{url}/reports/openshift/costs/?filter[cluster]={alpha_id}&group_by[project]=*"
         )
 
-        assert response.status_code == 403, (
-            f"Expected 403 due to Koku cluster filter format mismatch, "
+        assert response.status_code == 200, (
+            f"Bob should be allowed to filter to his authorized cluster, "
             f"got {response.status_code}: {response.text[:300]}"
         )
 
