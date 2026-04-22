@@ -8,6 +8,7 @@ on:
     branches: [ main ]
     paths:
       - 'scripts/deploy-test-cost-onprem.sh'
+      - 'scripts/setup-test-data.sh'
       - '.github/workflows/validate-deploy-test-script.yml'
   workflow_dispatch:
 
@@ -38,10 +39,10 @@ jobs:
             fi
           }
 
-          # run_case NAME FLAGS EXPECT_MODE EXPECT_DEPLOY EXPECT_CHART EXPECT_IQE
+          # run_case NAME FLAGS EXPECT_MODE EXPECT_DEPLOY EXPECT_CHART EXPECT_PERF EXPECT_IQE
           run_case() {
             local name="$1" flags="$2" expect_mode="$3"
-            local expect_deploy="$4" expect_chart="$5" expect_iqe="$6"
+            local expect_deploy="$4" expect_chart="$5" expect_perf="$6" expect_iqe="$7"
             local case_failures=0
 
             echo ""
@@ -96,6 +97,15 @@ jobs:
                 || case_failures=$((case_failures + 1))
             fi
 
+            # Performance tests
+            if [ "$expect_perf" = "true" ]; then
+              assert_output "$output" "✓ Run Performance Tests" "Performance tests enabled" \
+                || case_failures=$((case_failures + 1))
+            else
+              assert_output "$output" "✗ Run Performance Tests (OPTIONAL)" "Performance tests not requested" \
+                || case_failures=$((case_failures + 1))
+            fi
+
             # IQE tests
             if [ "$expect_iqe" = "true" ]; then
               assert_output "$output" "✓ Run IQE Tests" "IQE tests enabled" \
@@ -112,17 +122,19 @@ jobs:
             fi
           }
 
-          #                NAME                                        FLAGS                                MODE               DEPLOY  CHART  IQE
-          run_case         "(defaults)"                                ""                                   "Full deployment"  true    true   false
-          run_case         "--run-iqe"                                 "--run-iqe"                          "Full deployment"  true    true   true
-          run_case         "--skip-chart-tests"                        "--skip-chart-tests"                 "Full deployment"  true    false  false
-          run_case         "--skip-chart-tests --run-iqe"              "--skip-chart-tests --run-iqe"       "Full deployment"  true    false  true
-          run_case         "--skip-deploy"                             "--skip-deploy"                      "Tests-only"       false   true   false
-          run_case         "--skip-deploy --run-iqe"                   "--skip-deploy --run-iqe"            "Tests-only"       false   true   true
-          run_case         "--iqe-only"                                "--iqe-only"                         "IQE-only"         false   false  true
-          run_case         "--tests-only (alias)"                      "--tests-only"                       "Tests-only"       false   true   false
-          run_case         "--skip-test (alias)"                       "--skip-test"                        "Full deployment"  true    false  false
-          run_case         "--tests-only --skip-test --run-iqe (alias)" "--tests-only --skip-test --run-iqe" "IQE-only"        false   false  true
+          #                NAME                                        FLAGS                                MODE                    DEPLOY  CHART  PERF   IQE
+          run_case         "(defaults)"                                ""                                   "Full deployment"       true    true   false  false
+          run_case         "--run-iqe"                                 "--run-iqe"                          "Full deployment"       true    true   false  true
+          run_case         "--skip-chart-tests"                        "--skip-chart-tests"                 "Full deployment"       true    false  false  false
+          run_case         "--skip-chart-tests --run-iqe"              "--skip-chart-tests --run-iqe"       "Full deployment"       true    false  false  true
+          run_case         "--skip-deploy"                             "--skip-deploy"                      "Tests-only"            false   true   false  false
+          run_case         "--skip-deploy --run-iqe"                   "--skip-deploy --run-iqe"            "Tests-only"            false   true   false  true
+          run_case         "--iqe-only"                                "--iqe-only"                         "IQE-only"              false   false  false  true
+          run_case         "--tests-only (alias)"                      "--tests-only"                       "Tests-only"            false   true   false  false
+          run_case         "--skip-test (alias)"                       "--skip-test"                        "Full deployment"       true    false  false  false
+          run_case         "--tests-only --skip-test --run-iqe"        "--tests-only --skip-test --run-iqe" "IQE-only"              false   false  false  true
+          run_case         "--perf-only"                               "--perf-only"                        "Performance-only"      false   false  true   false
+          run_case         "--perf-only --perf-profile small"          "--perf-only --perf-profile small"   "Performance-only"      false   false  true   false
 
           echo ""
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
