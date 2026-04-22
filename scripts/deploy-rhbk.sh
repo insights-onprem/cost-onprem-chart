@@ -1246,7 +1246,7 @@ extract_client_secret() {
 
 # Function to create test user with org_id and account_number attributes
 create_test_user() {
-    echo_header "CREATING TEST USER"
+    echo_header "CREATING ADMIN USER"
 
     # Get Keycloak URL from Route
     local KEYCLOAK_URL=$(oc get route keycloak -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
@@ -1283,8 +1283,10 @@ create_test_user() {
 
     echo_success "Admin token obtained"
 
-    # Create test user with org_id and account_number attributes
-    # These values match the operator client's hardcoded values for testing
+    # Create admin user with org_id and account_number attributes
+    # These values match the operator client's hardcoded values for testing.
+    # The admin user is granted Cost Administrator RBAC permissions by the
+    # _rbac_bootstrap fixture in tests/conftest.py.
     #
     # WORKAROUND: The org_id includes "org" prefix (org1234567 instead of 1234567)
     # because the Koku image has a bug that prepends "org" to the org_id when
@@ -1296,22 +1298,17 @@ create_test_user() {
     # REQUIRED ATTRIBUTES for Cost Management:
     #   - org_id: Tenant identifier (maps to database schema)
     #   - account_number: Customer account identifier
-    #
-    # Note: "access" attribute is NOT required when using ENHANCED_ORG_ADMIN mode.
-    # All authenticated users are treated as org admins with full access within their org.
-    # This simplifies setup but means no granular RBAC within an org.
-    # Multi-tenancy is preserved: users only see data for their own org_id.
 
-    echo_info "Creating user 'test' with org_id and account_number attributes..."
+    echo_info "Creating user 'admin' with org_id and account_number attributes..."
     local USER_HTTP_CODE=$(curl -sk -o /tmp/user_response.txt -w "%{http_code}" -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users" \
         -H "Authorization: Bearer $ACCESS_TOKEN" \
         -H "Content-Type: application/json" \
         -d "{
-            \"username\": \"test\",
-            \"email\": \"test@test.com\",
+            \"username\": \"admin\",
+            \"email\": \"admin@test.com\",
             \"emailVerified\": true,
             \"enabled\": true,
-            \"firstName\": \"Test\",
+            \"firstName\": \"Admin\",
             \"lastName\": \"User\",
             \"attributes\": {
                 \"org_id\": [\"org1234567\"],
@@ -1324,68 +1321,68 @@ create_test_user() {
 
     local USER_ID=""
     if [ "$USER_HTTP_CODE" = "409" ] || echo "$USER_RESPONSE" | grep -q "already exists\|Conflict"; then
-        echo_warning "User 'test' may already exist, attempting to find it..."
+        echo_warning "User 'admin' may already exist, attempting to find it..."
         # Get existing user
-        local USERS_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=test" \
+        local USERS_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=admin" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" 2>/dev/null)
         USER_ID=$(echo "$USERS_RESPONSE" | grep -o '"id":"[^"]*"' | cut -d'"' -f4 | head -1)
 
         if [ -n "$USER_ID" ]; then
-            echo_info "Found existing user 'test', updating with attributes..."
+            echo_info "Found existing user 'admin', updating with attributes..."
             # Update user with attributes
             curl -sk -X PUT "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users/$USER_ID" \
                 -H "Authorization: Bearer $ACCESS_TOKEN" \
                 -H "Content-Type: application/json" \
                 -d '{
-                    "username": "test",
-                    "email": "test@test.com",
+                    "username": "admin",
+                    "email": "admin@test.com",
                     "emailVerified": true,
                     "enabled": true,
-                    "firstName": "Test",
+                    "firstName": "Admin",
                     "lastName": "User",
                     "attributes": {
                         "org_id": ["org1234567"],
                         "account_number": ["7890123"]
                     }
                 }' >/dev/null 2>&1
-            echo_success "✓ User 'test' updated"
+            echo_success "✓ User 'admin' updated"
         fi
     elif [ "$USER_HTTP_CODE" = "201" ] || [ "$USER_HTTP_CODE" = "200" ]; then
         # User created successfully, get ID from users list
         sleep 2
-        local USERS_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=test" \
+        local USERS_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=admin" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" 2>/dev/null)
         USER_ID=$(echo "$USERS_RESPONSE" | grep -o '"id":"[^"]*"' | cut -d'"' -f4 | head -1)
-        echo_success "✓ User 'test' created"
+        echo_success "✓ User 'admin' created"
     fi
 
     if [ -z "$USER_ID" ]; then
-        echo_warning "Could not determine user ID for 'test'"
+        echo_warning "Could not determine user ID for 'admin'"
         return 1
     fi
 
     echo_info "User ID: $USER_ID"
 
     # Set user password
-    echo_info "Setting password for user 'test'..."
+    echo_info "Setting password for user 'admin'..."
     local PASSWORD_RESPONSE=$(curl -sk -X PUT "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users/$USER_ID/reset-password" \
         -H "Authorization: Bearer $ACCESS_TOKEN" \
         -H "Content-Type: application/json" \
         -d '{
             "type": "password",
-            "value": "test",
+            "value": "admin",
             "temporary": false
         }' 2>/dev/null)
 
     if [ $? -eq 0 ]; then
-        echo_success "✓ Password set for user 'test'"
+        echo_success "✓ Password set for user 'admin'"
     else
-        echo_warning "Could not set password for user 'test' (may already be set)"
+        echo_warning "Could not set password for user 'admin' (may already be set)"
     fi
 
-    echo_success "✓ Test user creation complete"
+    echo_success "✓ Admin user creation complete"
     echo ""
 }
 
@@ -1434,14 +1431,14 @@ display_summary() {
     echo_info "  Secret stored in: keycloak-client-secret-cost-management-ui"
     echo ""
 
-    echo_info "Test User Information:"
-    echo_info "  User: test"
-    echo_info "    Password: test"
-    echo_info "    Email: test@test.com (verified)"
+    echo_info "Admin User Information:"
+    echo_info "  User: admin"
+    echo_info "    Password: admin"
+    echo_info "    Email: admin@test.com (verified)"
     echo_info "    Attributes:"
     echo_info "      org_id: org1234567 (includes 'org' prefix as workaround for Koku bug)"
     echo_info "      account_number: 7890123"
-    echo_info "      access: OCP-only (openshift.cluster, openshift.project, openshift.node, cost_model)"
+    echo_info "      RBAC: Cost Administrator (granted by _rbac_bootstrap fixture)"
     echo ""
 
     # Display admin credential retrieval
