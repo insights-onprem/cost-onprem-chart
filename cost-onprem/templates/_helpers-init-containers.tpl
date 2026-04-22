@@ -48,6 +48,26 @@ Usage: {{ include "cost-onprem.initContainer.waitForKafka" . | nindent 8 }}
 {{- end -}}
 
 {{/*
+Wait for Valkey/Redis init container
+Usage: {{ include "cost-onprem.initContainer.waitForValkey" . | nindent 8 }}
+*/}}
+{{- define "cost-onprem.initContainer.waitForValkey" -}}
+- name: wait-for-valkey
+  image: "{{ .Values.global.initContainers.waitFor.repository }}:{{ .Values.global.initContainers.waitFor.tag }}"
+  securityContext:
+    {{- include "cost-onprem.securityContext.nonRoot" . | nindent 4 }}
+  command: ['bash', '-c']
+  args:
+    - |
+      echo "Waiting for Valkey at {{ include "cost-onprem.koku.valkey.host" . }}:{{ include "cost-onprem.koku.valkey.port" . }}..."
+      until timeout 3 bash -c "echo > /dev/tcp/{{ include "cost-onprem.koku.valkey.host" . }}/{{ include "cost-onprem.koku.valkey.port" . }}" 2>/dev/null; do
+        echo "Valkey not ready yet, retrying in 5 seconds..."
+        sleep 5
+      done
+      echo "Valkey is ready"
+{{- end -}}
+
+{{/*
 Wait for S3 storage init container
 Checks TCP reachability of the configured S3 endpoint before the main container starts.
 Usage: {{ include "cost-onprem.initContainer.waitForStorage" . | nindent 8 }}

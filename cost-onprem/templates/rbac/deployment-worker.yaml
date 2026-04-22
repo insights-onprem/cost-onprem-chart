@@ -22,6 +22,10 @@ spec:
       securityContext:
         {{- include "cost-onprem.securityContext.pod.nonRoot" . | nindent 8 }}
 
+      initContainers:
+        {{- include "cost-onprem.initContainer.waitForDb" (list . "rbac") | nindent 8 }}
+        {{- include "cost-onprem.initContainer.waitForValkey" . | nindent 8 }}
+
       containers:
       - name: rbac-worker
         image: "{{ include "cost-onprem.rbac.image" . }}"
