@@ -221,8 +221,8 @@ data:
                       -- security risk allowing any user to bypass RBAC.
                       --
                       -- Both Koku and ROS route through this gateway and receive the same
-                      -- X-Rh-Identity header. ROS currently does not enforce RBAC permissions
-                      -- but receives the header for future use and audit logging.
+                      -- X-Rh-Identity header. Both services enforce RBAC permissions by
+                      -- calling insights-rbac with the forwarded identity.
                       --
                       -- entitlements.cost_management.is_entitled is always true because Koku's
                       -- middleware returns 403 without it and there is no bypass.

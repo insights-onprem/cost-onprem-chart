@@ -64,7 +64,7 @@ ros:
     pathPrefix: /api
 
     # Service-specific configuration
-    rbacEnabled: false # RBAC is not supported yet
+    rbacEnabled: true
     dbPoolSize: 10
     dbMaxOverflow: 20
     serviceName: ros-api
