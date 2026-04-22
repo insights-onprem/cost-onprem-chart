@@ -63,8 +63,6 @@ ros:
     metricsPort: 9000
     pathPrefix: /api
 
-    # Service-specific configuration
-    rbacEnabled: true
     dbPoolSize: 10
     dbMaxOverflow: 20
     serviceName: ros-api
