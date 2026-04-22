@@ -832,6 +832,16 @@ spec:
               id.token.claim: "false"
               jsonType.label: String
               userinfo.token.claim: "false"
+          - name: preferred-username-override
+            protocol: openid-connect
+            protocolMapper: oidc-hardcoded-claim-mapper
+            config:
+              access.token.claim: "true"
+              claim.name: preferred_username
+              claim.value: cost-mgmt-operator
+              id.token.claim: "true"
+              jsonType.label: String
+              userinfo.token.claim: "true"
       - clientId: $COST_MGMT_UI_CLIENT_ID
         name: "Cost Management UI"
         description: "OAuth2 client for Cost Management UI"

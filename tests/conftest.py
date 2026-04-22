@@ -825,6 +825,46 @@ else:
         logger.warning("RBAC bootstrap V2: success")
 
     # =========================================================================
+    # Cleanup: remove cost-management roles from platform_default groups
+    # =========================================================================
+    # RBAC's startup seeding re-creates platform_default group associations
+    # (e.g. "Cost Cloud Viewer Local Test", "Cost OpenShift Viewer Local Test"),
+    # overwriting the migration job's cleanup. Run cleanup again now that the
+    # RBAC pod is fully started and seeding has completed.
+    cleanup_script = """
+from management.models import Group, Policy, Role, Access
+from django.db.models import Q
+from django.core.cache import cache
+
+removed = 0
+for group in Group.objects.filter(platform_default=True):
+    for policy in Policy.objects.filter(group=group):
+        for role in policy.roles.all():
+            has_cm_access = Access.objects.filter(
+                role=role
+            ).filter(
+                Q(permission__application='cost-management')
+                | Q(permission__resource_type='*')
+            ).exists()
+            if has_cm_access:
+                policy.roles.remove(role)
+                removed += 1
+
+cache.clear()
+print(f'Platform default cleanup: removed {removed} role(s) with cost-management access')
+"""
+    cleanup_result = exec_in_pod_raw(
+        cluster_config.namespace,
+        rbac_pod,
+        ["python", "/opt/rbac/rbac/manage.py", "shell", "-c", cleanup_script],
+        timeout=60,
+    )
+    if cleanup_result.stdout:
+        logger.warning(f"RBAC bootstrap cleanup: {cleanup_result.stdout.strip()}")
+    if cleanup_result.returncode != 0:
+        logger.warning(f"RBAC cleanup stderr: {cleanup_result.stderr.strip()[:300] if cleanup_result.stderr else 'none'}")
+
+    # =========================================================================
     # Diagnostic: check RBAC state and Koku accessibility after bootstrap
     # =========================================================================
     koku_svc_host = f"{cluster_config.helm_release_name}-koku-api.{cluster_config.namespace}.svc"
