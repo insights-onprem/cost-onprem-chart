@@ -224,6 +224,62 @@ def jwt_token(keycloak_config: KeycloakConfig) -> JWTToken:
     return obtain_jwt_token(keycloak_config)
 
 
+def obtain_user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JWTToken:
+    """Obtain a JWT token via password grant for the admin user.
+
+    The cost-management-operator SA token has a ``service-account-*`` username
+    that RBAC rejects with 400 ("Invalid format for a Service Account username").
+    API tests that go through the gateway must use a regular user token instead.
+    """
+    ui_client_id = "cost-management-ui"
+    ui_client_secret = get_secret_value(
+        cluster_config.keycloak_namespace,
+        f"keycloak-client-secret-{ui_client_id}",
+        "CLIENT_SECRET",
+    )
+    if not ui_client_secret:
+        pytest.fail("Could not find cost-management-ui client secret for password grant")
+
+    response = requests.post(
+        keycloak_config.token_url,
+        data={
+            "grant_type": "password",
+            "client_id": ui_client_id,
+            "client_secret": ui_client_secret,
+            "username": "admin",
+            "password": "admin",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        verify=False,
+        timeout=30,
+    )
+
+    if response.status_code != 200:
+        pytest.fail(
+            f"Failed to obtain user JWT token via password grant: "
+            f"{response.status_code} - {response.text}"
+        )
+
+    token_data = response.json()
+    expires_in = token_data.get("expires_in", 300)
+
+    return JWTToken(
+        access_token=token_data["access_token"],
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in),
+    )
+
+
+@pytest.fixture(scope="function")
+def user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JWTToken:
+    """Obtain a user JWT token via password grant (admin/admin).
+
+    Use this for API tests that go through the gateway and hit RBAC-protected
+    endpoints.  The SA client-credentials token triggers a 400 in RBAC because
+    its ``service-account-*`` username is rejected.
+    """
+    return obtain_user_jwt_token(keycloak_config, cluster_config)
+
+
 @pytest.fixture(scope="session")
 def gateway_url(cluster_config: ClusterConfig) -> str:
     """Get the API gateway URL.
@@ -913,7 +969,7 @@ try:
 except ImportError:
     pass
 
-# --- Direct RBAC /access/ query ---
+# --- Direct RBAC /access/ query (use 'admin' user, not SA) ---
 xrhid = json.dumps({{
     "org_id": org_id,
     "identity": {{
@@ -921,8 +977,8 @@ xrhid = json.dumps({{
         "account_number": acct_number,
         "type": "User",
         "user": {{
-            "username": sa_username,
-            "email": sa_username + "@example.com",
+            "username": "admin",
+            "email": "admin@test.com",
             "is_org_admin": False
         }}
     }},
@@ -1056,22 +1112,20 @@ def http_session() -> requests.Session:
 
 
 @pytest.fixture(scope="function")
-def authenticated_session(jwt_token: JWTToken) -> requests.Session:
-    """Pre-configured requests session with JWT authentication.
-    
-    Scope: function - Matches jwt_token scope to ensure fresh auth per test.
-    
-    Use this fixture for external API tests that go through the gateway.
-    The session includes:
-    - Authorization header with Bearer token
-    - SSL verification disabled (for self-signed certs)
-    
+def authenticated_session(user_jwt_token: JWTToken) -> requests.Session:
+    """Pre-configured requests session with user JWT authentication.
+
+    Uses a password-grant user token (admin/admin) instead of the SA client-
+    credentials token.  RBAC rejects the SA's ``service-account-*`` username
+    with 400 when queried via ``type: User`` identity, so all gateway API
+    tests must authenticate as a real user.
+
     Note: Content-Type is NOT set by default to allow multipart/form-data
     uploads to work correctly. Set it explicitly in tests that need JSON.
     """
     session = requests.Session()
     session.headers.update({
-        "Authorization": f"Bearer {jwt_token.access_token}",
+        "Authorization": f"Bearer {user_jwt_token.access_token}",
     })
     session.verify = False
     return session
