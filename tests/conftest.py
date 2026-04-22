@@ -788,33 +788,42 @@ else:
         logger.warning("RBAC bootstrap V2: success")
 
     # =========================================================================
-    # Cleanup: remove cost-management roles from platform_default groups
+    # Cleanup: strip cost-management from RBAC's seeded platform defaults
     # =========================================================================
-    # RBAC's startup seeding re-creates platform_default group associations
-    # (e.g. "Cost Cloud Viewer Local Test", "Cost OpenShift Viewer Local Test"),
-    # overwriting the migration job's cleanup. Run cleanup again now that the
-    # RBAC pod is fully started and seeding has completed.
+    # RBAC seeds "Cost Cloud Viewer Local Test" and "Cost OpenShift Viewer
+    # Local Test" roles with platform_default=True at startup. This grants
+    # every user cost-management read access, defeating granular RBAC tests.
+    # Fix both vectors: group-level associations AND role-level flag.
     cleanup_script = """
 from management.models import Group, Policy, Role, Access
 from django.db.models import Q
 from django.core.cache import cache
 
-removed = 0
+group_removed = 0
 for group in Group.objects.filter(platform_default=True):
     for policy in Policy.objects.filter(group=group):
         for role in policy.roles.all():
-            has_cm_access = Access.objects.filter(
-                role=role
-            ).filter(
+            has_cm = Access.objects.filter(role=role).filter(
                 Q(permission__application='cost-management')
                 | Q(permission__resource_type='*')
             ).exists()
-            if has_cm_access:
+            if has_cm:
                 policy.roles.remove(role)
-                removed += 1
+                group_removed += 1
+
+role_cleared = 0
+for role in Role.objects.filter(platform_default=True):
+    has_cm = Access.objects.filter(role=role).filter(
+        Q(permission__application='cost-management')
+    ).exists()
+    if has_cm:
+        role.platform_default = False
+        role.save(update_fields=['platform_default'])
+        role_cleared += 1
 
 cache.clear()
-print(f'Platform default cleanup: removed {removed} role(s) with cost-management access')
+print(f'Platform default cleanup: removed {group_removed} role(s) from groups, '
+      f'cleared platform_default flag on {role_cleared} role(s)')
 """
     cleanup_result = exec_in_pod_raw(
         cluster_config.namespace,
