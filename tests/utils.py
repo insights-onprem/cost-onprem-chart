@@ -467,8 +467,8 @@ def create_rh_identity_header(org_id: str, account_number: str = None) -> str:
             "account_number": account_number,
             "type": "User",
             "user": {
-                "username": "test",
-                "email": "test@example.com",
+                "username": "admin",
+                "email": "admin@test.com",
                 "is_org_admin": True,
             },
         },
@@ -488,7 +488,7 @@ _UNSET = object()
 def create_identity_header_custom(
     org_id: str,
     is_org_admin: bool = True,
-    username: str = "test",
+    username: str = "admin",
     email: object = _UNSET,
     entitlements: Optional[dict] = None,
     account_number: Optional[str] = None,

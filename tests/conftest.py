@@ -670,10 +670,10 @@ def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> st
         
         admin_token = token_response.json().get("access_token")
         
-        # Get test user's org_id
+        # Get admin user's org_id
         users_response = requests.get(
             f"{keycloak_config.url}/admin/realms/kubernetes/users",
-            params={"username": "test", "exact": "true"},
+            params={"username": "admin", "exact": "true"},
             headers={"Authorization": f"Bearer {admin_token}"},
             verify=False,
             timeout=30,
