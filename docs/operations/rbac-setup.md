@@ -19,13 +19,14 @@ Role-Based Access Control (RBAC) configuration, user management, and troubleshoo
 
 ## Overview
 
-Cost Management On-Premise uses [insights-rbac](https://github.com/RedHatInsights/insights-rbac) as its authorization backend. Every API request to Koku passes through insights-rbac to determine what resources the user can access.
+Cost Management On-Premise uses [insights-rbac](https://github.com/RedHatInsights/insights-rbac) as its authorization backend. Every API request to **Koku** and **ROS (Resource Optimization Service)** passes through insights-rbac to determine what resources the user can access.
 
 Key properties:
 - Authorization is **role-based**, not attribute-based
 - `is_org_admin` is **always false** in the identity header — admin privileges come from RBAC roles only
 - Permissions are scoped by `resourceDefinitions` (e.g., specific clusters, namespaces)
 - The system seeds 5 built-in roles covering common access patterns
+- RBAC is **always enabled** for both Koku and ROS — there is no toggle to disable it
 
 ---
 
@@ -37,6 +38,7 @@ sequenceDiagram
     participant KC as Keycloak
     participant GW as Envoy Gateway
     participant K as Koku API
+    participant ROS as ROS API
     participant R as insights-rbac API
     participant DB as PostgreSQL (rbac)
 
@@ -44,20 +46,40 @@ sequenceDiagram
     KC-->>U: JWT token
     U->>GW: API request + JWT
     GW->>GW: Validate JWT, build x-rh-identity<br/>(is_org_admin = false)
-    GW->>K: Forward request + x-rh-identity
-    K->>R: GET /api/rbac/v1/access/<br/>?application=cost-management
-    R->>DB: Resolve groups → policies → roles
-    DB-->>R: Permissions + resourceDefinitions
-    R-->>K: Access response (JSON)
-    K->>K: Apply resourceDefinitions<br/>as SQL WHERE filters
-    K-->>U: Filtered cost data
+    alt Cost Management request
+        GW->>K: Forward request + x-rh-identity
+        K->>R: GET /api/rbac/v1/access/<br/>?application=cost-management
+        R->>DB: Resolve groups → policies → roles
+        DB-->>R: Permissions + resourceDefinitions
+        R-->>K: Access response (JSON)
+        K->>K: Apply resourceDefinitions<br/>as SQL WHERE filters
+        K-->>U: Filtered cost data
+    else ROS request
+        GW->>ROS: Forward request + x-rh-identity
+        ROS->>R: GET /api/rbac/v1/access/<br/>?application=cost-management
+        R->>DB: Resolve groups → policies → roles
+        DB-->>R: Permissions + resourceDefinitions
+        R-->>ROS: Access response (JSON)
+        ROS->>ROS: Apply resourceDefinitions<br/>as query filters
+        ROS-->>U: Filtered recommendations
+    end
 ```
 
 1. User authenticates via Keycloak and obtains a JWT
 2. Envoy validates the JWT and constructs the `x-rh-identity` header (with `is_org_admin: false`)
-3. Koku receives the request and calls insights-rbac's `/api/rbac/v1/access/` endpoint
-4. insights-rbac resolves the user's groups → policies → roles → permissions
-5. Koku applies any `resourceDefinitions` as SQL query filters
+3. The request is routed to either Koku or ROS, depending on the API path
+4. Both services call insights-rbac's `/api/rbac/v1/access/` endpoint with the forwarded identity
+5. insights-rbac resolves the user's groups → policies → roles → permissions
+6. The backend service applies any `resourceDefinitions` as query filters
+
+### Services Protected by RBAC
+
+| Service | API Path Prefix | RBAC Application | Notes |
+|---------|----------------|------------------|-------|
+| **Koku** (Cost Management) | `/api/cost-management/` | `cost-management` | Reports, tags, forecasts, cost models, settings |
+| **ROS** (Resource Optimization) | `/api/ros/` | `cost-management` | Recommendations, system ratings |
+
+Both services use the same `cost-management` RBAC application and permission set. A user with `cost-management:openshift.cluster:read` permission can access both Koku OCP reports and ROS recommendations for the authorized clusters.
 
 ---
 

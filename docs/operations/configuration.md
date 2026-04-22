@@ -522,7 +522,6 @@ ros:
     port: 8000
     metricsPort: 9000
     pathPrefix: /api
-    rbacEnable: false
     logLevel: INFO
   processor:
     metricsPort: 9000
@@ -641,6 +640,21 @@ These are set automatically by the Helm chart in `_helpers-koku.tpl`:
 | `ENHANCED_ORG_ADMIN` | `False` | **Must be False** — disables Koku's admin bypass so all auth flows through RBAC |
 
 > **Important**: `ENHANCED_ORG_ADMIN` must remain `False`. Setting it to `True` causes Koku to bypass RBAC entirely for users with `is_org_admin: true` in their identity header, which defeats the purpose of RBAC enforcement.
+
+#### ROS RBAC Integration Variables
+
+RBAC is **always enabled** on the ROS API — there is no `values.yaml` toggle. The following environment variables are hardcoded in the ROS API deployment template:
+
+| Variable | Value | Description |
+|----------|-------|-------------|
+| `RBAC_ENABLE` | `true` (hardcoded) | Activates the RBAC middleware in the ROS Go backend |
+| `RBACHOST` | `<release>-rbac-api.<namespace>.svc.cluster.local` | RBAC API service hostname (from `cost-onprem.rbac.serviceHost` helper) |
+| `RBACPORT` | `8000` | RBAC API port (from `cost-onprem.rbac.service.port` helper) |
+| `RBACPROTOCOL` | `http` | Protocol for RBAC communication |
+
+The ROS API pod includes a `wait-for-rbac` init container that blocks startup until the RBAC service is accepting TCP connections, preventing authorization errors during the startup race.
+
+> **Note**: Unlike Koku (which uses `RBAC_SERVICE_*` prefixed variables), ROS uses uppercase unprefixed names (`RBACHOST`, `RBACPORT`, `RBACPROTOCOL`) due to how the Go Viper configuration library maps struct fields to environment variables via `AutomaticEnv()`.
 
 #### RBAC Internal Variables (set automatically)
 
