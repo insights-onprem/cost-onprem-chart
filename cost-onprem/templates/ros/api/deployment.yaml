@@ -55,15 +55,13 @@ spec:
             - name: CLOWDER_ENABLED
               value: "false"
             - name: RBAC_ENABLE
-              value: {{ .Values.ros.api.rbacEnabled | quote }}
-            {{- if .Values.ros.api.rbacEnabled }}
+              value: "true"
             - name: RBACHOST
               value: {{ include "cost-onprem.rbac.serviceHost" . | quote }}
             - name: RBACPORT
               value: {{ include "cost-onprem.rbac.service.port" . | quote }}
             - name: RBACPROTOCOL
               value: "http"
-            {{- end }}
             - name: DB_POOL_SIZE
               value: {{ .Values.ros.api.dbPoolSize | quote }}
             - name: DB_MAX_OVERFLOW
