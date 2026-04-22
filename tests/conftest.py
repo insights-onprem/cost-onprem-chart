@@ -754,8 +754,16 @@ else:
         defaults={{'type': 'user'}}
     )
     grp.principals.add(principal)
+
+    # Also grant the Keycloak "admin" user (used by UI/Playwright tests)
+    admin_principal, _ = Principal.objects.get_or_create(
+        username='admin', tenant=tenant,
+        defaults={{'type': 'user'}}
+    )
+    grp.principals.add(admin_principal)
+
     cache.clear()
-    print(f'RBAC bootstrap: CI Test Admin group with Cost Administrator created for org={{org_id}}, principal={{sa_username}}')
+    print(f'RBAC bootstrap: CI Test Admin group with Cost Administrator created for org={{org_id}}, principals=[{{sa_username}}, admin]')
 """
 
     result = exec_in_pod_raw(
