@@ -113,6 +113,13 @@ check_prerequisites() {
     fi
     echo_success "✓ OpenShift CLI (oc) is available"
 
+    # Check if jq is available (used for Keycloak Admin API JSON parsing)
+    if ! command -v jq >/dev/null 2>&1; then
+        echo_error "jq command not found. Please install jq (https://jqlang.github.io/jq/)."
+        exit 1
+    fi
+    echo_success "✓ jq is available"
+
     # Check if logged into OpenShift/Kubernetes
     # Use kubectl cluster-info as it works with both oc and kubectl
     if ! kubectl cluster-info >/dev/null 2>&1; then
@@ -926,7 +933,7 @@ EOF
             -d "grant_type=password" \
             -d "client_id=admin-cli" 2>/dev/null)
 
-        local access_token=$(echo "$token_response" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
+        local access_token=$(echo "$token_response" | jq -r '.access_token // empty')
 
         if [ -n "$access_token" ]; then
             # Try to get the clients we just created
@@ -937,12 +944,12 @@ EOF
             local operator_client_found=false
             local ui_client_found=false
 
-            if echo "$client_data" | grep -q "\"clientId\":\"$COST_MGMT_OPERATOR_CLIENT_ID\""; then
+            if echo "$client_data" | jq -e --arg cid "$COST_MGMT_OPERATOR_CLIENT_ID" '.[] | select(.clientId == $cid)' >/dev/null 2>&1; then
                 echo_success "✓ Client '$COST_MGMT_OPERATOR_CLIENT_ID' is available via admin API"
                 operator_client_found=true
             fi
 
-            if echo "$client_data" | grep -q "\"clientId\":\"$COST_MGMT_UI_CLIENT_ID\""; then
+            if echo "$client_data" | jq -e --arg cid "$COST_MGMT_UI_CLIENT_ID" '.[] | select(.clientId == $cid)' >/dev/null 2>&1; then
                 echo_success "✓ Client '$COST_MGMT_UI_CLIENT_ID' is available via admin API"
                 ui_client_found=true
             fi
@@ -1078,7 +1085,7 @@ configure_admin_console() {
             -d "grant_type=password" \
             -d "client_id=admin-cli" 2>/dev/null)
 
-        local access_token=$(echo "$token_response" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
+        local access_token=$(echo "$token_response" | jq -r '.access_token // empty')
 
         if [ -n "$access_token" ]; then
             echo_success "✓ Admin API is available"
@@ -1099,7 +1106,7 @@ configure_admin_console() {
     local clients_response=$(curl -sk "https://$KEYCLOAK_URL/admin/realms/master/clients" \
         -H "Authorization: Bearer $access_token" 2>/dev/null)
 
-    local client_uuid=$(echo "$clients_response" | grep -o '"id":"[^"]*","clientId":"security-admin-console"' | grep -o '"id":"[^"]*' | cut -d'"' -f4)
+    local client_uuid=$(echo "$clients_response" | jq -r '.[] | select(.clientId == "security-admin-console") | .id // empty')
 
     if [ -z "$client_uuid" ]; then
         echo_error "Could not find security-admin-console client"
@@ -1172,7 +1179,7 @@ extract_client_secret() {
         -d "grant_type=password" \
         -d "client_id=admin-cli" 2>/dev/null)
 
-    local ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
+    local ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token // empty')
 
     if [ -z "$ACCESS_TOKEN" ]; then
         echo_warning "Could not obtain admin token, skipping client secret extraction"
@@ -1193,7 +1200,7 @@ extract_client_secret() {
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" 2>/dev/null)
 
-        local CLIENT_UUID=$(echo "$CLIENT_DATA" | grep -o "\"id\":\"[^\"]*\"[^}]*\"clientId\":\"$client_id\"" | grep -o "\"id\":\"[^\"]*\"" | cut -d'"' -f4 | head -1)
+        local CLIENT_UUID=$(echo "$CLIENT_DATA" | jq -r --arg cid "$client_id" '.[] | select(.clientId == $cid) | .id // empty')
 
         if [ -z "$CLIENT_UUID" ]; then
             echo_warning "Could not find client '$client_id' in realm '$REALM_NAME'"
@@ -1208,7 +1215,7 @@ extract_client_secret() {
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" 2>/dev/null)
 
-        local CLIENT_SECRET=$(echo "$CLIENT_SECRET_RESPONSE" | grep -o '"value":"[^"]*' | cut -d'"' -f4)
+        local CLIENT_SECRET=$(echo "$CLIENT_SECRET_RESPONSE" | jq -r '.value // empty')
 
         if [ -z "$CLIENT_SECRET" ]; then
             echo_warning "Could not retrieve client secret for '$client_id'"
@@ -1277,7 +1284,7 @@ create_test_user() {
         -d "grant_type=password" \
         -d "client_id=admin-cli" 2>/dev/null)
 
-    local ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
+    local ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token // empty')
 
     if [ -z "$ACCESS_TOKEN" ]; then
         echo_warning "Could not obtain admin token, skipping test user creation"
@@ -1323,13 +1330,13 @@ create_test_user() {
     rm -f /tmp/user_response.txt
 
     local USER_ID=""
-    if [ "$USER_HTTP_CODE" = "409" ] || echo "$USER_RESPONSE" | grep -q "already exists\|Conflict"; then
+    if [ "$USER_HTTP_CODE" = "409" ] || echo "$USER_RESPONSE" | jq -e '.errorMessage // empty | test("already exists|Conflict"; "i")' >/dev/null 2>&1; then
         echo_warning "User 'admin' may already exist, attempting to find it..."
         # Get existing user
-        local USERS_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=admin" \
+        local USERS_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=admin&exact=true" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" 2>/dev/null)
-        USER_ID=$(echo "$USERS_RESPONSE" | grep -o '"id":"[^"]*"' | cut -d'"' -f4 | head -1)
+        USER_ID=$(echo "$USERS_RESPONSE" | jq -r '.[0].id // empty')
 
         if [ -n "$USER_ID" ]; then
             echo_info "Found existing user 'admin', updating with attributes..."
@@ -1354,10 +1361,10 @@ create_test_user() {
     elif [ "$USER_HTTP_CODE" = "201" ] || [ "$USER_HTTP_CODE" = "200" ]; then
         # User created successfully, get ID from users list
         sleep 2
-        local USERS_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=admin" \
+        local USERS_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=admin&exact=true" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" 2>/dev/null)
-        USER_ID=$(echo "$USERS_RESPONSE" | grep -o '"id":"[^"]*"' | cut -d'"' -f4 | head -1)
+        USER_ID=$(echo "$USERS_RESPONSE" | jq -r '.[0].id // empty')
         echo_success "✓ User 'admin' created"
     fi
 
