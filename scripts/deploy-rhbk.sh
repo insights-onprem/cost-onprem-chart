@@ -782,7 +782,6 @@ spec:
         protocol: openid-connect
         defaultClientScopes:
           - openid
-          - profile
           - email
           - api.console
         protocolMappers:
