@@ -675,20 +675,6 @@ rbac:
         cpu: 500m
         memory: 2Gi
 
-  env:
-    CLOWDER_ENABLED: "false"
-    BYPASS_BOP_VERIFICATION: "True"
-    KAFKA_ENABLED: "false"
-    PGSSLMODE: "disable"
-    # Seeding is handled exclusively by the migration job (pre-install hook).
-    # Do NOT enable these here — they apply to all RBAC components including
-    # the API, which would re-seed on every restart and undo migration cleanup.
-    DJANGO_LOG_LEVEL: "INFO"
-    RBAC_LOG_LEVEL: "INFO"
-    DJANGO_LOG_FORMATTER: "simple"
-    DJANGO_LOG_HANDLERS: "console"
-    ACCESS_CACHE_ENABLED: "True"
-
 # -----------------------------------------------------------------------------
 # Shared Infrastructure - Kafka
 # -----------------------------------------------------------------------------

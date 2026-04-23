@@ -106,10 +106,24 @@ Provides DB, Redis, and application configuration for non-Clowder mode.
   value: "00000000-0000-4000-a000-000000000003"
 - name: SYSTEM_ADMIN_TENANT_ROLE_UUID
   value: "00000000-0000-4000-a000-000000000004"
-{{- range $key, $value := .Values.rbac.env }}
-- name: {{ $key }}
-  value: {{ $value | quote }}
-{{- end }}
+- name: CLOWDER_ENABLED
+  value: "false"
+- name: BYPASS_BOP_VERIFICATION
+  value: "True"
+- name: KAFKA_ENABLED
+  value: "false"
+- name: PGSSLMODE
+  value: "disable"
+- name: DJANGO_LOG_LEVEL
+  value: "INFO"
+- name: RBAC_LOG_LEVEL
+  value: "INFO"
+- name: DJANGO_LOG_FORMATTER
+  value: "simple"
+- name: DJANGO_LOG_HANDLERS
+  value: "console"
+- name: ACCESS_CACHE_ENABLED
+  value: "True"
 {{- end -}}
 
 {{/*
