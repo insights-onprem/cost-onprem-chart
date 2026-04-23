@@ -910,11 +910,11 @@ spec:
           - profile
           - email
         protocolMappers:
-          - name: aud-mapper-cost-management-iqe
+          - name: aud-mapper-cost-management-ui
             protocol: openid-connect
             protocolMapper: oidc-audience-mapper
             config:
-              included.client.audience: cost-management-iqe
+              included.client.audience: $COST_MGMT_UI_CLIENT_ID
               id.token.claim: "true"
               access.token.claim: "true"
           - name: org-id-mapper
