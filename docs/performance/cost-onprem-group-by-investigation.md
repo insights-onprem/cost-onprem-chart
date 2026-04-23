@@ -245,7 +245,7 @@ Recommended fix:
 ## Related Files
 
 - Test: `tests/suites/performance/test_api_latency.py` - `test_perf_api_005_complex_group_by`
-- Findings: `tests/suites/performance/FINDINGS.md` - PERF-FINDING-007
+- Findings: `docs/performance/FINDINGS.md`
 - Koku API source: Check `koku/api/report/` for query generation
 
 ---

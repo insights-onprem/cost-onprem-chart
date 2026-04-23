@@ -643,7 +643,10 @@ class TestIngestionThroughput:
         # Track for cleanup
         perf_cleanup.track(source_id=source.source_id, cluster_id=cluster_id, source_name=source_name)
         
-        # Use extended date range and larger profile to generate large files
+        # NOTE: This test intentionally ignores PERF_PROFILE and always uses "large"
+        # profile because the goal is to generate files of specific sizes (50MB+).
+        # Smaller profiles cannot generate files large enough to test upload limits.
+        #
         # Empirical data sizes (from test runs):
         # - large profile (133 nodes) x 90 days ≈ 200 MB (much larger than expected)
         # - medium profile (49 nodes) x 30 days ≈ 15-25 MB  
@@ -652,10 +655,10 @@ class TestIngestionThroughput:
         # - large profile x 45 days ≈ 100+ MB
         if target_size_mb <= 50:
             days_for_size = 30
-            profile_name = "large"
+            profile_name = "large"  # Always large - required for 50MB+ files
         else:
             days_for_size = 45
-            profile_name = "large"
+            profile_name = "large"  # Always large - required for 100MB+ files
         
         end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=days_for_size)

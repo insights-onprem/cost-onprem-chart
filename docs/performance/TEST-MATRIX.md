@@ -73,7 +73,7 @@ Tests API response times under various conditions.
 |---------|-------------|------------|--------|
 | **API-001** | Report baseline | `iterations` | `10`, `50` |
 | **API-002** | Report under load | `concurrent_users` | `5`, `10`, `20` |
-| **API-003** | Cost model CRUD | - | (configurable iterations) |
+| **API-003** | Cost model CRUD | `iterations` | `10` (via `PERF_API_003_ITERATIONS`) |
 | **API-004** | Source pagination | `page_size` | `10`, `50`, `100` |
 | **API-005** | Complex group-by | `group_by_dims` | `[project]`, `[project,node]`, `[project,node,namespace]` |
 | **API-006** | Tag filtering | `tag_count` | `1`, `5`, `10` |
