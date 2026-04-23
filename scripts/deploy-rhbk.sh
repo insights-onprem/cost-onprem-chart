@@ -1249,8 +1249,11 @@ extract_client_secret() {
     # Extract operator client secret
     extract_single_client_secret "$COST_MGMT_OPERATOR_CLIENT_ID" "keycloak-client-secret-cost-management-operator" || echo_warning "Failed to extract operator client secret"
 
-    # Extract UI client secret
-    extract_single_client_secret "$COST_MGMT_UI_CLIENT_ID" "keycloak-client-secret-cost-management-ui" || echo_warning "Failed to extract UI client secret"
+    # Extract UI client secret (required for IQE password-grant authentication)
+    if ! extract_single_client_secret "$COST_MGMT_UI_CLIENT_ID" "keycloak-client-secret-cost-management-ui"; then
+        echo_error "Failed to extract UI client secret — IQE tests will fail with 401 Unauthorized"
+        echo_error "The cost-management-ui client must exist in realm '$REALM_NAME' with a secret"
+    fi
 
     echo ""
 }
