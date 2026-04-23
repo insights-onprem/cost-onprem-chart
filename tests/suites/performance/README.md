@@ -155,19 +155,20 @@ pytest -m performance --tb=long
 
 ## Related Files
 
+- `../../../docs/performance/TEST-MATRIX.md` - **Complete test matrix with all permutations and parameters**
 - `conftest.py` - Fixtures for timing, cluster info, report collection
 - `profiles.py` - Performance profile definitions and NISE YAML generation
 - `test_ingestion.py` - Ingestion throughput tests
 - `test_api_latency.py` - API latency tests
 - `test_scale.py` - Multi-cluster scale tests
-- `FINDINGS.md` - **Issues discovered during testing** (create Jira tickets from this)
-- `../../../docs/development/performance-testing-plan.md` - Full testing plan (FLPATH-4036)
+- `../../../docs/performance/FINDINGS.md` - **Issues discovered during testing** (create Jira tickets from this)
+- `../../../docs/performance/performance-testing-plan.md` - Full testing plan (FLPATH-4036)
 
 ## Tracking Findings
 
 Performance testing exists to find issues. When you discover problems:
 
-1. **Document immediately** in `FINDINGS.md` with:
+1. **Document immediately** in `docs/performance/FINDINGS.md` with:
    - Clear description and evidence (logs, metrics)
    - Root cause analysis
    - Proposed fix or workaround
@@ -176,7 +177,7 @@ Performance testing exists to find issues. When you discover problems:
 
 3. **Update status** as fixes are implemented
 
-See `FINDINGS.md` for current issues and their status.
+See `docs/performance/FINDINGS.md` for current issues and their status.
 
 ## Jira Stories
 

@@ -285,4 +285,4 @@ The `deploy-test-cost-onprem.sh` script can setup data automatically:
 - [Performance Testing](../../tests/suites/performance/README.md) - Performance test details
 - [E2E Testing](../../tests/suites/e2e/README.md) - E2E scenario tests
 - [NISE Templates](../../tests/data/nise_templates/README.md) - Available data templates
-- [Sizing Guide](../operations/sizing-guide.md) - Resource requirements per profile
+- [Sizing Guide](../performance/sizing-guide.md) - Resource requirements per profile

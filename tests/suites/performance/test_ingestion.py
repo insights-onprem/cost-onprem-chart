@@ -586,6 +586,171 @@ class TestIngestionThroughput:
         assert len(errors) == 0, f"Upload errors: {errors}"
         assert processed_count == concurrent_sources, f"Only {processed_count}/{concurrent_sources} processed"
 
+    @pytest.mark.timeout(3600)  # 60 minutes for large file upload test (generation + upload + processing)
+    @pytest.mark.parametrize("target_size_mb", [50, 100])
+    def test_perf_ing_004_large_file_upload(
+        self,
+        target_size_mb: int,
+        cluster_config: ClusterConfig,
+        ingress_url: str,
+        database_config,
+        perf_timer: PerfTimer,
+        perf_result: PerformanceResult,
+        perf_collector: PerfResultCollector,
+        rh_identity_header: str,
+        perf_cleanup,
+    ):
+        """PERF-ING-004: Large file upload (50MB+).
+        
+        Tests system behavior with large payload files that approach or exceed
+        typical upload size limits.
+        
+        Default ingress limit is 100MB. This test validates:
+        - Upload succeeds for large files
+        - Processing completes within reasonable time
+        - No timeouts or memory issues
+        
+        Metrics captured:
+        - Upload time and throughput
+        - Processing time
+        - Any errors or retries
+        
+        The test uses extended date ranges with larger profiles to generate
+        files approaching the target size. Actual generated size depends on
+        profile characteristics and NISE output.
+        """
+        cluster_id = generate_cluster_id()
+        source_name = f"perf-ing-004-{target_size_mb}mb-{cluster_id[-8:]}"
+        
+        ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
+        if not ingress_pod:
+            pytest.skip("Ingress pod not found")
+        
+        koku_api_url = f"http://{self.helm_release}-koku-api.{self.namespace}.svc.cluster.local:8000/api/cost-management/v1"
+        
+        # Register source
+        with perf_timer.measure("source_registration"):
+            source = register_source(
+                self.namespace,
+                ingress_pod,
+                koku_api_url,
+                rh_identity_header,
+                cluster_id,
+                "org1234567",
+                source_name,
+            )
+        
+        # Track for cleanup
+        perf_cleanup.track(source_id=source.source_id, cluster_id=cluster_id, source_name=source_name)
+        
+        # Use extended date range and larger profile to generate large files
+        # Empirical data sizes (from test runs):
+        # - large profile (133 nodes) x 90 days ≈ 200 MB (much larger than expected)
+        # - medium profile (49 nodes) x 30 days ≈ 15-25 MB  
+        # - medium profile x 60 days ≈ 30-50 MB
+        # - large profile x 30 days ≈ 50-70 MB
+        # - large profile x 45 days ≈ 100+ MB
+        if target_size_mb <= 50:
+            days_for_size = 30
+            profile_name = "large"
+        else:
+            days_for_size = 45
+            profile_name = "large"
+        
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=days_for_size)
+        
+        jwt_token = self._get_fresh_token()
+        
+        # Capture baseline CPU
+        baseline_cpu = get_listener_cpu_usage(self.namespace)
+        cpu_samples = [baseline_cpu] if baseline_cpu else []
+        
+        # Generate and upload data using standard helper
+        # This handles NISE generation, packaging, and upload
+        with perf_timer.measure("data_generation_and_upload"):
+            upload_result = generate_and_upload_data(
+                cluster_id,
+                source_name,
+                start_date,
+                end_date,
+                ingress_url,
+                jwt_token,
+                profile_name=profile_name,
+            )
+        
+        package_size_mb = upload_result.get("package_size_mb", 0)
+        upload_seconds = upload_result.get("upload_seconds", 0)
+        generation_seconds = upload_result.get("generation_seconds", 0)
+        
+        # Log the actual size achieved
+        print(f"\n[PERF-ING-004] Generated package: {package_size_mb:.2f} MB (target: {target_size_mb} MB)")
+        
+        # Note: we don't skip if size is less than target - we document what was achieved
+        # The test validates that large file uploads work, not that we hit exact sizes
+        size_achieved_pct = (package_size_mb / target_size_mb * 100) if target_size_mb > 0 else 0
+        
+        upload_throughput = package_size_mb / upload_seconds if upload_seconds > 0 else 0
+        
+        # Wait for processing - large files need extended time
+        # Based on empirical data: ~67MB takes 20+ minutes to process
+        # Allow up to 45 minutes for processing large files
+        with perf_timer.measure("processing_wait"):
+            processing_start = time.time()
+            schema = None
+            max_wait = 2700  # 45 minutes for processing large files
+            
+            while time.time() - processing_start < max_wait:
+                schema = wait_for_summary_tables(
+                    self.namespace,
+                    database_config.pod_name,
+                    cluster_id,
+                    timeout=60,
+                    interval=30,
+                )
+                
+                # Sample CPU during processing
+                cpu = get_listener_cpu_usage(self.namespace)
+                if cpu:
+                    cpu_samples.append(cpu)
+                
+                if schema:
+                    break
+        
+        processing_time = time.time() - processing_start
+        
+        perf_result.metrics = {
+            "target_size_mb": target_size_mb,
+            "actual_size_mb": round(package_size_mb, 2),
+            "size_achieved_pct": round(size_achieved_pct, 1),
+            "profile": profile_name,
+            "days": days_for_size,
+            "generation_time_seconds": round(generation_seconds, 2),
+            "upload_time_seconds": round(upload_seconds, 2),
+            "upload_throughput_mb_s": round(upload_throughput, 4),
+            "processing_time_seconds": round(processing_time, 2),
+            "total_time_seconds": round(upload_seconds + processing_time, 2),
+            "cpu_samples": cpu_samples,
+            "avg_cpu_cores": sum(cpu_samples) / len(cpu_samples) if cpu_samples else 0,
+            "max_cpu_cores": max(cpu_samples) if cpu_samples else 0,
+            "processing_completed": schema is not None,
+        }
+        perf_result.timings = perf_timer.get_timings()
+        perf_result.passed = schema is not None
+        
+        perf_collector.add_result(perf_result)
+        
+        # Print summary
+        print(f"\n=== PERF-ING-004 Results ({target_size_mb}MB target) ===")
+        print(f"  Actual size: {package_size_mb:.2f} MB ({size_achieved_pct:.0f}% of target)")
+        print(f"  Generation: {generation_seconds:.1f}s")
+        print(f"  Upload: {upload_seconds:.1f}s ({upload_throughput:.2f} MB/s)")
+        print(f"  Processing: {processing_time:.1f}s")
+        print(f"  Total: {upload_seconds + processing_time:.1f}s")
+        print(f"  Completed: {schema is not None}")
+        
+        assert schema is not None, f"Large file ({package_size_mb:.2f} MB) processing did not complete"
+
     @pytest.mark.timeout(1200)  # 20 minutes for high-frequency upload test
     def test_perf_ing_005_high_frequency_uploads(
         self,
