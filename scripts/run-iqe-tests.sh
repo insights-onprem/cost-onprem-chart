@@ -304,11 +304,6 @@ KEYCLOAK_CLIENT_SECRET=$(kubectl get secret "$KEYCLOAK_SECRET_NAME" -n "$KEYCLOA
                          kubectl get secret "$KEYCLOAK_SECRET_NAME" -n "$KEYCLOAK_SECRET_NS" -o jsonpath='{.data.client_secret}' 2>/dev/null | base64 -d || \
                          echo "")
 
-# IQE client for password-grant authentication.
-# This MUST be a public client because iqe_jwt's OIDCAuth.from_basic() does not
-# send client_secret — confidential clients will always return 401.
-IQE_CLIENT_ID="cost-management-iqe"
-
 # Get Keycloak route for OAuth URL
 KEYCLOAK_HOST=$(kubectl get route keycloak -n keycloak -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
 OAUTH_URL="https://${KEYCLOAK_HOST}/realms/kubernetes/protocol/openid-connect"
@@ -366,8 +361,6 @@ fi
 if [ -z "$KEYCLOAK_CLIENT_SECRET" ]; then
     echo "WARNING: Could not extract Keycloak operator client secret. Authentication may fail."
 fi
-
-echo "  IQE Client ID: ${IQE_CLIENT_ID} (public — no secret required)"
 
 # Check if cluster has pull secret for the IQE image registry
 echo ""
@@ -517,7 +510,6 @@ if [ -n "$KEYCLOAK_CLIENT_SECRET" ]; then
     kubectl create secret generic iqe-keycloak-credentials \
         --from-literal=CLIENT_ID="${KEYCLOAK_CLIENT_ID}" \
         --from-literal=CLIENT_SECRET="${KEYCLOAK_CLIENT_SECRET}" \
-        --from-literal=IQE_CLIENT_ID="${IQE_CLIENT_ID}" \
         -n "${NAMESPACE}" \
         --dry-run=client -o yaml | kubectl apply -f -
     echo "✓ Keycloak credentials secret created"
@@ -661,7 +653,13 @@ spec:
     - name: DYNACONF_ONPREM_KOKU_HOSTNAME
       value: "${KOKU_HOSTNAME}"
     - name: DYNACONF_ONPREM_CLIENT_ID
-      value: "${IQE_CLIENT_ID}"
+      value: "${KEYCLOAK_CLIENT_ID}"
+    - name: DYNACONF_ONPREM_CLIENT_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: iqe-keycloak-credentials
+          key: CLIENT_SECRET
+          optional: true
     - name: DYNACONF_ONPREM_OAUTH_URL
       value: "${OAUTH_URL}"
     - name: DYNACONF_ONPREM_MASU_HOSTNAME
@@ -679,7 +677,7 @@ spec:
     - name: DYNACONF_HTTP__DEFAULT_AUTH_TYPE
       value: "jwt-auth"
     - name: DYNACONF_HTTP__OAUTH_CLIENT_ID
-      value: "${IQE_CLIENT_ID}"
+      value: "${KEYCLOAK_CLIENT_ID}"
     - name: DYNACONF_HTTP__OAUTH_BASE_URL
       value: "${OAUTH_URL}"
     - name: DYNACONF_HTTP__SSL_VERIFY
@@ -715,9 +713,15 @@ spec:
     - name: DYNACONF_users__cost_onprem_user__auth__password
       value: "admin"
     - name: DYNACONF_users__cost_onprem_user__auth__jwt_grant_type
-      value: "password"
+      value: "client_credentials"
     - name: DYNACONF_users__cost_onprem_user__auth__client_id
-      value: "${IQE_CLIENT_ID}"
+      value: "${KEYCLOAK_CLIENT_ID}"
+    - name: DYNACONF_users__cost_onprem_user__auth__client_secret
+      valueFrom:
+        secretKeyRef:
+          name: iqe-keycloak-credentials
+          key: CLIENT_SECRET
+          optional: true
     - name: DYNACONF_users__cost_onprem_user__identity__account_number
       value: "7890123"
     - name: DYNACONF_users__cost_onprem_user__identity__org_id
