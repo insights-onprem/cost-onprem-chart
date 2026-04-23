@@ -775,6 +775,7 @@ spec:
               claim.name: email_verified
               jsonType.label: boolean
     defaultDefaultClientScopes:
+      - openid
       - api.console
       - profile
       - email
@@ -865,6 +866,7 @@ spec:
         webOrigins:
           - "$UI_BASE_URL"
         defaultClientScopes:
+          - openid
           - api.console
           - profile
           - email
@@ -907,7 +909,7 @@ EOF
 
     # Wait for realm import to complete
     echo_info "Waiting for realm import to complete..."
-    local timeout=120
+    local timeout=300
     local elapsed=0
 
     while [ $elapsed -lt $timeout ]; do
@@ -929,7 +931,7 @@ EOF
     # Additional wait for Keycloak to fully process the realm and make clients available via admin API
     echo_info "Waiting for Keycloak to process realm and clients..."
     local KEYCLOAK_URL="https://$(oc get route keycloak -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null)"
-    local post_import_timeout=60
+    local post_import_timeout=120
     local post_import_elapsed=0
     local clients_available=false
 
@@ -1444,10 +1446,10 @@ display_summary() {
 
     echo_info "Cost Management UI Client Information:"
     echo_info "  Client ID: $COST_MGMT_UI_CLIENT_ID"
-    echo_info "  Client Type: OAuth2 Public Client (authorization_code flow)"
+    echo_info "  Client Type: Confidential (authorization_code + password grant)"
     echo_info "  Redirect URI: ${UI_BASE_URL}/oauth2/callback"
     echo_info "  Web Origin: $UI_BASE_URL"
-    echo_info "  Default Scopes: api.console, profile, email"
+    echo_info "  Default Scopes: openid, api.console, profile, email"
     echo_info "  Optional Scopes: offline_access"
     echo_info "  Secret stored in: keycloak-client-secret-cost-management-ui"
     echo ""
