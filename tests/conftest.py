@@ -24,6 +24,7 @@ import urllib3
 from utils import (
     check_pod_exists,
     exec_in_pod,
+    exec_in_pod_raw,
     get_pod_by_label,
     get_route_url,
     get_secret_value,
@@ -221,6 +222,62 @@ def jwt_token(keycloak_config: KeycloakConfig) -> JWTToken:
     obtain_jwt_token(keycloak_config) directly instead of depending on this fixture.
     """
     return obtain_jwt_token(keycloak_config)
+
+
+def obtain_user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JWTToken:
+    """Obtain a JWT token via password grant for the admin user.
+
+    The cost-management-operator SA token has a ``service-account-*`` username
+    that RBAC rejects with 400 ("Invalid format for a Service Account username").
+    API tests that go through the gateway must use a regular user token instead.
+    """
+    ui_client_id = "cost-management-ui"
+    ui_client_secret = get_secret_value(
+        cluster_config.keycloak_namespace,
+        f"keycloak-client-secret-{ui_client_id}",
+        "CLIENT_SECRET",
+    )
+    if not ui_client_secret:
+        pytest.fail("Could not find cost-management-ui client secret for password grant")
+
+    response = requests.post(
+        keycloak_config.token_url,
+        data={
+            "grant_type": "password",
+            "client_id": ui_client_id,
+            "client_secret": ui_client_secret,
+            "username": "admin",
+            "password": "admin",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        verify=False,
+        timeout=30,
+    )
+
+    if response.status_code != 200:
+        pytest.fail(
+            f"Failed to obtain user JWT token via password grant: "
+            f"{response.status_code} - {response.text}"
+        )
+
+    token_data = response.json()
+    expires_in = token_data.get("expires_in", 300)
+
+    return JWTToken(
+        access_token=token_data["access_token"],
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in),
+    )
+
+
+@pytest.fixture(scope="function")
+def user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JWTToken:
+    """Obtain a user JWT token via password grant (admin/admin).
+
+    Use this for API tests that go through the gateway and hit RBAC-protected
+    endpoints.  The SA client-credentials token triggers a 400 in RBAC because
+    its ``service-account-*`` username is rejected.
+    """
+    return obtain_user_jwt_token(keycloak_config, cluster_config)
 
 
 @pytest.fixture(scope="session")
@@ -632,10 +689,10 @@ def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> st
         
         admin_token = token_response.json().get("access_token")
         
-        # Get test user's org_id
+        # Get admin user's org_id
         users_response = requests.get(
             f"{keycloak_config.url}/admin/realms/kubernetes/users",
-            params={"username": "test", "exact": "true"},
+            params={"username": "admin", "exact": "true"},
             headers={"Authorization": f"Bearer {admin_token}"},
             verify=False,
             timeout=30,
@@ -651,6 +708,342 @@ def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> st
         return "org1234567"
     except Exception:
         return "org1234567"
+
+
+# =============================================================================
+# RBAC Bootstrap (ensures CI service account has permissions)
+# =============================================================================
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _rbac_bootstrap(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig, gateway_url: str):
+    """Bootstrap RBAC permissions for the CI service account.
+
+    With is_org_admin=false in the Envoy gateway, the CI service account needs
+    explicit RBAC group membership. This fixture:
+    1. Triggers tenant creation by making a request through the gateway
+    2. Creates a "CI Test Admin" group and adds the service account principal
+       to it with Cost Administrator role
+
+    Only the service account principal is added to the admin group — individual
+    test users (alice, bob, carol) are NOT affected, preserving granular RBAC
+    test coverage in test_rbac_access.py.
+    """
+    logger = logging.getLogger(__name__)
+
+    # Step 1: Get a token and trigger tenant creation
+    try:
+        token = obtain_jwt_token(keycloak_config)
+    except Exception as e:
+        logger.warning(f"RBAC bootstrap: could not obtain JWT token: {e}")
+        return
+
+    # Decode the token to get the service account username.
+    # The Keycloak client has a preferred-username-override mapper that sets
+    # preferred_username to "cost-mgmt-operator", but due to a race condition
+    # the mapper may not be active when this first token is issued. Register
+    # both the decoded username AND the expected mapper value so RBAC lookups
+    # succeed regardless of timing.
+    sa_default = f"service-account-{keycloak_config.client_id}"
+    sa_mapper_override = "cost-mgmt-operator"
+    try:
+        payload = token.access_token.split(".")[1]
+        payload += "=" * (4 - len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+        sa_username = claims.get("preferred_username") or claims.get("sub", sa_default)
+    except Exception:
+        sa_username = sa_default
+
+    sa_usernames = list(dict.fromkeys([sa_username, sa_mapper_override, sa_default]))
+    logger.warning(f"RBAC bootstrap: SA usernames to register = {sa_usernames}")
+
+    try:
+        resp = requests.get(
+            f"{gateway_url}/cost-management/v1/status/",
+            headers={"Authorization": f"Bearer {token.access_token}"},
+            verify=False,
+            timeout=30,
+        )
+        logger.warning(f"RBAC bootstrap: tenant trigger response: {resp.status_code}")
+    except Exception as e:
+        logger.warning(f"RBAC bootstrap: gateway request failed: {e}")
+
+    # Give RBAC a moment to process the tenant creation
+    time.sleep(3)
+
+    # Step 2: Exec into RBAC pod and grant Cost Administrator to the SA principal
+    rbac_pod = get_pod_by_label(
+        cluster_config.namespace, "app.kubernetes.io/component=rbac-api"
+    )
+    if not rbac_pod:
+        logger.warning("RBAC bootstrap: rbac-api pod not found, skipping")
+        return
+
+    # Resolve org_id from the token claims or fall back to default
+    org_id_value = claims.get("org_id") or "org1234567"
+    acct_number = claims.get("account_number") or "1234567"
+
+    sa_usernames_repr = repr(sa_usernames)
+    bootstrap_script = f"""
+from api.models import Tenant
+from management.models import Group, Policy, Role, Principal
+from django.core.cache import cache
+
+sa_usernames = {sa_usernames_repr}
+org_id = "{org_id_value}"
+acct_number = "{acct_number}"
+
+public_tenant = Tenant.objects.get(tenant_name='public')
+cost_admin_role = Role.objects.filter(name='Cost Administrator', tenant=public_tenant).first()
+if not cost_admin_role:
+    print('RBAC bootstrap: Cost Administrator role not found')
+else:
+    tenant, created = Tenant.objects.get_or_create(
+        org_id=org_id,
+        defaults={{'tenant_name': 'acct' + acct_number, 'ready': True}}
+    )
+    if created:
+        print(f'RBAC bootstrap: created tenant for org_id={{org_id}}')
+
+    grp, _ = Group.objects.get_or_create(
+        name='CI Test Admin', tenant=tenant,
+        defaults={{'admin_default': False, 'system': True,
+                  'description': 'CI service account admin access'}}
+    )
+    policy, _ = Policy.objects.get_or_create(
+        name='CI Test Admin Policy', tenant=tenant, group=grp
+    )
+    policy.roles.add(cost_admin_role)
+
+    for sa_name in sa_usernames:
+        principal, _ = Principal.objects.get_or_create(
+            username=sa_name, tenant=tenant,
+            defaults={{'type': 'user'}}
+        )
+        grp.principals.add(principal)
+
+    # Also grant the Keycloak "admin" user (used by UI/Playwright tests)
+    admin_principal, _ = Principal.objects.get_or_create(
+        username='admin', tenant=tenant,
+        defaults={{'type': 'user'}}
+    )
+    grp.principals.add(admin_principal)
+
+    cache.clear()
+    print(f'RBAC bootstrap: CI Test Admin group with Cost Administrator created for org={{org_id}}, principals={{sa_usernames + ["admin"]}}')
+"""
+
+    result = exec_in_pod_raw(
+        cluster_config.namespace,
+        rbac_pod,
+        ["python", "/opt/rbac/rbac/manage.py", "shell", "-c", bootstrap_script],
+        timeout=120,
+    )
+    logger.warning(f"RBAC bootstrap ORM stdout: {result.stdout.strip() if result.stdout else 'none'}")
+    if result.returncode != 0:
+        logger.error(f"RBAC bootstrap ORM FAILED (rc={result.returncode}): {result.stderr.strip()}")
+    else:
+        logger.warning("RBAC bootstrap ORM: success")
+
+    # Run V2 tenant bootstrap so that TenantMapping, workspaces, and role
+    # bindings are created — without this RBAC returns 400 on /access/ queries.
+    v2_result = exec_in_pod_raw(
+        cluster_config.namespace,
+        rbac_pod,
+        [
+            "python", "/opt/rbac/rbac/manage.py",
+            "bootstrap_tenants", "--org-id", org_id_value, "--force",
+        ],
+        timeout=120,
+    )
+    logger.warning(f"RBAC bootstrap V2 stdout: {v2_result.stdout.strip() if v2_result.stdout else 'none'}")
+    if v2_result.returncode != 0:
+        logger.error(f"RBAC bootstrap V2 FAILED (rc={v2_result.returncode}): {v2_result.stderr.strip()}")
+    else:
+        logger.warning("RBAC bootstrap V2: success")
+
+    # =========================================================================
+    # Cleanup: strip cost-management from RBAC's seeded platform defaults
+    # =========================================================================
+    # RBAC seeds "Cost Cloud Viewer Local Test" and "Cost OpenShift Viewer
+    # Local Test" roles with platform_default=True at startup. This grants
+    # every user cost-management read access, defeating granular RBAC tests.
+    # Fix both vectors: group-level associations AND role-level flag.
+    cleanup_script = """
+from management.models import Group, Policy, Role, Access
+from django.db.models import Q
+from django.core.cache import cache
+
+group_removed = 0
+for group in Group.objects.filter(platform_default=True):
+    for policy in Policy.objects.filter(group=group):
+        for role in policy.roles.all():
+            has_cm = Access.objects.filter(role=role).filter(
+                Q(permission__application='cost-management')
+                | Q(permission__resource_type='*')
+            ).exists()
+            if has_cm:
+                policy.roles.remove(role)
+                group_removed += 1
+
+role_cleared = 0
+for role in Role.objects.filter(platform_default=True):
+    has_cm = Access.objects.filter(role=role).filter(
+        Q(permission__application='cost-management')
+    ).exists()
+    if has_cm:
+        role.platform_default = False
+        role.save(update_fields=['platform_default'])
+        role_cleared += 1
+
+cache.clear()
+print(f'Platform default cleanup: removed {group_removed} role(s) from groups, '
+      f'cleared platform_default flag on {role_cleared} role(s)')
+"""
+    cleanup_result = exec_in_pod_raw(
+        cluster_config.namespace,
+        rbac_pod,
+        ["python", "/opt/rbac/rbac/manage.py", "shell", "-c", cleanup_script],
+        timeout=60,
+    )
+    if cleanup_result.stdout:
+        logger.warning(f"RBAC bootstrap cleanup: {cleanup_result.stdout.strip()}")
+    if cleanup_result.returncode != 0:
+        logger.warning(f"RBAC cleanup stderr: {cleanup_result.stderr.strip()[:300] if cleanup_result.stderr else 'none'}")
+
+    # =========================================================================
+    # Diagnostic: check RBAC state and Koku accessibility after bootstrap
+    # =========================================================================
+    koku_svc_host = f"{cluster_config.helm_release_name}-koku-api.{cluster_config.namespace}.svc"
+    diag_script = f"""
+import json, base64, urllib.request, urllib.error
+
+sa_username = "{sa_username}"
+org_id = "{org_id_value}"
+acct_number = "{acct_number}"
+
+# --- V1 ORM diagnostics ---
+from api.models import Tenant
+from management.models import Group, Policy, Role, Principal, Access
+
+public_tenant = Tenant.objects.get(tenant_name='public')
+
+# Check CI Test Admin group
+try:
+    tenant = Tenant.objects.get(org_id=org_id)
+    ci_grp = Group.objects.filter(name='CI Test Admin', tenant=tenant).first()
+    if ci_grp:
+        principals = list(ci_grp.principals.values_list('username', flat=True))
+        policies = Policy.objects.filter(group=ci_grp)
+        roles = []
+        for p in policies:
+            roles.extend(list(p.roles.values_list('name', flat=True)))
+        print(f"DIAG V1: CI Test Admin group found. principals={{principals}}, roles={{roles}}")
+    else:
+        print("DIAG V1: CI Test Admin group NOT found")
+except Tenant.DoesNotExist:
+    print(f"DIAG V1: Tenant org_id={{org_id}} not found")
+
+# Check platform_default groups
+pd_groups = Group.objects.filter(platform_default=True)
+for g in pd_groups:
+    policies = Policy.objects.filter(group=g)
+    for p in policies:
+        for r in p.roles.all():
+            cm_access = Access.objects.filter(role=r).filter(
+                permission__application='cost-management'
+            ).exists()
+            wildcard_access = Access.objects.filter(role=r).filter(
+                permission__resource_type='*'
+            ).exists()
+            if cm_access or wildcard_access:
+                print(f"DIAG V1: platform_default group '{{g.name}}' (tenant={{g.tenant.org_id or g.tenant.tenant_name}}) has role '{{r.name}}' with cm_access={{cm_access}}, wildcard={{wildcard_access}}")
+
+# Check roles with platform_default=True flag
+pd_roles = Role.objects.filter(platform_default=True)
+for r in pd_roles:
+    perms = list(Access.objects.filter(role=r).values_list('permission__permission', flat=True))
+    print(f"DIAG V1: Role '{{r.name}}' has platform_default=True, permissions={{perms[:5]}}")
+
+# --- V2 diagnostics ---
+try:
+    from management.models import BindingMapping
+    bm_count = BindingMapping.objects.filter(resource_id=str(tenant.id)).count()
+    print(f"DIAG V2: BindingMapping count for tenant={{bm_count}}")
+except Exception as e:
+    print(f"DIAG V2: BindingMapping check error: {{e}}")
+
+try:
+    from management.relation_replicator.logging_replicator import get_relations_for_org
+    # V2 might not have this, ignore errors
+    pass
+except ImportError:
+    pass
+
+# --- Direct RBAC /access/ query (use 'admin' user, not SA) ---
+xrhid = json.dumps({{
+    "org_id": org_id,
+    "identity": {{
+        "org_id": org_id,
+        "account_number": acct_number,
+        "type": "User",
+        "user": {{
+            "username": "admin",
+            "email": "admin@test.com",
+            "is_org_admin": False
+        }}
+    }},
+    "entitlements": {{"cost_management": {{"is_entitled": True}}}}
+}})
+xrhid_b64 = base64.b64encode(xrhid.encode()).decode()
+
+try:
+    req = urllib.request.Request(
+        "http://localhost:8000/api/rbac/v1/access/?application=cost-management&limit=50",
+        headers={{"X-Rh-Identity": xrhid_b64, "Accept": "application/json"}}
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        body = resp.read().decode()
+        data = json.loads(body)
+        perm_count = data.get("meta", {{}}).get("count", 0)
+        perms = [d.get("permission") for d in data.get("data", [])[:10]]
+        print(f"DIAG RBAC-API: /access/ returned {{perm_count}} permissions: {{perms}}")
+except urllib.error.HTTPError as e:
+    body = e.read().decode()[:300]
+    print(f"DIAG RBAC-API: /access/ returned HTTP {{e.code}}: {{body}}")
+except Exception as e:
+    print(f"DIAG RBAC-API: /access/ error: {{e}}")
+
+# --- Direct Koku query (bypass gateway) ---
+koku_host = "{koku_svc_host}"
+try:
+    req = urllib.request.Request(
+        f"http://{{koku_host}}:8000/api/cost-management/v1/cost-models/",
+        headers={{"X-Rh-Identity": xrhid_b64, "Accept": "application/json"}}
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        print(f"DIAG KOKU-DIRECT: /cost-models/ returned HTTP {{resp.status}}")
+except urllib.error.HTTPError as e:
+    body = e.read().decode()[:300]
+    print(f"DIAG KOKU-DIRECT: /cost-models/ returned HTTP {{e.code}}: {{body}}")
+except Exception as e:
+    print(f"DIAG KOKU-DIRECT: /cost-models/ error: {{e}}")
+"""
+
+    # koku_svc_host already resolved above before the f-string
+
+    diag_result = exec_in_pod_raw(
+        cluster_config.namespace,
+        rbac_pod,
+        ["python", "/opt/rbac/rbac/manage.py", "shell", "-c", diag_script],
+        timeout=60,
+    )
+    if diag_result.stdout:
+        for line in diag_result.stdout.strip().split("\n"):
+            if "DIAG" in line:
+                logger.warning(line.strip())
+    if diag_result.returncode != 0:
+        logger.warning(f"RBAC diagnostics stderr: {diag_result.stderr.strip()[:500] if diag_result.stderr else 'none'}")
 
 
 # =============================================================================
@@ -730,22 +1123,20 @@ def http_session() -> requests.Session:
 
 
 @pytest.fixture(scope="function")
-def authenticated_session(jwt_token: JWTToken) -> requests.Session:
-    """Pre-configured requests session with JWT authentication.
-    
-    Scope: function - Matches jwt_token scope to ensure fresh auth per test.
-    
-    Use this fixture for external API tests that go through the gateway.
-    The session includes:
-    - Authorization header with Bearer token
-    - SSL verification disabled (for self-signed certs)
-    
+def authenticated_session(user_jwt_token: JWTToken) -> requests.Session:
+    """Pre-configured requests session with user JWT authentication.
+
+    Uses a password-grant user token (admin/admin) instead of the SA client-
+    credentials token.  RBAC rejects the SA's ``service-account-*`` username
+    with 400 when queried via ``type: User`` identity, so all gateway API
+    tests must authenticate as a real user.
+
     Note: Content-Type is NOT set by default to allow multipart/form-data
     uploads to work correctly. Set it explicitly in tests that need JSON.
     """
     session = requests.Session()
     session.headers.update({
-        "Authorization": f"Bearer {jwt_token.access_token}",
+        "Authorization": f"Bearer {user_jwt_token.access_token}",
     })
     session.verify = False
     return session

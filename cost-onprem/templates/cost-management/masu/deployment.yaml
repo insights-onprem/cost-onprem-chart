@@ -23,6 +23,7 @@ spec:
 
       initContainers:
       {{- include "cost-onprem.koku.initContainer.combineCA" . | nindent 6 }}
+      {{- include "cost-onprem.initContainer.waitForValkey" . | nindent 6 }}
       containers:
       - name: masu
         image: "{{ include "cost-onprem.koku.image" . }}"

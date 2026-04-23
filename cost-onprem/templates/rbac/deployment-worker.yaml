@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cost-onprem.rbac.worker.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-onprem.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac-worker
+spec:
+  replicas: {{ .Values.rbac.worker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "cost-onprem.rbac.worker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cost-onprem.labels" . | nindent 8 }}
+        app.kubernetes.io/component: rbac-worker
+    spec:
+      automountServiceAccountToken: false
+
+      securityContext:
+        {{- include "cost-onprem.securityContext.pod.nonRoot" . | nindent 8 }}
+
+      initContainers:
+        {{- include "cost-onprem.initContainer.waitForDb" (list . "rbac") | nindent 8 }}
+        {{- include "cost-onprem.initContainer.waitForValkey" . | nindent 8 }}
+
+      containers:
+      - name: rbac-worker
+        image: "{{ include "cost-onprem.rbac.image" . }}"
+        imagePullPolicy: {{ .Values.rbac.image.pullPolicy }}
+        workingDir: /opt/rbac/rbac
+
+        command: ["celery"]
+        args:
+          - "-A"
+          - "rbac.celery"
+          - "worker"
+          - "--pool=solo"
+          - "--loglevel=info"
+
+        env:
+        {{- include "cost-onprem.rbac.commonEnv" . | nindent 8 }}
+
+        resources:
+          {{- toYaml .Values.rbac.worker.resources | nindent 10 }}
+
+        securityContext:
+          {{- include "cost-onprem.securityContext.container" . | nindent 10 }}

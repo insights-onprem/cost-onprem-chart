@@ -113,6 +113,13 @@ check_prerequisites() {
     fi
     echo_success "✓ OpenShift CLI (oc) is available"
 
+    # Check if jq is available (used for Keycloak Admin API JSON parsing)
+    if ! command -v jq >/dev/null 2>&1; then
+        echo_error "jq command not found. Please install jq (https://jqlang.github.io/jq/)."
+        exit 1
+    fi
+    echo_success "✓ jq is available"
+
     # Check if logged into OpenShift/Kubernetes
     # Use kubectl cluster-info as it works with both oc and kubectl
     if ! kubectl cluster-info >/dev/null 2>&1; then
@@ -757,6 +764,7 @@ spec:
               claim.name: email_verified
               jsonType.label: boolean
     defaultDefaultClientScopes:
+      - openid
       - api.console
       - profile
       - email
@@ -774,7 +782,6 @@ spec:
         protocol: openid-connect
         defaultClientScopes:
           - openid
-          - profile
           - email
           - api.console
         protocolMappers:
@@ -821,6 +828,16 @@ spec:
               id.token.claim: "false"
               jsonType.label: String
               userinfo.token.claim: "false"
+          - name: preferred-username-override
+            protocol: openid-connect
+            protocolMapper: oidc-hardcoded-claim-mapper
+            config:
+              access.token.claim: "true"
+              claim.name: preferred_username
+              claim.value: cost-mgmt-operator
+              id.token.claim: "true"
+              jsonType.label: String
+              userinfo.token.claim: "true"
       - clientId: $COST_MGMT_UI_CLIENT_ID
         name: "Cost Management UI"
         description: "OAuth2 client for Cost Management UI"
@@ -837,6 +854,7 @@ spec:
         webOrigins:
           - "$UI_BASE_URL"
         defaultClientScopes:
+          - openid
           - api.console
           - profile
           - email
@@ -873,13 +891,58 @@ spec:
               userinfo.token.claim: "false"
           # Note: "access" attribute mapper removed - using ENHANCED_ORG_ADMIN mode
           # All authenticated users are org admins with full access within their org
+      # Public client for IQE tests — iqe_jwt's OIDCAuth.from_basic() does not
+      # send client_secret, so password-grant requires a public client.
+      - clientId: cost-management-iqe
+        name: "Cost Management IQE Test Client"
+        description: "Public client for IQE password-grant authentication"
+        enabled: true
+        serviceAccountsEnabled: false
+        standardFlowEnabled: false
+        directAccessGrantsEnabled: true
+        implicitFlowEnabled: false
+        publicClient: true
+        protocol: openid-connect
+        defaultClientScopes:
+          - openid
+          - api.console
+          - profile
+          - email
+        protocolMappers:
+          - name: aud-mapper-cost-management-ui
+            protocol: openid-connect
+            protocolMapper: oidc-audience-mapper
+            config:
+              included.client.audience: $COST_MGMT_UI_CLIENT_ID
+              id.token.claim: "true"
+              access.token.claim: "true"
+          - name: org-id-mapper
+            protocol: openid-connect
+            protocolMapper: oidc-usermodel-attribute-mapper
+            config:
+              user.attribute: org_id
+              claim.name: org_id
+              access.token.claim: "true"
+              id.token.claim: "true"
+              jsonType.label: String
+              userinfo.token.claim: "false"
+          - name: account-number-mapper
+            protocol: openid-connect
+            protocolMapper: oidc-usermodel-attribute-mapper
+            config:
+              user.attribute: account_number
+              claim.name: account_number
+              access.token.claim: "true"
+              id.token.claim: "true"
+              jsonType.label: String
+              userinfo.token.claim: "false"
 EOF
         echo_success "✓ Kubernetes realm import created"
     fi
 
     # Wait for realm import to complete
     echo_info "Waiting for realm import to complete..."
-    local timeout=120
+    local timeout=300
     local elapsed=0
 
     while [ $elapsed -lt $timeout ]; do
@@ -901,7 +964,7 @@ EOF
     # Additional wait for Keycloak to fully process the realm and make clients available via admin API
     echo_info "Waiting for Keycloak to process realm and clients..."
     local KEYCLOAK_URL="https://$(oc get route keycloak -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null)"
-    local post_import_timeout=60
+    local post_import_timeout=120
     local post_import_elapsed=0
     local clients_available=false
 
@@ -916,7 +979,7 @@ EOF
             -d "grant_type=password" \
             -d "client_id=admin-cli" 2>/dev/null)
 
-        local access_token=$(echo "$token_response" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
+        local access_token=$(echo "$token_response" | jq -r '.access_token // empty')
 
         if [ -n "$access_token" ]; then
             # Try to get the clients we just created
@@ -927,12 +990,12 @@ EOF
             local operator_client_found=false
             local ui_client_found=false
 
-            if echo "$client_data" | grep -q "\"clientId\":\"$COST_MGMT_OPERATOR_CLIENT_ID\""; then
+            if echo "$client_data" | jq -e --arg cid "$COST_MGMT_OPERATOR_CLIENT_ID" '.[] | select(.clientId == $cid)' >/dev/null 2>&1; then
                 echo_success "✓ Client '$COST_MGMT_OPERATOR_CLIENT_ID' is available via admin API"
                 operator_client_found=true
             fi
 
-            if echo "$client_data" | grep -q "\"clientId\":\"$COST_MGMT_UI_CLIENT_ID\""; then
+            if echo "$client_data" | jq -e --arg cid "$COST_MGMT_UI_CLIENT_ID" '.[] | select(.clientId == $cid)' >/dev/null 2>&1; then
                 echo_success "✓ Client '$COST_MGMT_UI_CLIENT_ID' is available via admin API"
                 ui_client_found=true
             fi
@@ -1068,7 +1131,7 @@ configure_admin_console() {
             -d "grant_type=password" \
             -d "client_id=admin-cli" 2>/dev/null)
 
-        local access_token=$(echo "$token_response" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
+        local access_token=$(echo "$token_response" | jq -r '.access_token // empty')
 
         if [ -n "$access_token" ]; then
             echo_success "✓ Admin API is available"
@@ -1089,7 +1152,7 @@ configure_admin_console() {
     local clients_response=$(curl -sk "https://$KEYCLOAK_URL/admin/realms/master/clients" \
         -H "Authorization: Bearer $access_token" 2>/dev/null)
 
-    local client_uuid=$(echo "$clients_response" | grep -o '"id":"[^"]*","clientId":"security-admin-console"' | grep -o '"id":"[^"]*' | cut -d'"' -f4)
+    local client_uuid=$(echo "$clients_response" | jq -r '.[] | select(.clientId == "security-admin-console") | .id // empty')
 
     if [ -z "$client_uuid" ]; then
         echo_error "Could not find security-admin-console client"
@@ -1162,7 +1225,7 @@ extract_client_secret() {
         -d "grant_type=password" \
         -d "client_id=admin-cli" 2>/dev/null)
 
-    local ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
+    local ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token // empty')
 
     if [ -z "$ACCESS_TOKEN" ]; then
         echo_warning "Could not obtain admin token, skipping client secret extraction"
@@ -1183,7 +1246,7 @@ extract_client_secret() {
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" 2>/dev/null)
 
-        local CLIENT_UUID=$(echo "$CLIENT_DATA" | grep -o "\"id\":\"[^\"]*\"[^}]*\"clientId\":\"$client_id\"" | grep -o "\"id\":\"[^\"]*\"" | cut -d'"' -f4 | head -1)
+        local CLIENT_UUID=$(echo "$CLIENT_DATA" | jq -r --arg cid "$client_id" '.[] | select(.clientId == $cid) | .id // empty')
 
         if [ -z "$CLIENT_UUID" ]; then
             echo_warning "Could not find client '$client_id' in realm '$REALM_NAME'"
@@ -1198,7 +1261,7 @@ extract_client_secret() {
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" 2>/dev/null)
 
-        local CLIENT_SECRET=$(echo "$CLIENT_SECRET_RESPONSE" | grep -o '"value":"[^"]*' | cut -d'"' -f4)
+        local CLIENT_SECRET=$(echo "$CLIENT_SECRET_RESPONSE" | jq -r '.value // empty')
 
         if [ -z "$CLIENT_SECRET" ]; then
             echo_warning "Could not retrieve client secret for '$client_id'"
@@ -1228,15 +1291,19 @@ extract_client_secret() {
     # Extract operator client secret
     extract_single_client_secret "$COST_MGMT_OPERATOR_CLIENT_ID" "keycloak-client-secret-cost-management-operator" || echo_warning "Failed to extract operator client secret"
 
-    # Extract UI client secret
+    # Extract UI client secret (used by oauth2-proxy for authorization_code flow)
     extract_single_client_secret "$COST_MGMT_UI_CLIENT_ID" "keycloak-client-secret-cost-management-ui" || echo_warning "Failed to extract UI client secret"
+
+    # Note: cost-management-iqe is a public client — no secret to extract.
+    # IQE uses password grant via iqe_jwt's OIDCAuth.from_basic(), which does
+    # not send client_secret, so the IQE client must be public.
 
     echo ""
 }
 
 # Function to create test user with org_id and account_number attributes
 create_test_user() {
-    echo_header "CREATING TEST USER"
+    echo_header "CREATING ADMIN USER"
 
     # Get Keycloak URL from Route
     local KEYCLOAK_URL=$(oc get route keycloak -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
@@ -1264,7 +1331,7 @@ create_test_user() {
         -d "grant_type=password" \
         -d "client_id=admin-cli" 2>/dev/null)
 
-    local ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
+    local ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token // empty')
 
     if [ -z "$ACCESS_TOKEN" ]; then
         echo_warning "Could not obtain admin token, skipping test user creation"
@@ -1273,8 +1340,10 @@ create_test_user() {
 
     echo_success "Admin token obtained"
 
-    # Create test user with org_id and account_number attributes
-    # These values match the operator client's hardcoded values for testing
+    # Create admin user with org_id and account_number attributes
+    # These values match the operator client's hardcoded values for testing.
+    # The admin user is granted Cost Administrator RBAC permissions by the
+    # _rbac_bootstrap fixture in tests/conftest.py.
     #
     # WORKAROUND: The org_id includes "org" prefix (org1234567 instead of 1234567)
     # because the Koku image has a bug that prepends "org" to the org_id when
@@ -1286,22 +1355,17 @@ create_test_user() {
     # REQUIRED ATTRIBUTES for Cost Management:
     #   - org_id: Tenant identifier (maps to database schema)
     #   - account_number: Customer account identifier
-    #
-    # Note: "access" attribute is NOT required when using ENHANCED_ORG_ADMIN mode.
-    # All authenticated users are treated as org admins with full access within their org.
-    # This simplifies setup but means no granular RBAC within an org.
-    # Multi-tenancy is preserved: users only see data for their own org_id.
 
-    echo_info "Creating user 'test' with org_id and account_number attributes..."
+    echo_info "Creating user 'admin' with org_id and account_number attributes..."
     local USER_HTTP_CODE=$(curl -sk -o /tmp/user_response.txt -w "%{http_code}" -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users" \
         -H "Authorization: Bearer $ACCESS_TOKEN" \
         -H "Content-Type: application/json" \
         -d "{
-            \"username\": \"test\",
-            \"email\": \"test@test.com\",
+            \"username\": \"admin\",
+            \"email\": \"admin@test.com\",
             \"emailVerified\": true,
             \"enabled\": true,
-            \"firstName\": \"Test\",
+            \"firstName\": \"Admin\",
             \"lastName\": \"User\",
             \"attributes\": {
                 \"org_id\": [\"org1234567\"],
@@ -1313,69 +1377,69 @@ create_test_user() {
     rm -f /tmp/user_response.txt
 
     local USER_ID=""
-    if [ "$USER_HTTP_CODE" = "409" ] || echo "$USER_RESPONSE" | grep -q "already exists\|Conflict"; then
-        echo_warning "User 'test' may already exist, attempting to find it..."
+    if [ "$USER_HTTP_CODE" = "409" ] || echo "$USER_RESPONSE" | jq -e '.errorMessage // empty | test("already exists|Conflict"; "i")' >/dev/null 2>&1; then
+        echo_warning "User 'admin' may already exist, attempting to find it..."
         # Get existing user
-        local USERS_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=test" \
+        local USERS_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=admin&exact=true" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" 2>/dev/null)
-        USER_ID=$(echo "$USERS_RESPONSE" | grep -o '"id":"[^"]*"' | cut -d'"' -f4 | head -1)
+        USER_ID=$(echo "$USERS_RESPONSE" | jq -r '.[0].id // empty')
 
         if [ -n "$USER_ID" ]; then
-            echo_info "Found existing user 'test', updating with attributes..."
+            echo_info "Found existing user 'admin', updating with attributes..."
             # Update user with attributes
             curl -sk -X PUT "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users/$USER_ID" \
                 -H "Authorization: Bearer $ACCESS_TOKEN" \
                 -H "Content-Type: application/json" \
                 -d '{
-                    "username": "test",
-                    "email": "test@test.com",
+                    "username": "admin",
+                    "email": "admin@test.com",
                     "emailVerified": true,
                     "enabled": true,
-                    "firstName": "Test",
+                    "firstName": "Admin",
                     "lastName": "User",
                     "attributes": {
                         "org_id": ["org1234567"],
                         "account_number": ["7890123"]
                     }
                 }' >/dev/null 2>&1
-            echo_success "✓ User 'test' updated"
+            echo_success "✓ User 'admin' updated"
         fi
     elif [ "$USER_HTTP_CODE" = "201" ] || [ "$USER_HTTP_CODE" = "200" ]; then
         # User created successfully, get ID from users list
         sleep 2
-        local USERS_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=test" \
+        local USERS_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=admin&exact=true" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" 2>/dev/null)
-        USER_ID=$(echo "$USERS_RESPONSE" | grep -o '"id":"[^"]*"' | cut -d'"' -f4 | head -1)
-        echo_success "✓ User 'test' created"
+        USER_ID=$(echo "$USERS_RESPONSE" | jq -r '.[0].id // empty')
+        echo_success "✓ User 'admin' created"
     fi
 
     if [ -z "$USER_ID" ]; then
-        echo_warning "Could not determine user ID for 'test'"
+        echo_warning "Could not determine user ID for 'admin'"
         return 1
     fi
 
     echo_info "User ID: $USER_ID"
 
     # Set user password
-    echo_info "Setting password for user 'test'..."
+    echo_info "Setting password for user 'admin'..."
     local PASSWORD_RESPONSE=$(curl -sk -X PUT "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users/$USER_ID/reset-password" \
         -H "Authorization: Bearer $ACCESS_TOKEN" \
         -H "Content-Type: application/json" \
         -d '{
             "type": "password",
-            "value": "test",
+            "value": "admin",
             "temporary": false
         }' 2>/dev/null)
 
     if [ $? -eq 0 ]; then
-        echo_success "✓ Password set for user 'test'"
+        echo_success "✓ Password set for user 'admin'"
     else
-        echo_warning "Could not set password for user 'test' (may already be set)"
+        echo_warning "Could not set password for user 'admin' (may already be set)"
     fi
 
-    echo_success "✓ Test user creation complete"
+    echo_success "✓ Admin user creation complete"
     echo ""
 }
 
@@ -1416,22 +1480,29 @@ display_summary() {
 
     echo_info "Cost Management UI Client Information:"
     echo_info "  Client ID: $COST_MGMT_UI_CLIENT_ID"
-    echo_info "  Client Type: OAuth2 Public Client (authorization_code flow)"
+    echo_info "  Client Type: Confidential (authorization_code flow for oauth2-proxy)"
     echo_info "  Redirect URI: ${UI_BASE_URL}/oauth2/callback"
     echo_info "  Web Origin: $UI_BASE_URL"
-    echo_info "  Default Scopes: api.console, profile, email"
+    echo_info "  Default Scopes: openid, api.console, profile, email"
     echo_info "  Optional Scopes: offline_access"
     echo_info "  Secret stored in: keycloak-client-secret-cost-management-ui"
     echo ""
 
-    echo_info "Test User Information:"
-    echo_info "  User: test"
-    echo_info "    Password: test"
-    echo_info "    Email: test@test.com (verified)"
+    echo_info "Cost Management IQE Test Client Information:"
+    echo_info "  Client ID: cost-management-iqe"
+    echo_info "  Client Type: Public (password grant for IQE tests)"
+    echo_info "  Default Scopes: openid, api.console, profile, email"
+    echo_info "  Note: Public client — no secret required (iqe_jwt.from_basic does not send client_secret)"
+    echo ""
+
+    echo_info "Admin User Information:"
+    echo_info "  User: admin"
+    echo_info "    Password: admin"
+    echo_info "    Email: admin@test.com (verified)"
     echo_info "    Attributes:"
     echo_info "      org_id: org1234567 (includes 'org' prefix as workaround for Koku bug)"
     echo_info "      account_number: 7890123"
-    echo_info "      access: OCP-only (openshift.cluster, openshift.project, openshift.node, cost_model)"
+    echo_info "      RBAC: Cost Administrator (granted by _rbac_bootstrap fixture)"
     echo ""
 
     # Display admin credential retrieval

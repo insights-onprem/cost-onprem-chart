@@ -82,6 +82,16 @@ spec:
                 secretKeyRef:
                   name: {{ include "cost-onprem.database.defaultSecretName" . }}
                   key: koku-password
+            - name: RBAC_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cost-onprem.database.defaultSecretName" . }}
+                  key: rbac-user
+            - name: RBAC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cost-onprem.database.defaultSecretName" . }}
+                  key: rbac-password
           volumeMounts:
             - name: postgres-storage
               mountPath: /var/lib/postgresql/data

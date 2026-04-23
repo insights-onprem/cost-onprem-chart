@@ -208,47 +208,37 @@ data:
                       -- =============================================================================
                       -- Build X-Rh-Identity JSON structure for Koku authentication
                       -- =============================================================================
-                      -- This function constructs the X-Rh-Identity header required by Koku.
+                      -- Constructs the X-Rh-Identity header required by Koku and insights-rbac.
                       --
-                      -- Authentication Mode: ENHANCED_ORG_ADMIN
-                      -- -----------------------------------------
-                      -- Koku is configured with DEVELOPMENT=false and ENHANCED_ORG_ADMIN=true.
-                      -- When is_org_admin=true in the identity header, Koku bypasses RBAC service
-                      -- calls and grants full access to all resources within the user's org.
+                      -- is_org_admin is ALWAYS false. In SaaS, this flag comes from the BOP
+                      -- (Back Office Proxy) which verifies org admin status against the
+                      -- subscription system. When true, insights-rbac bypasses all role checks
+                      -- and grants every permission -- effectively a "god mode" flag.
                       --
-                      -- Required fields:
-                      --   org_id: Tenant/schema lookup. Koku prepends "org" to create schema name.
-                      --           NOTE: Included at BOTH top-level AND inside identity{} as a
-                      --           workaround for Koku middleware compatibility.
-                      --   account_number: Customer account identifier (required by identity schema)
-                      --   type: Identity type, always "User" for interactive users
-                      --   user.username: For logging/audit purposes
-                      --   user.is_org_admin: TRUE - Required for ENHANCED_ORG_ADMIN mode to bypass
-                      --           RBAC service calls. All users are treated as org admins.
+                      -- In on-prem there is no BOP. Admin privileges are granted exclusively
+                      -- through RBAC roles (e.g. "Cost Administrator" grants cost-management:*:*).
+                      -- Exposing is_org_admin as a user-controllable attribute would be a
+                      -- security risk allowing any user to bypass RBAC.
                       --
-                      -- Hardcoded fields:
-                      --   entitlements.cost_management.is_entitled: REQUIRED - Koku checks this in
-                      --           middleware and returns 403 if not "True". No bypass exists.
+                      -- Both Koku and ROS route through this gateway and receive the same
+                      -- X-Rh-Identity header. Both services enforce RBAC permissions by
+                      -- calling insights-rbac with the forwarded identity.
                       --
-                      -- Limitations of ENHANCED_ORG_ADMIN mode:
-                      --   - All authenticated users have full admin access within their org
-                      --   - No granular RBAC (e.g., "user A sees only cluster X") within same org
-                      --   - Multi-tenancy IS preserved: users only see their own org's data
-                      --   - Suitable for single-tenant or trusted-user deployments
+                      -- entitlements.cost_management.is_entitled is always true because Koku's
+                      -- middleware returns 403 without it and there is no bypass.
                       -- =============================================================================
                       local function build_xrhid_json(org_id, account_number, user_type, username, email)
-                        -- Properly escape JSON special characters
                         local function escape_json(str)
                           if type(str) ~= "string" then
                             str = tostring(str)
                           end
-                          str = string.gsub(str, "\\", "\\\\")  -- Backslash first
-                          str = string.gsub(str, '"', '\\"')    -- Double quote
-                          str = string.gsub(str, "\n", "\\n")   -- Newline
-                          str = string.gsub(str, "\r", "\\r")   -- Carriage return
-                          str = string.gsub(str, "\t", "\\t")   -- Tab
-                          str = string.gsub(str, "\b", "\\b")   -- Backspace
-                          str = string.gsub(str, "\f", "\\f")   -- Form feed
+                          str = string.gsub(str, "\\", "\\\\")
+                          str = string.gsub(str, '"', '\\"')
+                          str = string.gsub(str, "\n", "\\n")
+                          str = string.gsub(str, "\r", "\\r")
+                          str = string.gsub(str, "\t", "\\t")
+                          str = string.gsub(str, "\b", "\\b")
+                          str = string.gsub(str, "\f", "\\f")
                           return str
                         end
 
@@ -258,11 +248,8 @@ data:
                         username = escape_json(username or "user")
                         email = escape_json(email or (username .. "@noreply.local"))
 
-                        -- is_org_admin=true triggers ENHANCED_ORG_ADMIN bypass in Koku
-                        -- This grants full access without calling external RBAC service
-                        -- Note: email is REQUIRED by Koku's middleware for user creation
                         return string.format(
-                          '{"org_id":"%s","identity":{"org_id":"%s","account_number":"%s","type":"%s","user":{"username":"%s","email":"%s","is_org_admin":true}},"entitlements":{"cost_management":{"is_entitled":true}}}',
+                          '{"org_id":"%s","identity":{"org_id":"%s","account_number":"%s","type":"%s","user":{"username":"%s","email":"%s","is_org_admin":false}},"entitlements":{"cost_management":{"is_entitled":true}}}',
                           org_id, org_id, account_number, user_type, username, email
                         )
                       end
@@ -349,13 +336,10 @@ data:
                           if email then
                             email = tostring(email)
                           end
-                          -- If email not in JWT, generate from username
                           if not email or email == "" then
                             email = username .. "@example.com"
                           end
 
-                          -- Build and encode X-Rh-Identity header
-                          -- Note: is_org_admin=true is hardcoded for ENHANCED_ORG_ADMIN mode
                           local xrhid_json = build_xrhid_json(org_id, account_number, "User", username, email)
                           local xrhid_b64 = request_handle:base64Escape(xrhid_json)
 
@@ -378,9 +362,8 @@ data:
                             end
                           end
 
-                          -- Log for debugging (redact sensitive data)
                           local masked_org = string.sub(org_id, 1, 4) .. "***"
-                          request_handle:logInfo(string.format("JWT Authentication successful - org_id: %s", masked_org))
+                          request_handle:logInfo(string.format("JWT auth ok - org: %s, user: %s", masked_org, username))
                         end)
 
                         -- Handle any errors that occurred

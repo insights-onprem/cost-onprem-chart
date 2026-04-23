@@ -308,7 +308,7 @@ KEYCLOAK_CLIENT_SECRET=$(kubectl get secret "$KEYCLOAK_SECRET_NAME" -n "$KEYCLOA
 KEYCLOAK_HOST=$(kubectl get route keycloak -n keycloak -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
 OAUTH_URL="https://${KEYCLOAK_HOST}/realms/kubernetes/protocol/openid-connect"
 
-# Get org_id from Keycloak test user (or use default)
+# Get org_id from Keycloak admin user (or use default)
 ORG_ID="org1234567"  # Default value
 if [ -n "$KEYCLOAK_HOST" ]; then
     # Get admin credentials
@@ -324,8 +324,8 @@ if [ -n "$KEYCLOAK_HOST" ]; then
             -d "password=${KEYCLOAK_ADMIN_PASS}" 2>/dev/null | jq -r '.access_token // empty')
         
         if [ -n "$ADMIN_TOKEN" ]; then
-            # Get test user's org_id
-            USER_ORG_ID=$(curl -sk "https://${KEYCLOAK_HOST}/admin/realms/kubernetes/users?username=test&exact=true" \
+            # Query the "admin" user created by deploy-rhbk.sh (not "test")
+            USER_ORG_ID=$(curl -sk "https://${KEYCLOAK_HOST}/admin/realms/kubernetes/users?username=admin&exact=true" \
                 -H "Authorization: Bearer ${ADMIN_TOKEN}" 2>/dev/null | jq -r '.[0].attributes.org_id[0] // empty')
             if [ -n "$USER_ORG_ID" ]; then
                 ORG_ID="$USER_ORG_ID"
@@ -359,7 +359,7 @@ if [ -z "$KOKU_HOSTNAME" ]; then
 fi
 
 if [ -z "$KEYCLOAK_CLIENT_SECRET" ]; then
-    echo "WARNING: Could not extract Keycloak client secret. Authentication may fail."
+    echo "WARNING: Could not extract Keycloak operator client secret. Authentication may fail."
 fi
 
 # Check if cluster has pull secret for the IQE image registry
@@ -709,9 +709,9 @@ spec:
     - name: DYNACONF_DEFAULT_USER
       value: "cost_onprem_user"
     - name: DYNACONF_users__cost_onprem_user__auth__username
-      value: "test"
+      value: "admin"
     - name: DYNACONF_users__cost_onprem_user__auth__password
-      value: "test"
+      value: "admin"
     - name: DYNACONF_users__cost_onprem_user__auth__jwt_grant_type
       value: "client_credentials"
     - name: DYNACONF_users__cost_onprem_user__auth__client_id

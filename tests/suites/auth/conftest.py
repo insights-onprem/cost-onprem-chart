@@ -32,6 +32,6 @@ def ui_client_config(cluster_config, keycloak_config):
 def test_user_credentials():
     """Get test user credentials for password grant flow."""
     return {
-        "username": "test",
-        "password": "test",
+        "username": "admin",
+        "password": "admin",
     }

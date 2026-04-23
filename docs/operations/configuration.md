@@ -7,6 +7,7 @@ Complete configuration reference for resource requirements, storage, and access 
 - [Storage Configuration](#storage-configuration)
 - [Access Points](#access-points)
 - [Configuration Values](#configuration-values)
+  - [RBAC Configuration](#rbac-configuration)
 - [Platform-Specific Configuration](#platform-specific-configuration)
 - [External Infrastructure (BYOI)](#external-infrastructure-byoi)
 - [Security Configuration](#security-configuration)
@@ -521,7 +522,6 @@ ros:
     port: 8000
     metricsPort: 9000
     pathPrefix: /api
-    rbacEnable: false
     logLevel: INFO
   processor:
     metricsPort: 9000
@@ -582,6 +582,93 @@ ui:
         cpu: "50m"
         memory: "64Mi"
 ```
+
+### RBAC Configuration
+
+```yaml
+# insights-rbac: Role-Based Access Control backend
+rbac:
+  enabled: true  # Deploy insights-rbac (required for authorization)
+
+  image:
+    repository: quay.io/redhatinsights/insights-rbac
+    tag: "c2b9ccf"
+    pullPolicy: IfNotPresent
+
+  # API server
+  api:
+    replicaCount: 1       # Increase for HA (recommended: 2+)
+    port: 8080
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+
+  # Celery worker (async tasks)
+  worker:
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 2Gi
+
+  # Environment variable overrides
+  env:
+    DJANGO_LOG_LEVEL: "INFO"
+    ACCESS_CACHE_ENABLED: "True"      # Cache RBAC responses (recommended)
+    ACCESS_CACHE_TIMEOUT: "300"       # Cache TTL in seconds
+    BYPASS_BOP_VERIFICATION: "True"   # No BOP exists on-prem
+    PGSSLMODE: "disable"              # Set to "require" for production TLS
+```
+
+#### Koku RBAC Integration Variables
+
+These are set automatically by the Helm chart in `_helpers-koku.tpl`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RBAC_SERVICE_HOST` | `cost-onprem-rbac-api` | RBAC API service hostname |
+| `RBAC_SERVICE_PORT` | `8080` | RBAC API port |
+| `RBAC_SERVICE_PATH` | `/api/rbac/v1/` | RBAC API base path |
+| `RBAC_SERVICE_PROTOCOL` | `http` | Protocol (http/https) |
+| `ENHANCED_ORG_ADMIN` | `False` | **Must be False** — disables Koku's admin bypass so all auth flows through RBAC |
+
+> **Important**: `ENHANCED_ORG_ADMIN` must remain `False`. Setting it to `True` causes Koku to bypass RBAC entirely for users with `is_org_admin: true` in their identity header, which defeats the purpose of RBAC enforcement.
+
+#### ROS RBAC Integration Variables
+
+RBAC is **always enabled** on the ROS API — there is no `values.yaml` toggle. The following environment variables are hardcoded in the ROS API deployment template:
+
+| Variable | Value | Description |
+|----------|-------|-------------|
+| `RBAC_ENABLE` | `true` (hardcoded) | Activates the RBAC middleware in the ROS Go backend |
+| `RBACHOST` | `<release>-rbac-api.<namespace>.svc.cluster.local` | RBAC API service hostname (from `cost-onprem.rbac.serviceHost` helper) |
+| `RBACPORT` | `8000` | RBAC API port (from `cost-onprem.rbac.service.port` helper) |
+| `RBACPROTOCOL` | `http` | Protocol for RBAC communication |
+
+The ROS API pod includes a `wait-for-rbac` init container that blocks startup until the RBAC service is accepting TCP connections, preventing authorization errors during the startup race.
+
+> **Note**: Unlike Koku (which uses `RBAC_SERVICE_*` prefixed variables), ROS uses uppercase unprefixed names (`RBACHOST`, `RBACPORT`, `RBACPROTOCOL`) due to how the Go Viper configuration library maps struct fields to environment variables via `AutomaticEnv()`.
+
+#### RBAC Internal Variables (set automatically)
+
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `V2_BOOTSTRAP_TENANT` | `True` | Enables TenantMapping creation for V1/V2 compatibility |
+| `SYSTEM_DEFAULT_ROOT_WORKSPACE_ROLE_UUID` | Placeholder UUID | Required by V2 bootstrap code path (Kessel) |
+| `SYSTEM_DEFAULT_TENANT_ROLE_UUID` | Placeholder UUID | Required by V2 bootstrap code path |
+| `SYSTEM_ADMIN_ROOT_WORKSPACE_ROLE_UUID` | Placeholder UUID | Required by V2 bootstrap code path |
+| `SYSTEM_ADMIN_TENANT_ROLE_UUID` | Placeholder UUID | Required by V2 bootstrap code path |
+
+These placeholder UUIDs are required to prevent `ValueError` during tenant bootstrap. They will be removable once the Kessel code path is gated in upstream `insights-rbac`.
+
+For detailed RBAC setup, user management, and troubleshooting, see the [RBAC Setup and Operations Guide](rbac-setup.md).
 
 ### Environment-Specific Values Files
 
