@@ -661,12 +661,12 @@ spec:
     - name: DYNACONF_ONPREM_KOKU_HOSTNAME
       value: "${KOKU_HOSTNAME}"
     - name: DYNACONF_ONPREM_CLIENT_ID
-      value: "${UI_CLIENT_ID}"
+      value: "${KEYCLOAK_CLIENT_ID}"
     - name: DYNACONF_ONPREM_CLIENT_SECRET
       valueFrom:
         secretKeyRef:
           name: iqe-keycloak-credentials
-          key: UI_CLIENT_SECRET
+          key: CLIENT_SECRET
           optional: true
     - name: DYNACONF_ONPREM_OAUTH_URL
       value: "${OAUTH_URL}"
@@ -685,7 +685,7 @@ spec:
     - name: DYNACONF_HTTP__DEFAULT_AUTH_TYPE
       value: "jwt-auth"
     - name: DYNACONF_HTTP__OAUTH_CLIENT_ID
-      value: "${UI_CLIENT_ID}"
+      value: "${KEYCLOAK_CLIENT_ID}"
     - name: DYNACONF_HTTP__OAUTH_BASE_URL
       value: "${OAUTH_URL}"
     - name: DYNACONF_HTTP__SSL_VERIFY
@@ -723,12 +723,12 @@ spec:
     - name: DYNACONF_users__cost_onprem_user__auth__jwt_grant_type
       value: "password"
     - name: DYNACONF_users__cost_onprem_user__auth__client_id
-      value: "${UI_CLIENT_ID}"
+      value: "${KEYCLOAK_CLIENT_ID}"
     - name: DYNACONF_users__cost_onprem_user__auth__client_secret
       valueFrom:
         secretKeyRef:
           name: iqe-keycloak-credentials
-          key: UI_CLIENT_SECRET
+          key: CLIENT_SECRET
           optional: true
     - name: DYNACONF_users__cost_onprem_user__identity__account_number
       value: "7890123"
