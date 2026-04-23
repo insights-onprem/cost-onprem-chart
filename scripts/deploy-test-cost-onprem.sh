@@ -39,6 +39,9 @@ set -euo pipefail
 #   --iqe-profile PROFILE     IQE test profile: smoke, extended, stable, full (default: stable)
 #   --listener-cpu LIMIT      Temporarily set listener CPU limit (e.g., 500m, 1000m, or 'max')
 #   --include-ui              Include UI tests (requires Playwright system dependencies)
+#   --run-perf                Run performance tests after deployment (FLPATH-4036)
+#   --perf-profile PROFILE    Performance profile: baseline, small, medium, large (default: baseline)
+#   --perf-only               Run only performance tests (skip deployment and chart tests)
 #
 #   Other:
 #   --save-versions [FILE]    Save deployment version info to JSON file (default: version_info.json)
@@ -113,6 +116,9 @@ INCLUDE_UI="${INCLUDE_UI:-false}"
 RUN_IQE="${RUN_IQE:-false}"
 IQE_MARKER="${IQE_MARKER:-cost_ocp_on_prem}"
 IQE_PROFILE="${IQE_PROFILE:-stable}"
+RUN_PERF="${RUN_PERF:-false}"
+PERF_PROFILE="${PERF_PROFILE:-baseline}"
+PERF_ONLY="${PERF_ONLY:-false}"
 SAVE_VERSIONS="${SAVE_VERSIONS:-false}"
 VERSION_INFO_FILE="${VERSION_INFO_FILE:-version_info.json}"
 LISTENER_CPU_LIMIT="${LISTENER_CPU_LIMIT:-}"
@@ -645,6 +651,10 @@ run_tests() {
         if [[ "${RUN_IQE}" == "true" ]]; then
             run_iqe_tests
         fi
+        # Still run performance tests if requested
+        if [[ "${RUN_PERF}" == "true" ]]; then
+            run_performance_tests
+        fi
         cleanup_cpu_boost
         return 0
     fi
@@ -703,6 +713,7 @@ run_tests() {
     # Track test failures - continue running all tests, fail at the end
     local chart_tests_failed=false
     local iqe_tests_failed=false
+    local perf_tests_failed=false
     
     # Run chart tests
     # Note: cost_validation tests have their own E2E setup with 300s provider timeout
@@ -721,15 +732,23 @@ run_tests() {
         fi
     fi
     
+    # Run performance tests if requested (continue even if other tests failed)
+    if [[ "${RUN_PERF}" == "true" ]]; then
+        if ! run_performance_tests; then
+            perf_tests_failed=true
+        fi
+    fi
+    
     # Reset listener CPU after all tests
     cleanup_cpu_boost
     
     # Report overall status
-    if [[ "${chart_tests_failed}" == "true" ]] || [[ "${iqe_tests_failed}" == "true" ]]; then
+    if [[ "${chart_tests_failed}" == "true" ]] || [[ "${iqe_tests_failed}" == "true" ]] || [[ "${perf_tests_failed}" == "true" ]]; then
         echo ""
         log_error "Test failures detected:"
         [[ "${chart_tests_failed}" == "true" ]] && log_error "  - Chart tests (pytest) failed"
         [[ "${iqe_tests_failed}" == "true" ]] && log_error "  - IQE tests failed"
+        [[ "${perf_tests_failed}" == "true" ]] && log_error "  - Performance tests failed"
         return 1
     fi
 }
@@ -940,6 +959,51 @@ reset_listener_cpu() {
 }
 
 ################################################################################
+# Performance Test Execution (FLPATH-4036)
+################################################################################
+
+run_performance_tests() {
+    log_step "Running performance tests (FLPATH-4036)"
+
+    local pytest_script="${LOCAL_SCRIPTS_DIR}/run-pytest.sh"
+    if [[ ! -x "${pytest_script}" ]]; then
+        log_error "Pytest runner not found at: ${pytest_script}"
+        return 1
+    fi
+
+    log_info "Running performance tests with profile: ${PERF_PROFILE}"
+
+    # Export performance profile for tests
+    export PERF_PROFILE="${PERF_PROFILE}"
+
+    # Build pytest arguments for performance tests
+    local perf_args=("--performance")
+    if [[ "${VERBOSE}" == "true" ]]; then
+        perf_args+=("-v")
+    fi
+    # Show stdout for visibility into long-running tests
+    perf_args+=("-s")
+
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log_info "DRY RUN: Would execute: ${pytest_script} ${perf_args[*]}"
+        return 0
+    fi
+
+    log_info "Performance test command: ${pytest_script} ${perf_args[*]}"
+    log_info "Performance reports will be saved to: tests/reports/performance/"
+
+    if ! "${pytest_script}" "${perf_args[@]}"; then
+        log_error "Performance tests failed"
+        log_info "Check tests/reports/performance/ for detailed results"
+        return 1
+    fi
+
+    log_success "Performance tests completed"
+    log_info "Performance reports: tests/reports/performance/"
+    return 0
+}
+
+################################################################################
 # IQE Test Execution
 ################################################################################
 
@@ -1025,7 +1089,9 @@ print_summary() {
     echo ""
 
     # Show execution mode
-    if [[ "${TESTS_ONLY}" == "true" ]] && [[ "${SKIP_TEST}" == "true" ]] && [[ "${RUN_IQE}" == "true" ]]; then
+    if [[ "${PERF_ONLY}" == "true" ]]; then
+        log_info "Mode: Performance-only (--perf-only)"
+    elif [[ "${TESTS_ONLY}" == "true" ]] && [[ "${SKIP_TEST}" == "true" ]] && [[ "${RUN_IQE}" == "true" ]]; then
         log_info "Mode: IQE-only (--iqe-only)"
     elif [[ "${TESTS_ONLY}" == "true" ]]; then
         log_info "Mode: Tests-only (--skip-deploy)"
@@ -1046,6 +1112,11 @@ print_summary() {
     [[ "${SKIP_HELM}" == "false" ]] && echo "  ✓ Deploy Cost On-Prem Helm Chart" || echo "  ✗ Deploy Cost On-Prem Helm Chart (SKIPPED)"
     [[ "${SKIP_TLS}" == "false" ]] && echo "  ✓ Setup TLS Certificates" || echo "  ✗ Setup TLS Certificates (SKIPPED)"
     [[ "${SKIP_TEST}" == "false" ]] && echo "  ✓ Run Chart Tests" || echo "  ✗ Run Chart Tests (SKIPPED)"
+    if [[ "${PERF_ONLY}" == "true" ]]; then
+        echo "  ✓ Run Performance Tests (profile: ${PERF_PROFILE})"
+    else
+        echo "  ✗ Run Performance Tests (OPTIONAL)"
+    fi
     if [[ "${RUN_IQE}" == "true" ]]; then
         local iqe_opts="profile: ${IQE_PROFILE}, marker: ${IQE_MARKER}"
         [[ -n "${LISTENER_CPU_LIMIT}" ]] && iqe_opts="${iqe_opts}, listener-cpu: ${LISTENER_CPU_LIMIT}"
@@ -1131,6 +1202,24 @@ main() {
                 ;;
             --include-ui)
                 INCLUDE_UI=true
+                shift
+                ;;
+            --run-perf)
+                RUN_PERF=true
+                shift
+                ;;
+            --perf-profile)
+                PERF_PROFILE="$2"
+                shift 2
+                ;;
+            --perf-only)
+                PERF_ONLY=true
+                SKIP_RHBK=true
+                SKIP_KAFKA=true
+                SKIP_HELM=true
+                SKIP_TLS=true
+                SKIP_TEST=true
+                RUN_PERF=true
                 shift
                 ;;
             --run-iqe)

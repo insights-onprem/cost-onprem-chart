@@ -21,6 +21,12 @@
 #   --e2e               Run end-to-end tests
 #   --ui                Run UI tests only (Playwright browser automation)
 #   --no-ui             Exclude UI tests from the run
+#   --performance       Run performance tests (FLPATH-4036)
+#   --perf-ingestion    Run ingestion throughput tests only
+#   --perf-api          Run API latency tests only
+#   --perf-scale        Run scale tests only
+#   --perf-ros          Run ROS/Kruize performance tests only
+#   --perf-soak         Run soak/stability tests only
 #
 # Filter Options:
 #   --smoke             Run only smoke tests (quick validation)
@@ -46,9 +52,20 @@
 #   ./run-pytest.sh --e2e --smoke           # Run E2E smoke tests
 #   ./run-pytest.sh --e2e                   # Run full E2E flow
 #   ./run-pytest.sh --ui                    # Run UI tests only
+#   ./run-pytest.sh --performance           # Run all performance tests
+#   ./run-pytest.sh --perf-api              # Run API latency tests only
 #   ./run-pytest.sh -k "test_jwt"           # Run tests matching pattern
 #   ./run-pytest.sh suites/helm/            # Run specific suite directory
 #   ./run-pytest.sh -m "smoke and auth"     # Custom marker expression
+#
+# Performance Testing (FLPATH-4036):
+#   Performance tests are excluded by default (marked as 'slow').
+#   Use --performance to run them explicitly.
+#
+#   Environment variables for performance tests:
+#     PERF_PROFILE                 Profile to use: baseline, small, medium, large, xlarge
+#     PERF_ING_005_DURATION_MINUTES  Duration for high-frequency test (default: 15)
+#     CLUSTER_PLATFORM             Platform identifier for reports (e.g., bare-metal, AWS)
 #
 # Note: UI tests require Playwright and system dependencies. The script will
 # automatically install Playwright browsers when UI tests are included.
@@ -102,10 +119,19 @@ show_help() {
     echo "  ros               Kruize, recommendations API"
     echo "  e2e               Complete end-to-end data flow"
     echo "  ui                Browser-based UI tests (Playwright)"
+    echo "  performance       Performance tests (ingestion, API, scale)"
     echo ""
     echo "Markers:"
     echo "  smoke             Quick validation tests (~1 min)"
     echo "  slow              Long-running tests (processing, recommendations)"
+    echo ""
+    echo "Performance Test Options:"
+    echo "  --performance     Run all performance tests"
+    echo "  --perf-ingestion  Run ingestion throughput tests (PERF-ING-*)"
+    echo "  --perf-api        Run API latency tests (PERF-API-*)"
+    echo "  --perf-scale      Run scale tests (PERF-SCALE-*)"
+    echo "  --perf-ros        Run ROS/Kruize performance tests (PERF-ROS-*)"
+    echo "  --perf-soak       Run soak/stability tests (PERF-SOAK-*)"
     echo ""
     echo "UI Tests:"
     echo "  UI tests are included by default. Use --no-ui to exclude them."
@@ -282,6 +308,42 @@ main() {
             --no-ui)
                 # Exclude UI tests
                 exclude_ui=true
+                include_ui=false
+                shift
+                ;;
+            --performance)
+                # Run all performance tests (no UI needed)
+                pytest_markers+=("performance")
+                include_ui=false
+                shift
+                ;;
+            --perf-ingestion)
+                # Run ingestion throughput tests only (no UI needed)
+                pytest_markers+=("performance and ingestion")
+                include_ui=false
+                shift
+                ;;
+            --perf-api)
+                # Run API latency tests only (no UI needed)
+                pytest_markers+=("performance and api_latency")
+                include_ui=false
+                shift
+                ;;
+            --perf-scale)
+                # Run scale tests only (no UI needed)
+                pytest_markers+=("performance and scale")
+                include_ui=false
+                shift
+                ;;
+            --perf-ros)
+                # Run ROS/Kruize performance tests only (no UI needed)
+                pytest_markers+=("performance and ros_perf")
+                include_ui=false
+                shift
+                ;;
+            --perf-soak)
+                # Run soak/stability tests only (no UI needed)
+                pytest_markers+=("performance and soak")
                 include_ui=false
                 shift
                 ;;

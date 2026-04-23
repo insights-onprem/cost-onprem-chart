@@ -6,6 +6,8 @@ Testing guides, validation procedures, and development resources for Cost Manage
 
 | Document | Description |
 |----------|-------------|
+| **[Performance Testing Plan](../performance/performance-testing-plan.md)** | FLPATH-4036 performance testing strategy and implementation |
+| **[Test Data Setup](test-data-setup.md)** | Scenario-based data setup for E2E, performance, and ROS testing |
 | **[OCP Dev Setup with S4](ocp-dev-setup-s4.md)** | Set up a dev environment on OCP using S4 instead of ODF |
 | **[UI OAuth Testing](ui-oauth-testing.md)** | Guide for testing UI OAuth flow with Keycloak |
 | **[IQE Testing Setup](iqe-testing-setup.md)** | Prerequisites and setup for IQE integration tests |
