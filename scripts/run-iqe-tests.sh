@@ -661,12 +661,12 @@ spec:
     - name: DYNACONF_ONPREM_KOKU_HOSTNAME
       value: "${KOKU_HOSTNAME}"
     - name: DYNACONF_ONPREM_CLIENT_ID
-      value: "${KEYCLOAK_CLIENT_ID}"
+      value: "${UI_CLIENT_ID}"
     - name: DYNACONF_ONPREM_CLIENT_SECRET
       valueFrom:
         secretKeyRef:
           name: iqe-keycloak-credentials
-          key: CLIENT_SECRET
+          key: UI_CLIENT_SECRET
           optional: true
     - name: DYNACONF_ONPREM_OAUTH_URL
       value: "${OAUTH_URL}"
