@@ -122,19 +122,21 @@ jobs:
             fi
           }
 
-          #                NAME                                        FLAGS                                MODE                    DEPLOY  CHART  PERF   IQE
-          run_case         "(defaults)"                                ""                                   "Full deployment"       true    true   false  false
-          run_case         "--run-iqe"                                 "--run-iqe"                          "Full deployment"       true    true   false  true
-          run_case         "--skip-chart-tests"                        "--skip-chart-tests"                 "Full deployment"       true    false  false  false
-          run_case         "--skip-chart-tests --run-iqe"              "--skip-chart-tests --run-iqe"       "Full deployment"       true    false  false  true
-          run_case         "--skip-deploy"                             "--skip-deploy"                      "Tests-only"            false   true   false  false
-          run_case         "--skip-deploy --run-iqe"                   "--skip-deploy --run-iqe"            "Tests-only"            false   true   false  true
-          run_case         "--iqe-only"                                "--iqe-only"                         "IQE-only"              false   false  false  true
-          run_case         "--tests-only (alias)"                      "--tests-only"                       "Tests-only"            false   true   false  false
-          run_case         "--skip-test (alias)"                       "--skip-test"                        "Full deployment"       true    false  false  false
-          run_case         "--tests-only --skip-test --run-iqe"        "--tests-only --skip-test --run-iqe" "IQE-only"              false   false  false  true
-          run_case         "--perf-only"                               "--perf-only"                        "Performance-only"      false   false  true   false
-          run_case         "--perf-only --perf-profile small"          "--perf-only --perf-profile small"   "Performance-only"      false   false  true   false
+          #                NAME                                        FLAGS                                      MODE                    DEPLOY  CHART  PERF   IQE
+          run_case         "(defaults)"                                ""                                         "Full deployment"       true    true   false  false
+          run_case         "--run-iqe"                                 "--run-iqe"                                "Full deployment"       true    true   false  true
+          run_case         "--skip-chart-tests"                        "--skip-chart-tests"                       "Full deployment"       true    false  false  false
+          run_case         "--skip-chart-tests --run-iqe"              "--skip-chart-tests --run-iqe"             "Full deployment"       true    false  false  true
+          run_case         "--skip-deploy"                             "--skip-deploy"                            "Tests-only"            false   true   false  false
+          run_case         "--skip-deploy --run-iqe"                   "--skip-deploy --run-iqe"                  "Tests-only"            false   true   false  true
+          run_case         "--iqe-only"                                "--iqe-only"                               "IQE-only"              false   false  false  true
+          run_case         "--tests-only (alias)"                      "--tests-only"                             "Tests-only"            false   true   false  false
+          run_case         "--skip-test (alias)"                       "--skip-test"                              "Full deployment"       true    false  false  false
+          run_case         "--tests-only --skip-test --run-iqe"        "--tests-only --skip-test --run-iqe"       "IQE-only"              false   false  false  true
+          run_case         "--perf-only"                               "--perf-only"                              "Performance-only"      false   false  true   false
+          run_case         "--perf-only --perf-profile small"          "--perf-only --perf-profile small"         "Performance-only"      false   false  true   false
+          run_case         "--perf-only --perf-profile medium"         "--perf-only --perf-profile medium"        "Performance-only"      false   false  true   false
+          run_case         "--perf-only --perf-profile large"          "--perf-only --perf-profile large"         "Performance-only"      false   false  true   false
 
           echo ""
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

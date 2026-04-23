@@ -28,6 +28,148 @@ from utils import run_oc_command, get_pod_by_label
 
 
 # =============================================================================
+# Centralized Performance Test Configuration
+# =============================================================================
+
+@dataclass(frozen=True)
+class PerfTestConfig:
+    """Centralized configuration for performance tests.
+    
+    All defaults can be overridden via environment variables.
+    """
+    # Soak test settings
+    soak_duration_hours: float = field(
+        default_factory=lambda: float(os.environ.get("SOAK_DURATION_HOURS", "1"))
+    )
+    soak_upload_interval_minutes: int = field(
+        default_factory=lambda: int(os.environ.get("SOAK_UPLOAD_INTERVAL_MINUTES", "15"))
+    )
+    soak_query_interval_minutes: int = field(
+        default_factory=lambda: int(os.environ.get("SOAK_QUERY_INTERVAL_MINUTES", "5"))
+    )
+    soak_metrics_interval_seconds: int = field(
+        default_factory=lambda: int(os.environ.get("SOAK_METRICS_INTERVAL_SECONDS", "60"))
+    )
+    
+    # Ingestion test settings
+    ing_high_freq_duration_minutes: int = field(
+        default_factory=lambda: int(os.environ.get("PERF_ING_005_DURATION_MINUTES", "15"))
+    )
+    ing_high_freq_interval_seconds: int = field(
+        default_factory=lambda: int(os.environ.get("PERF_ING_005_INTERVAL_SECONDS", "300"))
+    )
+    
+    # Scale test settings
+    scale_max_sources: int = field(
+        default_factory=lambda: int(os.environ.get("PERF_SCALE_002_MAX_SOURCES", "25"))
+    )
+    scale_batch_size: int = field(
+        default_factory=lambda: int(os.environ.get("PERF_SCALE_002_BATCH_SIZE", "5"))
+    )
+    
+    # API test settings
+    api_crud_iterations: int = field(
+        default_factory=lambda: int(os.environ.get("PERF_API_003_ITERATIONS", "10"))
+    )
+    
+    # Timeouts (profile-aware defaults)
+    timeout_provider_ready: int = field(
+        default_factory=lambda: int(os.environ.get("PERF_TIMEOUT_PROVIDER", "300"))
+    )
+    timeout_summary_tables: int = field(
+        default_factory=lambda: int(os.environ.get("PERF_TIMEOUT_SUMMARY", "600"))
+    )
+    timeout_kruize_experiments: int = field(
+        default_factory=lambda: int(os.environ.get("PERF_TIMEOUT_KRUIZE", "300"))
+    )
+    timeout_kruize_recommendations: int = field(
+        default_factory=lambda: int(os.environ.get("PERF_TIMEOUT_RECOMMENDATIONS", "600"))
+    )
+    
+    # Memory leak thresholds
+    memory_growth_daily_percent_max: float = field(
+        default_factory=lambda: float(os.environ.get("PERF_MEMORY_GROWTH_MAX", "5.0"))
+    )
+    
+    # Concurrent upload settings
+    concurrent_upload_max: int = field(
+        default_factory=lambda: int(os.environ.get("PERF_CONCURRENT_UPLOADS_MAX", "5"))
+    )
+
+
+def _create_perf_config() -> PerfTestConfig:
+    """Create PerfTestConfig, working around frozen dataclass with default_factory."""
+    return PerfTestConfig(
+        soak_duration_hours=float(os.environ.get("SOAK_DURATION_HOURS", "1")),
+        soak_upload_interval_minutes=int(os.environ.get("SOAK_UPLOAD_INTERVAL_MINUTES", "15")),
+        soak_query_interval_minutes=int(os.environ.get("SOAK_QUERY_INTERVAL_MINUTES", "5")),
+        soak_metrics_interval_seconds=int(os.environ.get("SOAK_METRICS_INTERVAL_SECONDS", "60")),
+        ing_high_freq_duration_minutes=int(os.environ.get("PERF_ING_005_DURATION_MINUTES", "15")),
+        ing_high_freq_interval_seconds=int(os.environ.get("PERF_ING_005_INTERVAL_SECONDS", "300")),
+        scale_max_sources=int(os.environ.get("PERF_SCALE_002_MAX_SOURCES", "25")),
+        scale_batch_size=int(os.environ.get("PERF_SCALE_002_BATCH_SIZE", "5")),
+        api_crud_iterations=int(os.environ.get("PERF_API_003_ITERATIONS", "10")),
+        timeout_provider_ready=int(os.environ.get("PERF_TIMEOUT_PROVIDER", "300")),
+        timeout_summary_tables=int(os.environ.get("PERF_TIMEOUT_SUMMARY", "600")),
+        timeout_kruize_experiments=int(os.environ.get("PERF_TIMEOUT_KRUIZE", "300")),
+        timeout_kruize_recommendations=int(os.environ.get("PERF_TIMEOUT_RECOMMENDATIONS", "600")),
+        memory_growth_daily_percent_max=float(os.environ.get("PERF_MEMORY_GROWTH_MAX", "5.0")),
+        concurrent_upload_max=int(os.environ.get("PERF_CONCURRENT_UPLOADS_MAX", "5")),
+    )
+
+
+# Global config instance - import this in test files
+PERF_CONFIG = _create_perf_config()
+
+
+def get_profile_timeout_multiplier(profile_name: str) -> float:
+    """Get timeout multiplier based on profile size.
+    
+    Larger profiles need longer timeouts for processing.
+    """
+    multipliers = {
+        "baseline": 1.0,
+        "small": 1.0,
+        "medium": 2.0,
+        "large": 4.0,
+        "xlarge": 8.0,
+        "stress_p99": 12.0,
+        "stress_max": 20.0,
+    }
+    return multipliers.get(profile_name, 1.0)
+
+
+def get_timeout_for_profile(base_timeout: int, profile_name: str) -> int:
+    """Calculate timeout adjusted for profile size."""
+    multiplier = get_profile_timeout_multiplier(profile_name)
+    return int(base_timeout * multiplier)
+
+
+@dataclass
+class KruizeCredentials:
+    """Kruize database credentials for ROS tests.
+    
+    Use this instead of passing individual user/password parameters.
+    """
+    user: str
+    password: str
+    database: str = "costonprem_kruize"
+    
+    @classmethod
+    def from_secret(cls, namespace: str, secret_name: str) -> Optional["KruizeCredentials"]:
+        """Load credentials from Kubernetes secret."""
+        from utils import get_secret_value
+        
+        user = get_secret_value(namespace, secret_name, "kruize-user")
+        password = get_secret_value(namespace, secret_name, "kruize-password")
+        
+        if not user or not password:
+            return None
+        
+        return cls(user=user, password=password)
+
+
+# =============================================================================
 # Data Classes for Performance Metrics
 # =============================================================================
 
@@ -532,6 +674,24 @@ def perf_collector(perf_reports_dir: Path):
     collector = PerfResultCollector(perf_reports_dir)
     yield collector
     collector.finalize()
+
+
+@pytest.fixture(scope="session")
+def kruize_credentials(cluster_config: ClusterConfig) -> Optional[KruizeCredentials]:
+    """Get Kruize database credentials.
+    
+    Returns None if credentials are not available (ROS not deployed).
+    Tests that require ROS should skip if this returns None.
+    """
+    secret_name = f"{cluster_config.helm_release_name}-db-credentials"
+    creds = KruizeCredentials.from_secret(cluster_config.namespace, secret_name)
+    return creds
+
+
+@pytest.fixture(scope="session")
+def perf_config() -> PerfTestConfig:
+    """Get the centralized performance test configuration."""
+    return PERF_CONFIG
 
 
 class PerfResultCollector:

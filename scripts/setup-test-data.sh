@@ -50,6 +50,36 @@ log_success() { echo -e "${GREEN}[setup-test-data]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[setup-test-data]${NC} $*"; }
 log_error() { echo -e "${RED}[setup-test-data]${NC} $*" >&2; }
 
+# Retry a command with exponential backoff
+# Usage: retry <max_attempts> <delay_seconds> <command...>
+retry() {
+    local max_attempts=$1
+    local delay=$2
+    shift 2
+    local attempt=1
+    
+    while [[ $attempt -le $max_attempts ]]; do
+        if "$@"; then
+            return 0
+        fi
+        
+        if [[ $attempt -lt $max_attempts ]]; then
+            log_warn "Command failed (attempt $attempt/$max_attempts), retrying in ${delay}s..."
+            sleep "$delay"
+            delay=$((delay * 2))  # Exponential backoff
+        fi
+        attempt=$((attempt + 1))
+    done
+    
+    log_error "Command failed after $max_attempts attempts: $*"
+    return 1
+}
+
+# Run oc command with retry for transient failures
+run_oc() {
+    retry 3 2 oc "$@"
+}
+
 usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
@@ -161,25 +191,31 @@ get_scenario_config() {
 # Check prerequisites
 check_prerequisites() {
     log "Checking prerequisites..."
-    
+
     # Check oc CLI
     if ! command -v oc &> /dev/null; then
         log_error "oc CLI not found. Please install OpenShift CLI."
         exit 1
     fi
-    
+
+    # Skip cluster checks in dry-run mode
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log "Skipping cluster checks (dry-run mode)"
+        return 0
+    fi
+
     # Check cluster access
     if ! oc whoami &> /dev/null; then
         log_error "Not logged into OpenShift cluster. Run 'oc login' first."
         exit 1
     fi
-    
+
     # Check namespace exists
     if ! oc get namespace "$NAMESPACE" &> /dev/null; then
         log_error "Namespace '$NAMESPACE' not found."
         exit 1
     fi
-    
+
     # Check deployment exists
     if ! oc get deployment -n "$NAMESPACE" "${HELM_RELEASE_NAME}-koku-api" &> /dev/null; then
         log_error "Cost On-Prem deployment not found in namespace '$NAMESPACE'."
@@ -223,9 +259,9 @@ clean_test_data() {
         return 0
     fi
     
-    # Get DB pod
+    # Get DB pod with retry
     local db_pod
-    db_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/component=database -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+    db_pod=$(run_oc get pods -n "$NAMESPACE" -l app.kubernetes.io/component=database -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
     
     if [[ -z "$db_pod" ]]; then
         log_warn "Database pod not found, skipping DB cleanup"
@@ -235,9 +271,9 @@ clean_test_data() {
     # Delete sources via API
     log "Deleting sources matching prefix '$prefix'..."
     
-    # Get source IDs
+    # Get source IDs with retry
     local sources
-    sources=$(oc exec -n "$NAMESPACE" "$db_pod" -- \
+    sources=$(run_oc exec -n "$NAMESPACE" "$db_pod" -- \
         psql -h localhost -U koku -d koku -t -c \
         "SELECT id, name FROM api_sources WHERE name LIKE '${prefix}%';" 2>/dev/null || true)
     
@@ -251,7 +287,7 @@ clean_test_data() {
                 name=$(echo "$line" | awk -F'|' '{print $2}' | tr -d ' ')
                 if [[ -n "$id" && -n "$name" ]]; then
                     log "  Deleting source $id ($name)..."
-                    oc exec -n "$NAMESPACE" "$db_pod" -- \
+                    run_oc exec -n "$NAMESPACE" "$db_pod" -- \
                         psql -h localhost -U koku -d koku -c \
                         "DELETE FROM api_sources WHERE id = $id;" &>/dev/null || true
                 fi
@@ -261,16 +297,16 @@ clean_test_data() {
     
     # Clean orphaned data
     log "Cleaning orphaned manifests and reports..."
-    oc exec -n "$NAMESPACE" "$db_pod" -- \
+    run_oc exec -n "$NAMESPACE" "$db_pod" -- \
         psql -h localhost -U koku -d koku -c \
         "DELETE FROM reporting_ocpusagereportmanifest WHERE cluster_id LIKE '${prefix}%';" &>/dev/null || true
     
     # Flush cache
     log "Flushing cache..."
     local valkey_pod
-    valkey_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/component=valkey -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+    valkey_pod=$(run_oc get pods -n "$NAMESPACE" -l app.kubernetes.io/component=valkey -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
     if [[ -n "$valkey_pod" ]]; then
-        oc exec -n "$NAMESPACE" "$valkey_pod" -- valkey-cli FLUSHALL &>/dev/null || true
+        run_oc exec -n "$NAMESPACE" "$valkey_pod" -- valkey-cli FLUSHALL &>/dev/null || true
     fi
     
     log_success "Cleanup complete"

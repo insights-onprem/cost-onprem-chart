@@ -124,26 +124,59 @@ class MetricSample:
 
 @dataclass
 class SoakTestState:
-    """Tracks state during a soak test run."""
+    """Tracks state during a soak test run.
+    
+    Thread-safe for concurrent access from background workers.
+    """
     
     start_time: float = field(default_factory=time.time)
-    samples: List[MetricSample] = field(default_factory=list)
+    # Use deque for thread-safe append operations
+    _samples: deque = field(default_factory=lambda: deque(maxlen=10000))
+    _errors: deque = field(default_factory=lambda: deque(maxlen=1000))
+    _lock: threading.Lock = field(default_factory=threading.Lock)
     uploads_completed: int = 0
     uploads_failed: int = 0
     queries_completed: int = 0
     queries_failed: int = 0
-    errors: List[str] = field(default_factory=list)
     stop_event: threading.Event = field(default_factory=threading.Event)
     
     @property
     def elapsed_seconds(self) -> float:
         return time.time() - self.start_time
     
+    @property
+    def samples(self) -> List[MetricSample]:
+        """Return samples as list (thread-safe copy)."""
+        return list(self._samples)
+    
+    @property
+    def errors(self) -> List[str]:
+        """Return errors as list (thread-safe copy)."""
+        return list(self._errors)
+    
     def add_sample(self, sample: MetricSample):
-        self.samples.append(sample)
+        """Thread-safe sample addition."""
+        self._samples.append(sample)
     
     def add_error(self, error: str):
-        self.errors.append(f"[{datetime.now(timezone.utc).isoformat()}] {error}")
+        """Thread-safe error addition."""
+        self._errors.append(f"[{datetime.now(timezone.utc).isoformat()}] {error}")
+    
+    def increment_uploads(self, success: bool = True):
+        """Thread-safe upload counter increment."""
+        with self._lock:
+            if success:
+                self.uploads_completed += 1
+            else:
+                self.uploads_failed += 1
+    
+    def increment_queries(self, success: bool = True):
+        """Thread-safe query counter increment."""
+        with self._lock:
+            if success:
+                self.queries_completed += 1
+            else:
+                self.queries_failed += 1
 
 
 # =============================================================================
