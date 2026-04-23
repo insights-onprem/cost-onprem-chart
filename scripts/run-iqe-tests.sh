@@ -685,7 +685,7 @@ spec:
     - name: DYNACONF_HTTP__DEFAULT_AUTH_TYPE
       value: "jwt-auth"
     - name: DYNACONF_HTTP__OAUTH_CLIENT_ID
-      value: "${KEYCLOAK_CLIENT_ID}"
+      value: "${UI_CLIENT_ID}"
     - name: DYNACONF_HTTP__OAUTH_BASE_URL
       value: "${OAUTH_URL}"
     - name: DYNACONF_HTTP__SSL_VERIFY
