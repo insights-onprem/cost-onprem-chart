@@ -686,6 +686,12 @@ spec:
       value: "jwt-auth"
     - name: DYNACONF_HTTP__OAUTH_CLIENT_ID
       value: "${UI_CLIENT_ID}"
+    - name: DYNACONF_HTTP__OAUTH_CLIENT_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: iqe-keycloak-credentials
+          key: UI_CLIENT_SECRET
+          optional: true
     - name: DYNACONF_HTTP__OAUTH_BASE_URL
       value: "${OAUTH_URL}"
     - name: DYNACONF_HTTP__SSL_VERIFY
