@@ -723,12 +723,12 @@ spec:
     - name: DYNACONF_users__cost_onprem_user__auth__jwt_grant_type
       value: "password"
     - name: DYNACONF_users__cost_onprem_user__auth__client_id
-      value: "${KEYCLOAK_CLIENT_ID}"
+      value: "${UI_CLIENT_ID}"
     - name: DYNACONF_users__cost_onprem_user__auth__client_secret
       valueFrom:
         secretKeyRef:
           name: iqe-keycloak-credentials
-          key: CLIENT_SECRET
+          key: UI_CLIENT_SECRET
           optional: true
     - name: DYNACONF_users__cost_onprem_user__identity__account_number
       value: "7890123"
