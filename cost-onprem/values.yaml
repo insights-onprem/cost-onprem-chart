@@ -663,6 +663,11 @@ rbac:
         cpu: 500m
         memory: 1Gi
 
+  # Comma-separated list of role names that non-admin users may create.
+  # Maps to ROLE_CREATE_ALLOW_LIST env var on the RBAC API.
+  # Leave empty to use the upstream default (no custom role creation).
+  roleCreateAllowList: ""
+
   worker:
     replicas: 1
     resources:
@@ -822,6 +827,16 @@ jwtAuth:
       requests:
         cpu: 100m
         memory: 128Mi
+
+  # Org admin usernames: Keycloak usernames that receive is_org_admin=true in
+  # the X-Rh-Identity header. This triggers insights-rbac's admin_default role
+  # assignment (e.g. "Cost Administrator" via the admin_default group).
+  # Leave empty to keep is_org_admin=false for all users (default, most secure).
+  orgAdminUsernames: []
+  # Example:
+  #   orgAdminUsernames:
+  #     - admin
+  #     - cost-mgmt-operator
 
   # Keycloak configuration for JWT validation
   # Supported operator: Red Hat Build of Keycloak (RHBK) v22+ - k8s.keycloak.org/v2alpha1

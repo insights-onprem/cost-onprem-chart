@@ -308,10 +308,11 @@ oc get route cost-onprem-ui -n cost-onprem         # UI (web interface)
 |-------|------|---------|---------|
 | `cost-onprem-main` | `/` | ROS API | ROS status and recommendations |
 | `cost-onprem-api` | `/api/cost-management` | Envoy → Koku API | Cost Management reports and Sources API (JWT validated) |
+| `cost-onprem-api` | `/api/rbac` | Envoy → RBAC API | IAM role/group management (JWT validated) |
 | `cost-onprem-ingress` | `/api/ingress` | Envoy → Ingress | File uploads (JWT validated) |
 | `cost-onprem-ui` | (default) | UI | Web interface (reencrypt TLS) |
 
-> **Note**: The `cost-onprem-api` and `cost-onprem-ingress` routes pass through the Envoy ingress proxy for JWT authentication. Sources API is accessible via `/api/cost-management/v1/sources/` through the `cost-onprem-api` route.
+> **Note**: The `cost-onprem-api` and `cost-onprem-ingress` routes pass through the Envoy ingress proxy for JWT authentication. Sources API is accessible via `/api/cost-management/v1/sources/` and RBAC management via `/api/rbac/v1/` through the `cost-onprem-api` route.
 
 **Access Pattern:**
 ```bash
@@ -586,22 +587,21 @@ ui:
 ### RBAC Configuration
 
 ```yaml
-# insights-rbac: Role-Based Access Control backend
+# insights-rbac: RBAC v1 authorization backend for Koku.
+# Koku delegates all permission checks to this service via HTTP.
+# Deploys an API server (Gunicorn) and a Celery worker for async tasks.
 rbac:
-  enabled: true  # Deploy insights-rbac (required for authorization)
-
   image:
-    repository: quay.io/redhatinsights/insights-rbac
+    repository: quay.io/cloudservices/rbac
     tag: "c2b9ccf"
     pullPolicy: IfNotPresent
 
   # API server
   api:
-    replicaCount: 1       # Increase for HA (recommended: 2+)
-    port: 8080
+    replicas: 1             # Increase for HA (recommended: 2+)
     resources:
       requests:
-        cpu: 200m
+        cpu: 250m
         memory: 512Mi
       limits:
         cpu: 500m
@@ -609,7 +609,7 @@ rbac:
 
   # Celery worker (async tasks)
   worker:
-    replicaCount: 1
+    replicas: 1
     resources:
       requests:
         cpu: 100m
@@ -617,15 +617,12 @@ rbac:
       limits:
         cpu: 500m
         memory: 2Gi
-
-  # Environment variable overrides
-  env:
-    DJANGO_LOG_LEVEL: "INFO"
-    ACCESS_CACHE_ENABLED: "True"      # Cache RBAC responses (recommended)
-    ACCESS_CACHE_TIMEOUT: "300"       # Cache TTL in seconds
-    BYPASS_BOP_VERIFICATION: "True"   # No BOP exists on-prem
-    PGSSLMODE: "disable"              # Set to "require" for production TLS
 ```
+
+> **Note**: RBAC environment variables (e.g. `PGSSLMODE`, `BYPASS_BOP_VERIFICATION`,
+> `ACCESS_CACHE_ENABLED`) are hardcoded in the `_helpers-rbac.tpl` commonEnv helper
+> and are not user-configurable via `values.yaml`. `PGSSLMODE` tracks
+> `database.server.sslMode` automatically.
 
 #### Koku RBAC Integration Variables
 
@@ -634,7 +631,7 @@ These are set automatically by the Helm chart in `_helpers-koku.tpl`:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `RBAC_SERVICE_HOST` | `cost-onprem-rbac-api` | RBAC API service hostname |
-| `RBAC_SERVICE_PORT` | `8080` | RBAC API port |
+| `RBAC_SERVICE_PORT` | `8000` | RBAC API port |
 | `RBAC_SERVICE_PATH` | `/api/rbac/v1/` | RBAC API base path |
 | `RBAC_SERVICE_PROTOCOL` | `http` | Protocol (http/https) |
 | `ENHANCED_ORG_ADMIN` | `False` | **Must be False** — disables Koku's admin bypass so all auth flows through RBAC |

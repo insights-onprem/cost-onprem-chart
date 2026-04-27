@@ -78,8 +78,11 @@ sequenceDiagram
 |---------|----------------|------------------|-------|
 | **Koku** (Cost Management) | `/api/cost-management/` | `cost-management` | Reports, tags, forecasts, cost models, settings |
 | **ROS** (Resource Optimization) | `/api/ros/` | `cost-management` | Recommendations, system ratings |
+| **insights-rbac** (IAM) | `/api/rbac/` | `rbac` | Role, group, policy management |
 
-Both services use the same `cost-management` RBAC application and permission set. A user with `cost-management:openshift.cluster:read` permission can access both Koku OCP reports and ROS recommendations for the authorized clusters.
+Koku and ROS use the `cost-management` RBAC application and permission set. A user with `cost-management:openshift.cluster:read` permission can access both Koku OCP reports and ROS recommendations for the authorized clusters.
+
+The insights-rbac admin API is exposed at `/api/rbac/` through the Envoy gateway with the same JWT authentication and X-Rh-Identity injection as all other routes. Access to RBAC management endpoints (creating roles, managing groups) is governed by `rbac:*` permissions, which are seeded by `manage.py seeds` from the insights-rbac image.
 
 ---
 
@@ -87,7 +90,7 @@ Both services use the same `cost-management` RBAC application and permission set
 
 Before configuring RBAC, ensure:
 
-1. **insights-rbac is deployed** — the Helm chart deploys it automatically when `rbac.enabled: true` (default)
+1. **insights-rbac is deployed** — the Helm chart always deploys it as part of the cost-onprem stack
 2. **Migration job completed** — verify with:
    ```bash
    kubectl get jobs -n <namespace> | grep rbac-migration
@@ -95,7 +98,7 @@ Before configuring RBAC, ensure:
 3. **RBAC API is healthy**:
    ```bash
    kubectl exec -it deployment/cost-onprem-rbac-api -n <namespace> -- \
-     curl -s http://localhost:8080/api/rbac/v1/status/
+     curl -s http://localhost:8000/api/rbac/v1/status/
    ```
 4. **Keycloak realm is configured** — users must exist in the Keycloak realm that the Envoy gateway validates against
 5. **Valkey is running** — required as Celery broker for RBAC worker
@@ -410,7 +413,7 @@ EOF
 
 ### Important Notes
 
-1. **Custom roles must be created via Django ORM** — the RBAC API rejects custom roles for `cost-management` application via REST API
+1. **Custom roles must be created via Django ORM** — the RBAC REST API gates custom role creation behind the `ROLE_CREATE_ALLOW_LIST` environment variable, which is empty by default (matching SaaS behavior). The API returns `"Custom roles cannot be created for cost-management"` for any application not on this list. Django ORM bypasses this API validation layer. To enable REST-based custom role creation, set `ROLE_CREATE_ALLOW_LIST=cost-management` on the RBAC API deployment.
 2. **Roles are created in the `public` tenant** — they are shared across all orgs
 3. **Groups, policies, and principals are per-tenant** — each org has its own assignments
 4. **Principal usernames must match Keycloak usernames** — RBAC resolves the principal by the `username` field from the identity header
@@ -446,6 +449,8 @@ Koku caches responses from the RBAC `/access/` endpoint in Valkey:
 insights-rbac uses Django's cache framework for internal query results.
 
 ### Flushing Caches
+
+> **Note:** The manual cache flush workflow below is a known UX gap. A dedicated script or Helm hook for automated cache invalidation is planned as a follow-up improvement. For most use cases, the TTL-based expiry (300s on the Koku side) is sufficient without manual intervention.
 
 After making permission changes that need immediate effect:
 
@@ -484,7 +489,7 @@ IDENTITY=$(echo -n '{"org_id":"<org>","identity":{"org_id":"<org>","account_numb
 # Query RBAC access endpoint
 kubectl exec -it $RBAC_POD -n <namespace> -- \
   curl -s -H "X-Rh-Identity: $IDENTITY" \
-  "http://localhost:8080/api/rbac/v1/access/?application=cost-management" | python3 -m json.tool
+  "http://localhost:8000/api/rbac/v1/access/?application=cost-management" | python3 -m json.tool
 ```
 
 **Common causes**:
@@ -584,8 +589,10 @@ flowchart LR
 
 When a new org is created in Keycloak:
 
+> **Note:** `bootstrap_tenants --all` runs **automatically** on every `helm install` and `helm upgrade` via the RBAC migration Job (pre-install/pre-upgrade hook, weight -5). The manual command below is only needed for **new orgs created between Helm releases** — when a user's first API request creates a tenant that didn't exist at the last upgrade. This is a **cluster administrator** responsibility.
+
 1. The user's first request to a Koku endpoint triggers tenant creation
-2. Run `bootstrap_tenants` to create the TenantMapping:
+2. Run `bootstrap_tenants` to create the TenantMapping (if not covered by the next `helm upgrade`):
    ```bash
    kubectl exec -it $RBAC_POD -n <namespace> -- \
      python manage.py bootstrap_tenants --all -v 2

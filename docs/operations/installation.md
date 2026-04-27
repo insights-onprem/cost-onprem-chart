@@ -757,12 +757,12 @@ kubectl exec -it $RBAC_POD -n cost-onprem -- \
 
 # Test RBAC API status endpoint
 kubectl exec -it $RBAC_POD -n cost-onprem -- \
-  curl -s http://localhost:8080/api/rbac/v1/status/ | python3 -m json.tool
+  curl -s http://localhost:8000/api/rbac/v1/status/ | python3 -m json.tool
 
 # Verify Koku can reach RBAC
 KOKU_POD=$(kubectl get pod -l app.kubernetes.io/component=koku-api -n cost-onprem -o jsonpath='{.items[0].metadata.name}')
 kubectl exec -it $KOKU_POD -n cost-onprem -- \
-  curl -s http://cost-onprem-rbac-api:8080/api/rbac/v1/status/
+  curl -s http://cost-onprem-rbac-api:8000/api/rbac/v1/status/
 
 # Verify ROS API started with RBAC enabled (wait-for-rbac init container should have completed)
 kubectl get pods -l app.kubernetes.io/component=ros-api -n cost-onprem -o jsonpath='{.items[0].status.initContainerStatuses[*].name}'

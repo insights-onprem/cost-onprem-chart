@@ -48,6 +48,10 @@ spec:
 
         env:
         {{- include "cost-onprem.rbac.commonEnv" . | nindent 8 }}
+        {{- if .Values.rbac.roleCreateAllowList }}
+        - name: ROLE_CREATE_ALLOW_LIST
+          value: {{ .Values.rbac.roleCreateAllowList | quote }}
+        {{- end }}
 
         livenessProbe:
           httpGet:

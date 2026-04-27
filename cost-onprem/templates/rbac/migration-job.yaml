@@ -11,7 +11,7 @@ metadata:
     "helm.sh/hook-weight": "-5"
     "helm.sh/hook-delete-policy": before-hook-creation
 spec:
-  backoffLimit: 0
+  backoffLimit: 1
   template:
     metadata:
       labels:
@@ -150,7 +150,13 @@ spec:
             echo "✓ Admin default group seeding complete"
 
             echo "Bootstrapping tenant mappings for all existing tenants..."
-            python manage.py bootstrap_tenants --all -v 2 || true
+            set +e
+            python manage.py bootstrap_tenants --all -v 2
+            bootstrap_rc=$?
+            set -e
+            if [ $bootstrap_rc -ne 0 ]; then
+              echo "WARNING: bootstrap_tenants exited with code $bootstrap_rc (non-fatal, continuing to cleanup)"
+            fi
             echo "✓ Tenant bootstrap complete"
 
             echo "Removing cost-management access from platform_default groups..."
@@ -164,10 +170,8 @@ spec:
                 for policy in Policy.objects.filter(group=group):
                     for role in policy.roles.all():
                         has_cm_access = Access.objects.filter(
-                            role=role
-                        ).filter(
-                            Q(permission__application='cost-management')
-                            | Q(permission__resource_type='*')
+                            role=role,
+                            permission__application='cost-management',
                         ).exists()
                         if has_cm_access:
                             policy.roles.remove(role)
