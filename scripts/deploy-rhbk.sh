@@ -902,51 +902,6 @@ spec:
               userinfo.token.claim: "false"
           # Note: "access" attribute mapper removed - using ENHANCED_ORG_ADMIN mode
           # All authenticated users are org admins with full access within their org
-      # Public client for IQE tests — iqe_jwt's OIDCAuth.from_basic() does not
-      # send client_secret, so password-grant requires a public client.
-      - clientId: cost-management-iqe
-        name: "Cost Management IQE Test Client"
-        description: "Public client for IQE password-grant authentication"
-        enabled: true
-        serviceAccountsEnabled: false
-        standardFlowEnabled: false
-        directAccessGrantsEnabled: true
-        implicitFlowEnabled: false
-        publicClient: true
-        protocol: openid-connect
-        defaultClientScopes:
-          - openid
-          - api.console
-          - profile
-          - email
-        protocolMappers:
-          - name: aud-mapper-cost-management-ui
-            protocol: openid-connect
-            protocolMapper: oidc-audience-mapper
-            config:
-              included.client.audience: $COST_MGMT_UI_CLIENT_ID
-              id.token.claim: "true"
-              access.token.claim: "true"
-          - name: org-id-mapper
-            protocol: openid-connect
-            protocolMapper: oidc-usermodel-attribute-mapper
-            config:
-              user.attribute: org_id
-              claim.name: org_id
-              access.token.claim: "true"
-              id.token.claim: "true"
-              jsonType.label: String
-              userinfo.token.claim: "false"
-          - name: account-number-mapper
-            protocol: openid-connect
-            protocolMapper: oidc-usermodel-attribute-mapper
-            config:
-              user.attribute: account_number
-              claim.name: account_number
-              access.token.claim: "true"
-              id.token.claim: "true"
-              jsonType.label: String
-              userinfo.token.claim: "false"
 EOF
         echo_success "✓ Kubernetes realm import created"
     fi
@@ -1305,10 +1260,6 @@ extract_client_secret() {
     # Extract UI client secret (used by oauth2-proxy for authorization_code flow)
     extract_single_client_secret "$COST_MGMT_UI_CLIENT_ID" "keycloak-client-secret-cost-management-ui" || echo_warning "Failed to extract UI client secret"
 
-    # Note: cost-management-iqe is a public client — no secret to extract.
-    # IQE uses password grant via iqe_jwt's OIDCAuth.from_basic(), which does
-    # not send client_secret, so the IQE client must be public.
-
     echo ""
 }
 
@@ -1497,13 +1448,6 @@ display_summary() {
     echo_info "  Default Scopes: openid, api.console, profile, email"
     echo_info "  Optional Scopes: offline_access"
     echo_info "  Secret stored in: keycloak-client-secret-cost-management-ui"
-    echo ""
-
-    echo_info "Cost Management IQE Test Client Information:"
-    echo_info "  Client ID: cost-management-iqe"
-    echo_info "  Client Type: Public (password grant for IQE tests)"
-    echo_info "  Default Scopes: openid, api.console, profile, email"
-    echo_info "  Note: Public client — no secret required (iqe_jwt.from_basic does not send client_secret)"
     echo ""
 
     echo_info "Admin User Information:"

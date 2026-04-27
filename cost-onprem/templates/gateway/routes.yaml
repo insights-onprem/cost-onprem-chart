@@ -9,7 +9,7 @@ This file contains 2 routes for external access:
 
 1. API route (/api/) - All API traffic through centralized Envoy Gateway
    - Handles JWT authentication via Keycloak
-   - Routes to: koku-api, ingress, ros-api
+   - Routes to: koku-api, ingress, ros-api, rbac-api (IAM)
    - Sources API is now part of Koku at /api/cost-management/v1/sources/
    - Injects X-Rh-Identity header for backend services
 

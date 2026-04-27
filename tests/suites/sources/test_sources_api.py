@@ -497,15 +497,14 @@ class TestAuthenticationErrors:
         The identity has is_org_admin=False and no email field. Koku either:
         - 403: RBAC denies the user (no cost-management permissions)
         - 401: Koku's middleware rejects the missing email
-        - 500: Internal error from missing email during user creation
         """
         response = pod_session_no_auth.get(
             f"{koku_api_url}/sources",
             headers={"X-Rh-Identity": invalid_identity_headers["no_email"]},
         )
 
-        assert response.status_code in (401, 403, 500), (
-            f"Expected 401 (missing email), 403 (RBAC denied), or 500 (internal), "
+        assert response.status_code in (401, 403), (
+            f"Expected 401 (missing email) or 403 (RBAC denied), "
             f"got {response.status_code}: {response.text[:200]}"
         )
 

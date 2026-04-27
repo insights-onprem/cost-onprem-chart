@@ -113,7 +113,7 @@ Provides DB, Redis, and application configuration for non-Clowder mode.
 - name: KAFKA_ENABLED
   value: "false"
 - name: PGSSLMODE
-  value: "disable"
+  value: {{ .Values.database.server.sslMode | quote }}
 - name: DJANGO_LOG_LEVEL
   value: "INFO"
 - name: RBAC_LOG_LEVEL

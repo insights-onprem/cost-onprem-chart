@@ -334,6 +334,94 @@ if [ -n "$KEYCLOAK_HOST" ]; then
     fi
 fi
 
+# Ensure the IQE public Keycloak client exists (created via admin API, not realm import).
+# IQE's iqe_jwt OIDCAuth.from_basic() does not send client_secret, so password-grant
+# requires a public client.
+ensure_iqe_keycloak_client() {
+    local kc_host="$1"
+    local token="$2"
+    local realm="${REALM_NAME:-kubernetes}"
+    local client_id="cost-management-iqe"
+    local ui_client_id="${COST_MGMT_UI_CLIENT_ID:-cost-management-ui}"
+
+    # Check if client already exists
+    local existing
+    existing=$(curl -sk "https://${kc_host}/admin/realms/${realm}/clients?clientId=${client_id}" \
+        -H "Authorization: Bearer ${token}" 2>/dev/null | jq -r '.[0].id // empty')
+    if [ -n "$existing" ]; then
+        echo "✓ IQE Keycloak client '${client_id}' already exists (id: ${existing})"
+        return 0
+    fi
+
+    echo "Creating IQE public Keycloak client '${client_id}'..."
+    local http_code
+    http_code=$(curl -sk -o /dev/null -w "%{http_code}" -X POST \
+        "https://${kc_host}/admin/realms/${realm}/clients" \
+        -H "Authorization: Bearer ${token}" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "clientId": "'"${client_id}"'",
+            "name": "Cost Management IQE Test Client",
+            "description": "Public client for IQE password-grant authentication",
+            "enabled": true,
+            "serviceAccountsEnabled": false,
+            "standardFlowEnabled": false,
+            "directAccessGrantsEnabled": true,
+            "implicitFlowEnabled": false,
+            "publicClient": true,
+            "protocol": "openid-connect",
+            "defaultClientScopes": ["openid", "api.console", "profile", "email"],
+            "protocolMappers": [
+                {
+                    "name": "aud-mapper-cost-management-ui",
+                    "protocol": "openid-connect",
+                    "protocolMapper": "oidc-audience-mapper",
+                    "config": {
+                        "included.client.audience": "'"${ui_client_id}"'",
+                        "id.token.claim": "true",
+                        "access.token.claim": "true"
+                    }
+                },
+                {
+                    "name": "org-id-mapper",
+                    "protocol": "openid-connect",
+                    "protocolMapper": "oidc-usermodel-attribute-mapper",
+                    "config": {
+                        "user.attribute": "org_id",
+                        "claim.name": "org_id",
+                        "access.token.claim": "true",
+                        "id.token.claim": "true",
+                        "jsonType.label": "String",
+                        "userinfo.token.claim": "false"
+                    }
+                },
+                {
+                    "name": "account-number-mapper",
+                    "protocol": "openid-connect",
+                    "protocolMapper": "oidc-usermodel-attribute-mapper",
+                    "config": {
+                        "user.attribute": "account_number",
+                        "claim.name": "account_number",
+                        "access.token.claim": "true",
+                        "id.token.claim": "true",
+                        "jsonType.label": "String",
+                        "userinfo.token.claim": "false"
+                    }
+                }
+            ]
+        }' 2>/dev/null)
+
+    if [ "$http_code" = "201" ]; then
+        echo "✓ IQE Keycloak client '${client_id}' created"
+    else
+        echo "WARNING: Failed to create IQE client (HTTP ${http_code}). IQE password-grant tests may fail."
+    fi
+}
+
+if [ -n "${ADMIN_TOKEN:-}" ] && [ -n "${KEYCLOAK_HOST:-}" ]; then
+    ensure_iqe_keycloak_client "$KEYCLOAK_HOST" "$ADMIN_TOKEN"
+fi
+
 # Get Koku API route hostname (external access)
 KOKU_ROUTE_HOST=$(kubectl get route ${HELM_RELEASE_NAME}-api -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
 
