@@ -35,7 +35,7 @@ Images marked **additional** are not auto-discovered by `oc-mirror` and
 | `quay.io/insights-onprem/koku:sources` | Cost Management API, MASU, Celery, Listener, Migration | auto |
 | `quay.io/redhat-services-prod/kruize-autotune-tenant/autotune:d0b4337` | Kruize optimization engine | auto |
 | `quay.io/insights-onprem/insights-ingress-go:latest` | Ingress service | auto |
-| `quay.io/insights-onprem/postgresql:16` | PostgreSQL database (Helm hook) | **additional** |
+| `registry.redhat.io/rhel10/postgresql-16:10.1` | PostgreSQL database (Helm pre-install/pre-upgrade hook) | **additional** |
 | `registry.redhat.io/rhel10/valkey-8:latest` | Valkey cache | auto |
 | `registry.redhat.io/openshift-service-mesh/proxyv2-rhel9:2.6` | Envoy gateway | auto |
 | `registry.redhat.io/rhceph/oauth2-proxy-rhel9:v7.6.0` | UI OAuth proxy | auto |
@@ -78,7 +78,7 @@ mirror:
   # not rendered during oc-mirror's image discovery pass.
   # Keep in sync with the "Required Container Images" table above.
   additionalImages:
-    - name: quay.io/insights-onprem/postgresql:16
+    - name: registry.redhat.io/rhel10/postgresql-16:10.1
     # Only needed if using install-helm-chart.sh for bucket creation:
     - name: amazon/aws-cli:latest
 ```

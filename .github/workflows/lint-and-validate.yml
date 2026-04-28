@@ -62,7 +62,7 @@ jobs:
               - name: cost-onprem
                 path: ./cost-onprem
           additionalImages:
-            - name: quay.io/insights-onprem/postgresql:16
+            - name: registry.redhat.io/rhel10/postgresql-16:10.1
         EOF
 
         echo "=== Running oc-mirror --dry-run --v2 ==="

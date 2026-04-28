@@ -591,8 +591,10 @@ database:
   # Unified Database Server Configuration
   server:
     image:
-      repository: quay.io/insights-onprem/postgresql
-      tag: "16"
+      repository: registry.redhat.io/rhel10/postgresql-16
+      tag: "10.1"
+      # Image entrypoint expects POSTGRESQL_* or POSTGRESQL_ADMIN_PASSWORD; chart supplies
+      # the latter. Secret key postgres-user must be the DB superuser name (default: postgres).
 
     storage:
       size: 30Gi  # Total storage for all databases (sum of individual DBs)
