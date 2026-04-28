@@ -776,9 +776,40 @@ kubectl exec -it $ROS_POD -n cost-onprem -- env | grep -E 'RBAC_ENABLE|RBACHOST|
 
 ### Post-Install: RBAC User Setup
 
-After verifying the deployment, configure user access:
+After verifying the deployment, configure user access so that API calls are authorized (without RBAC permissions, authenticated users receive 403 on all endpoints):
 
-1. **Create users in Keycloak** with `org_id` and `account_number` attributes
+**Option A: Automatic bootstrap via Helm (recommended)**
+
+If you created a Keycloak user with `deploy-rhbk.sh` (or manually with matching `org_id` / `account_number` attributes), enable the bootstrap hook to grant Cost Administrator automatically:
+
+```bash
+helm upgrade cost-onprem ./cost-onprem -n cost-onprem \
+  --set rbac.bootstrapAdmin.enabled=true
+```
+
+The defaults (`username=admin`, `orgId=org1234567`, `accountNumber=7890123`) match the user created by `deploy-rhbk.sh`. Override them if your Keycloak user has different attributes:
+
+```bash
+helm upgrade cost-onprem ./cost-onprem -n cost-onprem \
+  --set rbac.bootstrapAdmin.enabled=true \
+  --set rbac.bootstrapAdmin.username=alice \
+  --set rbac.bootstrapAdmin.orgId=myorg123 \
+  --set rbac.bootstrapAdmin.accountNumber=9999999
+```
+
+The hook is idempotent — safe to leave enabled across upgrades.
+
+**Option B: Manual sync script**
+
+```bash
+NAMESPACE=cost-onprem ./scripts/sync-rbac-admin.sh
+```
+
+See `./scripts/sync-rbac-admin.sh --help` for custom username/org options.
+
+**Next steps:**
+
+1. **Create additional users in Keycloak** with `org_id` and `account_number` attributes
 2. **Assign roles via RBAC groups** — see the [RBAC Setup Guide](rbac-setup.md) for detailed instructions
 3. **Flush caches** after making permission changes for immediate effect
 

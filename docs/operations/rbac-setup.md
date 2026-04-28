@@ -23,7 +23,7 @@ Cost Management On-Premise uses [insights-rbac](https://github.com/RedHatInsight
 
 Key properties:
 - Authorization is **role-based**, not attribute-based
-- `is_org_admin` is **always false** in the identity header — admin privileges come from RBAC roles only
+- `is_org_admin` is **false by default** in the identity header — admin privileges come from RBAC roles only. Specific usernames can be granted `is_org_admin: true` via `jwtAuth.orgAdminUsernames` in `values.yaml`, which triggers the `admin_default` group mechanism (see [Identity Header](#identity-header))
 - Permissions are scoped by `resourceDefinitions` (e.g., specific clusters, namespaces)
 - The system seeds 5 built-in roles covering common access patterns
 - RBAC is **always enabled** for both Koku and ROS — there is no toggle to disable it
@@ -162,7 +162,7 @@ The `x-rh-identity` header is constructed by the Envoy gateway and contains:
 }
 ```
 
-**Important**: `is_org_admin` is always `false`. This is a deliberate security decision — see the [PoC Analysis](https://gist.github.com/jordigilh/c81c73ba411637e24a30acd6a743e5fb) for rationale.
+**Important**: `is_org_admin` is `false` by default. Specific usernames listed in `jwtAuth.orgAdminUsernames` (in `values.yaml`) receive `is_org_admin: true`, which triggers insights-rbac's `admin_default` group mechanism — granting Cost Administrator permissions automatically. When the list is empty (default), all admin access must come through explicit RBAC group membership. See the [PoC Analysis](https://gist.github.com/jordigilh/c81c73ba411637e24a30acd6a743e5fb) for security rationale.
 
 ---
 
