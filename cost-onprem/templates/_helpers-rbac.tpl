@@ -28,6 +28,13 @@ RBAC migration job name.
 {{- end -}}
 
 {{/*
+RBAC admin bootstrap job name.
+*/}}
+{{- define "cost-onprem.rbac.adminBootstrap.name" -}}
+{{- printf "%s-rbac-admin-bootstrap" (include "cost-onprem.fullname" .) -}}
+{{- end -}}
+
+{{/*
 RBAC container image.
 */}}
 {{- define "cost-onprem.rbac.image" -}}
