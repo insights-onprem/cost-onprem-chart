@@ -353,10 +353,19 @@ spec:
         app: keycloak-db
         component: database
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: postgres
           image: registry.redhat.io/rhel10/postgresql-16:10.1
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
           ports:
             - name: postgres
               containerPort: 5432

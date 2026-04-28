@@ -29,6 +29,8 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      securityContext:
+        {{- include "cost-onprem.securityContext.pod.nonRoot" . | nindent 8 }}
       containers:
         - name: postgres
           image: "{{ .Values.database.server.image.repository }}:{{ .Values.database.server.image.tag }}"
@@ -109,6 +111,8 @@ spec:
             periodSeconds: {{ .Values.probes.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.timeoutSeconds }}
             failureThreshold: {{ .Values.probes.failureThreshold }}
+          securityContext:
+            {{- include "cost-onprem.securityContext.container" . | nindent 12 }}
           resources:
             {{- toYaml .Values.resources.database | nindent 12 }}
       volumes:
