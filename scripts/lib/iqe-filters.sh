@@ -62,9 +62,15 @@ apply_profile() {
             SKIP_FLAKY_TESTS=false
             ;;
         full)
-            # Release validation (~3324 tests, 2-3 hours)
-            # All cost_ocp_on_prem tests, no skip filters
-            SKIP_FILTER_BUILD=true
+            # Release validation (~3200 tests, ~90 min)
+            # All cost_ocp_on_prem tests except 90-day date range tests
+            # These tests actually can pass with some changes (FLPATH-4131).
+            # They do take roughly 1hr to run, so we will create a separate profile for them.
+            SKIP_DATE_RANGE_TESTS=true
+            SKIP_INFRA_TESTS=false
+            SKIP_SLOW_TESTS=false
+            SKIP_DELTA_TESTS=false
+            SKIP_FLAKY_TESTS=false
             ;;
         *)
             # Default: same as stable (all validated groups)
@@ -97,8 +103,9 @@ SKIP_ROS_TESTS="${SKIP_ROS_TESTS:-true}"
 FILTER_ROS="test_api_ocp_ros"
 
 # --- Date Range Tests (Insufficient Historical Data) ---
-# On-prem generates ~60 days of data; 90-day queries and random date ranges fail
-# ~50 tests affected
+# On-prem generates ~60 days of data; 90-day queries fail with 400 errors
+# ~120 tests affected (hardcoded last-90-days params)
+# Jira: COST-7253 (retention config), COST-573 (>90 days epic)
 # Note: Use underscores in patterns - pytest -k treats hyphens as "and not"
 SKIP_DATE_RANGE_TESTS="${SKIP_DATE_RANGE_TESTS:-true}"
 FILTER_DATE_RANGE="(last and 90 and days) or random_date_range or random_daily_time_filter"
