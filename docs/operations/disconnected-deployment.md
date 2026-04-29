@@ -54,7 +54,7 @@ the plan.
 
 The project CI uses a throwaway registry only as a destination for planning; you
 can mirror the same way. Example using the repository example
-[`imageset-config-cost-onprem.yaml`](../examples/disconnected/imageset-config-cost-onprem.yaml):
+[`imageset-config-cost-onprem.sample.yaml`](../examples/disconnected/imageset-config-cost-onprem.sample.yaml):
 
 ```bash
 cd /path/to/cost-onprem-chart
@@ -62,7 +62,7 @@ cd /path/to/cost-onprem-chart
 # Local registry as dry-run destination (same pattern as CI; stop/remove when done).
 podman run -d --name oc-mirror-registry -p 5050:5000 docker.io/library/registry:2
 
-oc-mirror --v2 --config docs/examples/disconnected/imageset-config-cost-onprem.yaml \
+oc-mirror --v2 --config docs/examples/disconnected/imageset-config-cost-onprem.sample.yaml \
   --workspace file:///tmp/oc-mirror-workspace \
   docker://localhost:5050 --dry-run --dest-tls-verify=false
 
@@ -89,21 +89,18 @@ instead.
 Reuse the example files under `docs/examples/disconnected/` (copy and edit as
 needed):
 
-| File | Purpose |
-|------|---------|
-| [`imageset-config-cost-onprem.yaml`](../examples/disconnected/imageset-config-cost-onprem.yaml) | cost-onprem Helm chart + `additionalImages` for hooks and optional `install-helm-chart.sh` S3 setup |
-| [`imageset-config-cost-onprem-with-prerequisites.sample.yaml`](../examples/disconnected/imageset-config-cost-onprem-with-prerequisites.sample.yaml) | Same as above plus **OLM** packages for **AMQ Streams** and **RHBK** (`deploy-kafka.sh`, `deploy-rhbk.sh`), `registry.redhat.io/rhel9/postgresql-15` used by `deploy-rhbk.sh`, and **ODF** optional lines commented |
+| File | Purpose | Use Case |
+|------|---------|----------|
+| [`imageset-config-cost-onprem.sample.yaml`](../examples/disconnected/imageset-config-cost-onprem.sample.yaml) | cost-onprem Helm chart + `additionalImages` for hooks and `install-helm-chart.sh` S3 setup | **Chart-only mirroring** — when OpenShift platform and operators are already available |
+| [`imageset-config-cost-onprem-with-prerequisites.sample.yaml`](../examples/disconnected/imageset-config-cost-onprem-with-prerequisites.sample.yaml) | **Complete deployment** — OpenShift 4.20.12 platform + cost-onprem + all operators (AMQ Streams, RHBK, Local Storage, ODF) | **Full disconnected environment** — mirrors everything for `deploy-kafka.sh`, `deploy-rhbk.sh`, and storage setup |
 
-In both files, set `mirror.helm.repositories[].charts[].version` to the chart
-release you mirror and install. The `additionalImages` section lists images that
-`oc-mirror` cannot discover from the Helm chart automatically (see
-[Discovering container images](#discovering-container-images)); keep it aligned
-with `.github/workflows/lint-and-validate.yml`.
+**Chart version:** Edit `mirror.helm.repositories[].charts[].version` in both files to match your target release.
 
-The prerequisites sample defaults to OpenShift **4.20**
-(`registry.redhat.io/redhat/redhat-operator-index:v4.20`). If your cluster is
-another minor version, change that catalog tag (and operator channels, including
-optional ODF) to match.
+**Platform version:** The comprehensive example targets OpenShift 4.20.12. Adjust `platform.channels[].minVersion/maxVersion` for your specific patch level.
+
+**Operator channels:** The comprehensive example uses tested operator channels for OpenShift 4.20. Verify channels exist for your OpenShift version in OperatorHub before mirroring.
+
+**Note:** The comprehensive example is a tested, working configuration that mirrors everything needed for a complete disconnected OpenShift deployment with cost-onprem.
 
 Copy one of the examples to `imageset-config.yaml` (or keep any path you
 prefer and pass it to `oc-mirror -c`).
@@ -150,9 +147,12 @@ This configures the cluster to pull images from the mirror registry instead of t
 Install the chart from the mirrored registry. Use the install script with the local chart:
 
 ```bash
-# Option A: Use the mirrored chart directly (--version must match mirrored chart)
-helm install cost-onprem oci://mirror.example.com:5000/cost-onprem/cost-onprem \
-  --version 0.2.20-rc3 \
+# Extract and install the mirrored chart (oc-mirror saves charts as .tgz files)
+# Find the extracted chart in mirror-output/
+tar -xzf mirror-output/*/charts/*.tgz
+
+# Option A: Install directly with Helm
+helm install cost-onprem ./cost-onprem \
   --namespace cost-onprem \
   --create-namespace
 
@@ -160,6 +160,8 @@ helm install cost-onprem oci://mirror.example.com:5000/cost-onprem/cost-onprem \
 USE_LOCAL_CHART=true LOCAL_CHART_PATH=./cost-onprem \
   ./scripts/install-helm-chart.sh
 ```
+
+> **Note:** `oc-mirror` mirrors container images but does not create OCI chart artifacts. The chart must be extracted from the `.tgz` file in the mirror output and installed as a local chart.
 
 The ICSP/IDMS applied in Step 5 ensures that all image pulls are redirected to the mirror registry automatically.
 

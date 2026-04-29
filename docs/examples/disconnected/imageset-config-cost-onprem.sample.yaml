@@ -24,8 +24,8 @@ mirror:
         url: https://insights-onprem.github.io/cost-onprem-chart
         charts:
           - name: cost-onprem
-            version: "0.2.20-rc3"
+            version: "0.2.20-rc4"
   additionalImages:
-    - name: quay.io/insights-onprem/postgresql:16
+    - name: registry.redhat.io/rhel10/postgresql-16:10.1
     # Only if using scripts/install-helm-chart.sh for S3 bucket creation:
     - name: amazon/aws-cli:latest

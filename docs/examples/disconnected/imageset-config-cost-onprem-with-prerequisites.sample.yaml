@@ -1,49 +1,64 @@
-# SAMPLE ImageSetConfiguration: cost-onprem Helm chart plus OLM content for
-# dependencies installed by this repository's scripts:
-#   - AMQ Streams: ./scripts/deploy-kafka.sh (Subscription name amq-streams)
-#   - RHBK:        ./scripts/deploy-rhbk.sh (Subscription name rhbk-operator)
-# Optional OpenShift Data Foundation (ODF) packages are commented below; use
-# them only if you deploy ODF for S3-compatible storage on the cluster.
+# COMPREHENSIVE ImageSetConfiguration: OpenShift 4.20 platform + cost-onprem + all prerequisites
 #
-# Before mirroring:
-# 1. This sample targets OpenShift 4.20 (redhat-operator-index:v4.20). Change
-#    the catalog tag if your cluster is a different minor version.
-# 2. Confirm package channels exist on your version (OperatorHub on a
-#    connected cluster, or Red Hat documentation for disconnected mirroring).
-# 3. Uncomment the odf-operator entry only when mirroring ODF; verify the
-#    channel name in OperatorHub for your release (example uses stable-4.20).
+# This configuration mirrors everything needed for a complete disconnected deployment:
+#   - OpenShift 4.20.12 platform images
+#   - cost-onprem Helm chart and container images
+#   - OLM operators for all deployment scripts:
+#     * AMQ Streams (deploy-kafka.sh)
+#     * RHBK (deploy-rhbk.sh)
+#     * Local Storage + ODF operators (for S3-compatible storage)
+#   - Additional images for hook-only containers and script dependencies
+#
+# Tested working configuration for OpenShift 4.20.
 #
 # Usage:
 #   oc-mirror --v2 -c imageset-config-cost-onprem-with-prerequisites.sample.yaml file://mirror-output
 #
-# Chart version: edit mirror.helm.repositories[].charts[].version as in
-# imageset-config-cost-onprem.yaml.
+# Before mirroring:
+# 1. Edit mirror.helm.repositories[].charts[].version to match your target chart release
+# 2. Adjust platform.channels[].minVersion/maxVersion for your specific OCP patch version
+# 3. Verify operator channels exist for your OpenShift version in OperatorHub
+#
 apiVersion: mirror.openshift.io/v2alpha1
 kind: ImageSetConfiguration
+# OCP 4.20: platform + redhat-operator-index + Marketplace index images + cost-onprem + RHODF-related operators + AMQ Streams.
 mirror:
+  platform:
+    architectures:
+      - amd64
+    graph: true
+    channels:
+      - name: stable-4.20
+        type: ocp
+        minVersion: 4.20.12
+        maxVersion: 4.20.12
   helm:
     repositories:
       - name: cost-onprem
         url: https://insights-onprem.github.io/cost-onprem-chart
         charts:
           - name: cost-onprem
-            version: "0.2.20-rc3"
+            version: "0.2.20-rc4"
+  additionalImages:
+    # PostgreSQL image used by both cost-onprem (Helm hook) and deploy-rhbk.sh (Keycloak DB):
+    - name: registry.redhat.io/rhel10/postgresql-16:10.1
+    # AWS CLI for S3 bucket creation (install-helm-chart.sh):
+    - name: docker.io/amazon/aws-cli:latest
   operators:
     - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.20
       packages:
         - name: amq-streams
           channels:
+            - name: stable
             - name: amq-streams-3.1.x
         - name: rhbk-operator
           channels:
             - name: stable-v22
-        # Optional — OpenShift Data Foundation (S3 via ODF). Uncomment and set
-        # channel to the value offered for your OpenShift version.
-        # - name: odf-operator
-        #   channels:
-        #     - name: stable-4.20
-  additionalImages:
-    - name: quay.io/insights-onprem/postgresql:16
-    # PostgreSQL Deployment created by scripts/deploy-rhbk.sh for Keycloak DB:
-    - name: registry.redhat.io/rhel9/postgresql-15:latest
-    - name: amazon/aws-cli:latest
+            - name: stable-v26.4
+        - name: local-storage-operator
+          channels:
+            - name: stable
+            - name: stable-4.20
+        - name: odf-operator
+          channels:
+            - name: stable-4.20
