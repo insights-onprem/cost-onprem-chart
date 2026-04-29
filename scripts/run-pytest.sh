@@ -59,8 +59,9 @@
 #   ./run-pytest.sh -m "smoke and auth"     # Custom marker expression
 #
 # Performance Testing (FLPATH-4036):
-#   Performance tests are excluded by default (marked as 'slow').
-#   Use --performance to run them explicitly.
+#   Performance tests are ALWAYS excluded by default to prevent them from
+#   running in CI chart test pipelines. Use --performance or --perf-* flags
+#   to run them explicitly.
 #
 #   Environment variables for performance tests:
 #     PERF_PROFILE                 Profile to use: baseline, small, medium, large, xlarge
@@ -415,18 +416,30 @@ main() {
     local pytest_args=()
 
     # Handle marker filtering
+    # Performance tests are ALWAYS excluded unless explicitly requested via --performance flags
+    # This prevents long-running perf tests from running during normal chart test CI
     if [[ "$ui_only" == "true" ]]; then
         # Run only UI tests
         pytest_args+=("-m" "ui")
     elif [[ ${#pytest_markers[@]} -gt 0 ]]; then
         local marker_expr
         marker_expr=$(IFS=" or "; echo "${pytest_markers[*]}")
-        pytest_args+=("-m" "$marker_expr")
+        # Check if this is a performance test request
+        if [[ "$marker_expr" == *"performance"* ]]; then
+            # Performance tests - use marker as-is
+            pytest_args+=("-m" "$marker_expr")
+        else
+            # Non-performance tests - exclude performance marker
+            pytest_args+=("-m" "($marker_expr) and not performance")
+        fi
     elif [[ "$exclude_ui" == "true" ]]; then
-        # Exclude UI tests when --no-ui is specified and no other markers
-        pytest_args+=("-m" "not ui")
+        # Exclude UI tests and performance tests when --no-ui is specified
+        pytest_args+=("-m" "not ui and not performance")
+    else
+        # Default: run all tests EXCEPT performance tests
+        # Performance tests must be explicitly requested via --performance flags
+        pytest_args+=("-m" "not performance")
     fi
-    # If no markers and no --no-ui, run all tests (including UI) - no -m flag needed
 
     # Add any extra arguments
     if [[ ${#pytest_extra_args[@]} -gt 0 ]]; then
