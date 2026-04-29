@@ -58,14 +58,14 @@ from api.models import Tenant
 from management.models import Group, Policy, Role, Principal
 from django.core.cache import cache
 
-username = '${USERNAME}'
-org_id = '${ORG_ID}'
-acct_number = '${ACCOUNT_NUMBER}'
+username = \"${USERNAME}\"
+org_id = \"${ORG_ID}\"
+acct_number = \"${ACCOUNT_NUMBER}\"
 
 public_tenant = Tenant.objects.get(tenant_name='public')
-cost_admin_role = Role.objects.filter(name='Cost Administrator', tenant=public_tenant).first()
-if not cost_admin_role:
-    print('ERROR: Cost Administrator role not found')
+admin_default_roles = Role.objects.filter(admin_default=True, tenant=public_tenant)
+if not admin_default_roles.exists():
+    print('ERROR: No admin_default roles found')
     raise SystemExit(1)
 
 tenant, created = Tenant.objects.get_or_create(
@@ -78,7 +78,7 @@ print(f'Tenant org_id={org_id}: {status}')
 grp, _ = Group.objects.get_or_create(
     name='Cost Admin Default', tenant=tenant,
     defaults={'admin_default': True, 'system': True,
-              'description': 'Admin default: grants Cost Administrator to bootstrap admin user'}
+              'description': 'Admin default: grants admin_default roles to bootstrap admin user'}
 )
 grp.admin_default = True
 grp.save()
@@ -86,7 +86,8 @@ grp.save()
 policy, _ = Policy.objects.get_or_create(
     name='Cost Admin Default Policy', tenant=tenant, group=grp
 )
-policy.roles.add(cost_admin_role)
+for role in admin_default_roles:
+    policy.roles.add(role)
 
 principal, _ = Principal.objects.get_or_create(
     username=username, tenant=tenant,
@@ -94,15 +95,21 @@ principal, _ = Principal.objects.get_or_create(
 )
 grp.principals.add(principal)
 
+role_names = list(admin_default_roles.values_list('name', flat=True))
 cache.clear()
-print(f'User \"{username}\" granted Cost Administrator for org={org_id}')
+print(f'User \"{username}\" granted {role_names} for org={org_id}')
 "
 
 echo ""
 echo "Running bootstrap_tenants for TenantMapping/V2 records..."
+set +e
 kubectl exec -n "${NAMESPACE}" "${RBAC_POD}" -- \
-  python /opt/rbac/rbac/manage.py bootstrap_tenants --org-id "${ORG_ID}" --force || \
-  echo "WARNING: bootstrap_tenants returned non-zero (non-fatal)"
+  python /opt/rbac/rbac/manage.py bootstrap_tenants --org-id "${ORG_ID}" --force
+bootstrap_rc=$?
+set -e
+if [ $bootstrap_rc -ne 0 ]; then
+  echo "WARNING: bootstrap_tenants exited with code $bootstrap_rc (non-fatal)"
+fi
 
 echo ""
 echo "=== RBAC admin sync complete ==="

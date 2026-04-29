@@ -80,7 +80,6 @@ for group in Group.objects.filter(platform_default=True):
         for role in policy.roles.all():
             has_cm = Access.objects.filter(role=role).filter(
                 Q(permission__application='cost-management')
-                | Q(permission__resource_type='*')
             ).exists()
             if has_cm:
                 policy.roles.remove(role)
