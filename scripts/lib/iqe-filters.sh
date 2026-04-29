@@ -34,10 +34,9 @@ TEST_PROFILE="${TEST_PROFILE:-}"
 apply_profile() {
     case "${TEST_PROFILE}" in
         smoke)
-            # Quick validation (~43 tests, ~17 min)
+            # Quick validation (~44 tests, ~17 min)
             # Uses positive -k filter to select source + cost model tests
-            # Excludes test_api_ocp_source_crud (backend 500 error on update)
-            SMOKE_FILTER="(test_api_ocp_source and not test_api_ocp_source_crud) or test_api_cost_model_ocp"
+            SMOKE_FILTER="test_api_ocp_source or test_api_cost_model_ocp"
             # Skip all optional groups for fastest run
             SKIP_INFRA_TESTS=true
             SKIP_SLOW_TESTS=true
@@ -126,7 +125,7 @@ FILTER_COST_DISTRIBUTION="test_api_cost_model_ocp_cost_distribution"
 # --- Source CRUD Update Test (Backend Bug) ---
 # Backend PATCH endpoint returns 500 error
 # 1 test affected
-SKIP_SOURCE_CRUD_TESTS="${SKIP_SOURCE_CRUD_TESTS:-true}"
+SKIP_SOURCE_CRUD_TESTS="${SKIP_SOURCE_CRUD_TESTS:-false}"
 FILTER_SOURCE_CRUD="test_api_ocp_source_crud"
 
 # --- Tag-Based Rates Update Test (COST-7179 related) ---
