@@ -193,7 +193,7 @@ def generate_and_upload_data(
         return {
             "cluster_id": cluster_id,
             "source_name": source_name,
-            "csv_file_count": len(csv_files),
+            "csv_file_count": total_files,
             "package_size_mb": round(package_size_mb, 3),
             "generation_seconds": round(gen_duration, 3),
             "packaging_seconds": round(package_duration, 3),
@@ -865,6 +865,7 @@ class TestIngestionThroughput:
     def test_perf_ing_006_processing_window_validation(
         self,
         cluster_config: ClusterConfig,
+        database_config,
         perf_timer: PerfTimer,
         perf_result: PerformanceResult,
         perf_collector: PerfResultCollector,
@@ -981,9 +982,8 @@ class TestIngestionThroughput:
                     try:
                         wait_for_summary_tables(
                             self.namespace,
+                            database_config.pod_name,
                             cluster_id,
-                            koku_api_url,
-                            rh_identity_header,
                             timeout=1800,  # 30 min per source
                         )
                     except Exception as e:
