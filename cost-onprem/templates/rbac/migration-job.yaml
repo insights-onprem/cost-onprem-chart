@@ -70,7 +70,7 @@ spec:
 
             public_tenant = Tenant.objects.get(tenant_name='public')
 
-            perms = [
+            cm_perms = [
                 ("aws.account", "*"), ("aws.account", "read"),
                 ("aws.organizational_unit", "*"), ("aws.organizational_unit", "read"),
                 ("azure.subscription_guid", "*"), ("azure.subscription_guid", "read"),
@@ -85,21 +85,31 @@ spec:
             ]
 
             perm_count = 0
-            for res, verb in perms:
+            for res, verb in cm_perms:
                 _, created = Permission.objects.get_or_create(
                     application="cost-management", resource_type=res, verb=verb,
                     defaults={"permission": f"cost-management:{res}:{verb}", "tenant": public_tenant}
                 )
                 if created:
                     perm_count += 1
-            print(f"Seeded {perm_count} cost-management permissions")
 
+            # Sources permission (from RedHatInsights/rbac-config configs/prod/roles/sources.json)
+            _, created = Permission.objects.get_or_create(
+                application="sources", resource_type="*", verb="*",
+                defaults={"permission": "sources:*:*", "tenant": public_tenant}
+            )
+            if created:
+                perm_count += 1
+            print(f"Seeded {perm_count} permissions")
+
+            # cost-management roles (application, admin_default, platform_default, access as app:res:verb)
             roles = [
-                ("Cost Administrator", "Perform any available operation on cost management resources.", True, False, ["*:*"]),
-                ("Cost Price List Administrator", "Perform read and write operations on cost models.", False, False, ["cost_model:*", "settings:*"]),
-                ("Cost Price List Viewer", "Perform read operations on cost models.", False, False, ["cost_model:read", "settings:read"]),
-                ("Cost Cloud Viewer", "Perform read operations on cost reports related to cloud sources.", False, False, ["aws.account:*", "aws.organizational_unit:*", "azure.subscription_guid:*", "gcp.account:*", "gcp.project:*"]),
-                ("Cost OpenShift Viewer", "Perform read operations on cost reports related to OpenShift sources.", False, False, ["openshift.cluster:*"]),
+                ("Cost Administrator", "Perform any available operation on cost management resources.", True, False, [("cost-management", "*", "*")]),
+                ("Cost Price List Administrator", "Perform read and write operations on cost models.", False, False, [("cost-management", "cost_model", "*"), ("cost-management", "settings", "*")]),
+                ("Cost Price List Viewer", "Perform read operations on cost models.", False, False, [("cost-management", "cost_model", "read"), ("cost-management", "settings", "read")]),
+                ("Cost Cloud Viewer", "Perform read operations on cost reports related to cloud sources.", False, False, [("cost-management", "aws.account", "*"), ("cost-management", "aws.organizational_unit", "*"), ("cost-management", "azure.subscription_guid", "*"), ("cost-management", "gcp.account", "*"), ("cost-management", "gcp.project", "*")]),
+                ("Cost OpenShift Viewer", "Perform read operations on cost reports related to OpenShift sources.", False, False, [("cost-management", "openshift.cluster", "*")]),
+                ("Sources administrator", "Perform any available operation on any source.", True, False, [("sources", "*", "*")]),
             ]
 
             role_count = 0
@@ -110,13 +120,12 @@ spec:
                 )
                 if created:
                     role_count += 1
-                for perm_suffix in access_list:
-                    res, verb = perm_suffix.split(":")
-                    perm = Permission.objects.get(application="cost-management", resource_type=res, verb=verb, tenant=public_tenant)
+                for app, res, verb in access_list:
+                    perm = Permission.objects.get(application=app, resource_type=res, verb=verb, tenant=public_tenant)
                     Access.objects.get_or_create(role=role, permission=perm, defaults={"tenant": public_tenant})
 
-            print(f"Seeded {role_count} cost-management roles (total: {Role.objects.count()})")
-            print("Cost-management RBAC seeding complete.")
+            print(f"Seeded {role_count} roles (total: {Role.objects.count()})")
+            print("RBAC seeding complete.")
             SEED_SCRIPT
             echo "✓ Cost-management seeding complete"
 
@@ -126,9 +135,11 @@ spec:
             from management.models import Group, Policy, Role
 
             public_tenant = Tenant.objects.get(tenant_name='public')
-            cost_admin_role = Role.objects.filter(name='Cost Administrator', tenant=public_tenant).first()
-            if not cost_admin_role:
-                print("WARNING: Cost Administrator role not found, skipping admin_default group")
+            admin_default_roles = Role.objects.filter(
+                admin_default=True, tenant=public_tenant
+            )
+            if not admin_default_roles.exists():
+                print("WARNING: No admin_default roles found, skipping admin_default group")
             else:
                 user_tenants = Tenant.objects.exclude(tenant_name='public').filter(org_id__isnull=False)
                 count = 0
@@ -136,16 +147,18 @@ spec:
                     grp, _ = Group.objects.get_or_create(
                         name='Cost Admin Default', tenant=tenant,
                         defaults={'admin_default': True, 'system': True,
-                                  'description': 'Admin default: grants Cost Administrator to is_org_admin users'}
+                                  'description': 'Admin default: grants admin_default roles to is_org_admin users'}
                     )
                     grp.admin_default = True
                     grp.save()
                     policy, _ = Policy.objects.get_or_create(
                         name='Cost Admin Default Policy', tenant=tenant, group=grp
                     )
-                    policy.roles.add(cost_admin_role)
+                    for role in admin_default_roles:
+                        policy.roles.add(role)
                     count += 1
-                print(f"Created/updated admin_default group for {count} tenant(s)")
+                role_names = list(admin_default_roles.values_list('name', flat=True))
+                print(f"Created/updated admin_default group for {count} tenant(s) with roles: {role_names}")
             ADMIN_DEFAULT_SCRIPT
             echo "✓ Admin default group seeding complete"
 

@@ -465,11 +465,10 @@ class TestAuthenticationErrors:
     def test_non_admin_source_creation(
         self, pod_session_no_auth: requests.Session, koku_api_url: str, invalid_identity_headers
     ):
-        """Verify non-admin source creation behaviour.
+        """Verify non-admin source creation is denied by RBAC.
 
-        When RBAC is deployed, the sources endpoint allows source creation for
-        any authenticated user with a valid identity (201). Without RBAC, Koku
-        returns 424 (Failed Dependency) or 403.
+        With RBAC deployed, a non-admin user without sources:*:* permission
+        should be denied (403). If RBAC is unreachable, Koku returns 424.
         """
         response = pod_session_no_auth.post(
             f"{koku_api_url}/sources",
@@ -484,8 +483,8 @@ class TestAuthenticationErrors:
             },
         )
 
-        assert response.status_code in (201, 403, 424), (
-            f"Expected 201 (allowed), 403 (RBAC denied), or 424 (RBAC unavailable), "
+        assert response.status_code in (403, 424), (
+            f"Expected 403 (RBAC denied) or 424 (RBAC unavailable), "
             f"got {response.status_code}: {response.text[:200]}"
         )
 

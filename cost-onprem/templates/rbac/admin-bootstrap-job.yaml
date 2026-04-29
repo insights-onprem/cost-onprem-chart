@@ -73,9 +73,9 @@ spec:
             acct_number = "${BOOTSTRAP_ACCOUNT_NUMBER}"
 
             public_tenant = Tenant.objects.get(tenant_name='public')
-            cost_admin_role = Role.objects.filter(name='Cost Administrator', tenant=public_tenant).first()
-            if not cost_admin_role:
-                print("ERROR: Cost Administrator role not found — migration job may not have completed")
+            admin_default_roles = Role.objects.filter(admin_default=True, tenant=public_tenant)
+            if not admin_default_roles.exists():
+                print("ERROR: No admin_default roles found — migration job may not have completed")
                 raise SystemExit(1)
 
             tenant, created = Tenant.objects.get_or_create(
@@ -90,7 +90,7 @@ spec:
             grp, _ = Group.objects.get_or_create(
                 name='Cost Admin Default', tenant=tenant,
                 defaults={'admin_default': True, 'system': True,
-                          'description': 'Admin default: grants Cost Administrator to bootstrap admin user'}
+                          'description': 'Admin default: grants admin_default roles to bootstrap admin user'}
             )
             grp.admin_default = True
             grp.save()
@@ -98,7 +98,8 @@ spec:
             policy, _ = Policy.objects.get_or_create(
                 name='Cost Admin Default Policy', tenant=tenant, group=grp
             )
-            policy.roles.add(cost_admin_role)
+            for role in admin_default_roles:
+                policy.roles.add(role)
 
             principal, _ = Principal.objects.get_or_create(
                 username=username, tenant=tenant,
@@ -106,8 +107,9 @@ spec:
             )
             grp.principals.add(principal)
 
+            role_names = list(admin_default_roles.values_list('name', flat=True))
             cache.clear()
-            print(f"✓ User '{username}' granted Cost Administrator for org={org_id}")
+            print(f"✓ User '{username}' granted {role_names} for org={org_id}")
             BOOTSTRAP_SCRIPT
             echo "✓ Admin user bootstrap complete"
 
