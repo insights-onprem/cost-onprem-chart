@@ -24,8 +24,9 @@ mirror:
         url: https://insights-onprem.github.io/cost-onprem-chart
         charts:
           - name: cost-onprem
-            version: "0.2.20-rc4"
+            version: "0.2.20-rc3"
   additionalImages:
+    # PostgreSQL image used by both cost-onprem (Helm hook) and deploy-rhbk.sh (Keycloak DB):
     - name: registry.redhat.io/rhel10/postgresql-16:10.1
     # Only if using scripts/install-helm-chart.sh for S3 bucket creation:
-    - name: amazon/aws-cli:latest
+    - name: docker.io/amazon/aws-cli:latest
