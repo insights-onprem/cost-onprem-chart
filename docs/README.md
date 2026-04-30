@@ -12,6 +12,7 @@ docs/
 ├── operations/       # Installation, configuration, troubleshooting
 ├── api/             # Authentication, authorization, API guides
 ├── development/     # Testing, validation, development resources
+├── performance/     # Performance testing, sizing, findings
 └── README.md        # This file - documentation index and navigation
 ```
 
@@ -89,6 +90,16 @@ Testing guides, validation procedures, and development resources.
 | **[OCP Dev Setup with S4](development/ocp-dev-setup-s4.md)** | Set up a dev environment on OCP using S4 instead of ODF |
 | **[UI OAuth Testing](development/ui-oauth-testing.md)** | Guide for testing UI OAuth flow with Keycloak |
 
+### 📊 Performance
+Performance testing, sizing recommendations, and findings.
+
+| Document | Purpose |
+|----------|---------|
+| **[Performance Testing Plan](performance/performance-testing-plan.md)** | Comprehensive testing strategy for FLPATH-4036 |
+| **[Test Matrix](performance/TEST-MATRIX.md)** | Complete test matrix with all permutations and parameters |
+| **[Sizing Guide](performance/sizing-guide.md)** | Resource sizing recommendations by deployment scale |
+| **[Findings](performance/FINDINGS.md)** | Issues discovered during testing with Jira-ready summaries |
+
 ---
 
 ## 🚀 Quick Navigation by Use Case
@@ -144,6 +155,7 @@ For detailed information about each document's purpose, use cases, and key topic
 - **[operations/](operations/)** - Installation, configuration, deployment, and operational guides
 - **[api/](api/)** - Authentication, authorization, and API integration documentation
 - **[development/](development/)** - Testing, validation, and development resources
+- **[performance/](performance/)** - Performance testing, sizing recommendations, and findings
 
 ---
 
