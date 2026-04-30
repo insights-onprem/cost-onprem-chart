@@ -62,10 +62,9 @@ apply_profile() {
             SKIP_FLAKY_TESTS=false
             ;;
         full)
-            # Release validation (~3200 tests, ~90 min)
-            # All cost_ocp_on_prem tests except 90-day date range tests
-            # These tests actually can pass with some changes (FLPATH-4131).
-            # They do take roughly 1hr to run, so we will create a separate profile for them.
+            # Release validation (~2350 tests, ~55 min)
+            # All cost_ocp_on_prem tests except 90-day date range tests (~120 tests)
+            # 90-day tests require RETAIN_NUM_MONTHS=4 in chart (FLPATH-4131, COST-7253)
             SKIP_DATE_RANGE_TESTS=true
             SKIP_INFRA_TESTS=false
             SKIP_SLOW_TESTS=false

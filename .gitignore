@@ -39,4 +39,3 @@ version_info.json
 reports/junit.xml
 **/*.json.gz
 debug-exports/**/*
-docs/development/*.md
