@@ -2,24 +2,68 @@
 # Check for component updates in values.yaml
 # Used by .github/workflows/check-components.yml
 #
-# Usage: MODE=check-updates ./check-components.sh
+# Usage: MODE=detect-updates ./check-components.sh
 #        MODE=list-versions ./check-components.sh
 #        MODE=deployment-info ./check-components.sh
 #
+# Modes:
+#   detect-updates: Check for changes, update component-updates.json (default)
+#   list-versions:  Report current digests and last modified dates
+#   deployment-info: Output deployment metadata for CI traceability
+#
 # Outputs (via GITHUB_OUTPUT if set):
-#   mode, has_updates, updates, versions, digests_json
-#   For deployment-info mode: helm_chart_version, app_version, git_sha, git_branch, deployment_timestamp
+#   mode, has_updates, updates_summary
+#   For deployment-info mode: helm_chart_version, git_sha, git_branch, etc.
+#
+# Expected runtime: 30-60 seconds (Quay API calls)
 
 set -euo pipefail
 
-VALUES_FILE="${VALUES_FILE:-cost-onprem/values.yaml}"
-CHART_FILE="${CHART_FILE:-cost-onprem/Chart.yaml}"
-CACHE_DIR="${CACHE_DIR:-.digest-cache}"
-MODE="${MODE:-check-updates}"
+# --- Constants and defaults ------------------------------------------------
+
+readonly DEFAULT_VALUES_FILE="cost-onprem/values.yaml"
+readonly DEFAULT_CHART_FILE="cost-onprem/Chart.yaml"
+readonly DEFAULT_CACHE_DIR=".digest-cache"
+readonly DEFAULT_UPDATES_FILE="component-updates.json"
+readonly DEFAULT_MODE="detect-updates"
+
+# Allow overrides via environment variables
+VALUES_FILE="${VALUES_FILE:-${DEFAULT_VALUES_FILE}}"
+CHART_FILE="${CHART_FILE:-${DEFAULT_CHART_FILE}}"
+CACHE_DIR="${CACHE_DIR:-${DEFAULT_CACHE_DIR}}"
+UPDATES_FILE="${UPDATES_FILE:-${DEFAULT_UPDATES_FILE}}"
+MODE="${MODE:-${DEFAULT_MODE}}"
 
 mkdir -p "$CACHE_DIR"
 
-# Output helpers
+# --- Logging helpers -------------------------------------------------------
+
+log()  { echo "==> $*"; }
+info() { echo "    $*"; }
+err()  { echo "ERROR: $*" >&2; }
+
+# --- Cleanup handlers ------------------------------------------------------
+
+TEMP_FILES=()
+
+cleanup() {
+    local exit_code=$?
+    if [[ ${#TEMP_FILES[@]} -gt 0 ]]; then
+        for temp_file in "${TEMP_FILES[@]}"; do
+            [[ -f "$temp_file" ]] && rm -f "$temp_file"
+        done
+    fi
+    return $exit_code
+}
+
+trap cleanup EXIT INT TERM
+
+# --- Helper functions ------------------------------------------------------
+
+# Output a variable to GITHUB_OUTPUT or stdout
+# Args:
+#   $1 - variable name
+#   $2 - variable value
 output_var() {
     local name="$1"
     local value="$2"
@@ -30,6 +74,10 @@ output_var() {
     fi
 }
 
+# Output a multi-line variable to GITHUB_OUTPUT or stdout
+# Args:
+#   $1 - variable name
+#   $2 - variable value (may contain newlines)
 output_multiline() {
     local name="$1"
     local value="$2"
@@ -157,16 +205,10 @@ extract_images() {
 extract_all_components() {
     local components_json="{"
     local first=true
-    local current_section=""
     local repo=""
     local tag=""
     
     while IFS= read -r line; do
-        # Track section headers (e.g., koku:, ros:, ingress:)
-        if [[ "$line" =~ ^[a-zA-Z][a-zA-Z0-9_-]*:$ ]] && [[ ! "$line" =~ ^[[:space:]] ]]; then
-            current_section="${line%:}"
-        fi
-        
         # Match image repository
         if [[ "$line" =~ repository:\ *(.+) ]]; then
             repo="${BASH_REMATCH[1]//\"/}"
@@ -201,66 +243,181 @@ extract_all_components() {
     echo "$components_json"
 }
 
-output=""
-has_updates="false"
-digests_json="{"
-first_digest=true
+# Resolve a latest digest to a concrete (non-latest) tag via Quay API.
+# Returns the tag name on stdout, or empty string if no match found.
+resolve_concrete_tag() {
+    local repo_path="$1"
+    local target_digest="$2"
 
-while IFS= read -r image; do
-    [[ -z "$image" ]] && continue
-    
-    # Only check quay.io images
-    if [[ "$image" == quay.io/* ]]; then
+    local api_url="https://quay.io/api/v1/repository/${repo_path}/tag/?limit=50"
+    local response
+    response=$(curl -sf --connect-timeout 10 --max-time 30 "$api_url" 2>/dev/null) || return 0
+
+    echo "$response" | jq -r --arg digest "$target_digest" \
+        '[.tags[] | select(.manifest_digest == $digest and .name != "latest")] | first | .name // empty'
+}
+
+
+# detect-updates mode: detect changes, update component-updates.json, output summary.
+# Does NOT modify values.yaml or Chart.yaml - version bumps are left to reviewers.
+run_detect_updates() {
+    local summary=""
+    local has_updates="false"
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    # Load existing component-updates.json or initialize
+    local existing_json="{}"
+    if [[ -f "$UPDATES_FILE" ]]; then
+        existing_json=$(cat "$UPDATES_FILE")
+    fi
+
+    # Build new pending_updates array
+    local pending_updates="[]"
+
+    while IFS= read -r image; do
+        [[ -z "$image" ]] && continue
+        [[ "$image" != quay.io/* ]] && continue
+
         repo_path="${image#quay.io/}"
         cache_file="$CACHE_DIR/${repo_path//\//_}.digest"
         api_url="https://quay.io/api/v1/repository/${repo_path}/tag/?limit=1&specificTag=latest"
-        
+
+        response=$(curl -sf --connect-timeout 10 --max-time 30 "$api_url" 2>/dev/null) || continue
+        current_digest=$(echo "$response" | jq -r '.tags[0].manifest_digest // empty')
+        [[ -z "$current_digest" ]] && continue
+
+        previous_digest=""
+        if [[ -f "$cache_file" ]]; then
+            previous_digest=$(cat "$cache_file")
+        fi
+
+        # Get current tag in values.yaml
+        local current_tag
+        current_tag=$(awk -v repo="$image" '
+            /repository:/ && index($0, repo) { found=1; next }
+            found && /tag:/ { gsub(/.*tag:[ \t]*/, ""); gsub(/["'\'']/, ""); print; found=0 }
+        ' "$VALUES_FILE")
+
+        if [[ "$current_digest" != "$previous_digest" ]] || [[ -z "$previous_digest" ]]; then
+            local concrete_tag
+            concrete_tag=$(resolve_concrete_tag "$repo_path" "$current_digest")
+
+            if [[ -z "$concrete_tag" ]]; then
+                log "WARNING: Could not resolve concrete tag for $image (digest: ${current_digest:0:20}...)"
+                echo "$current_digest" > "$cache_file"
+                continue
+            fi
+
+            # Skip if values.yaml already has this tag (manually updated)
+            if [[ "$current_tag" == "$concrete_tag" ]]; then
+                info "SKIP: $image already at $concrete_tag"
+                echo "$current_digest" > "$cache_file"
+                continue
+            fi
+
+            local component_name
+            component_name=$(basename "$image")
+            has_updates="true"
+
+            # Add to pending_updates array
+            pending_updates=$(echo "$pending_updates" | jq \
+                --arg img "$image" \
+                --arg old "$current_tag" \
+                --arg new "$concrete_tag" \
+                --arg digest "$current_digest" \
+                --arg ts "$timestamp" \
+                '. + [{
+                    "image": $img,
+                    "current_tag": $old,
+                    "latest_tag": $new,
+                    "digest": $digest,
+                    "detected_at": $ts,
+                    "test_status": "pending"
+                }]')
+
+            summary="${summary}| ${component_name} | ${current_tag} | ${concrete_tag} |\n"
+            log "DETECTED: $image: $current_tag -> $concrete_tag"
+
+            echo "$current_digest" > "$cache_file"
+        fi
+    done < <(extract_images)
+
+    if [[ "$has_updates" == "true" ]]; then
+        # Update component-updates.json
+        local new_json
+        new_json=$(jq -n \
+            --argjson pending "$pending_updates" \
+            --arg updated "$timestamp" \
+            '{
+                "last_check": $updated,
+                "pending_updates": $pending,
+                "update_history": []
+            }')
+
+        # Preserve update_history from existing file if present
+        if echo "$existing_json" | jq -e '.update_history' > /dev/null 2>&1; then
+            new_json=$(echo "$new_json" | jq \
+                --argjson history "$(echo "$existing_json" | jq '.update_history')" \
+                '.update_history = $history')
+        fi
+
+        echo "$new_json" | jq '.' > "$UPDATES_FILE"
+        log "Updated $UPDATES_FILE with ${#pending_updates[@]} pending updates"
+
+        output_var "has_updates" "true"
+
+        local full_summary
+        full_summary="| Component | Current Tag | Latest Tag |\n|-----------|-------------|------------|"
+        full_summary="${full_summary}\n${summary}"
+        output_multiline "updates_summary" "$full_summary"
+    else
+        output_var "has_updates" "false"
+        log "All components are up to date"
+    fi
+}
+
+# list-versions: iterate images, report current digests and last modified dates
+run_list_versions() {
+    local output=""
+
+    while IFS= read -r image; do
+        [[ -z "$image" ]] && continue
+        [[ "$image" != quay.io/* ]] && continue
+
+        repo_path="${image#quay.io/}"
+        api_url="https://quay.io/api/v1/repository/${repo_path}/tag/?limit=1&specificTag=latest"
+
         response=$(curl -sf --connect-timeout 10 --max-time 30 "$api_url" 2>/dev/null) || continue
         current_digest=$(echo "$response" | jq -r '.tags[0].manifest_digest // empty')
         last_modified=$(echo "$response" | jq -r '.tags[0].last_modified // empty')
-        
+
         [[ -z "$current_digest" ]] && continue
-        
-        if [[ "$MODE" == "list-versions" ]]; then
-            output="${output}${image}:latest\n  digest: ${current_digest}\n  updated: ${last_modified}\n\n"
-        else
-            if [[ -f "$cache_file" ]]; then
-                previous_digest=$(cat "$cache_file")
-                if [[ "$current_digest" != "$previous_digest" ]]; then
-                    output="${output}${image}:latest (digest changed)\n"
-                    has_updates="true"
-                    
-                    # Build digests JSON incrementally
-                    if [[ "$first_digest" == "true" ]]; then
-                        first_digest=false
-                    else
-                        digests_json+=","
-                    fi
-                    digests_json+="\"$image\":\"$current_digest\""
-                fi
-            fi
-            echo "$current_digest" > "$cache_file"
-        fi
-    fi
-done < <(extract_images)
 
-digests_json+="}"
+        output="${output}${image}:latest\n  digest: ${current_digest}\n  updated: ${last_modified}\n\n"
+    done < <(extract_images)
 
-# Output results
-output_var "mode" "$MODE"
-
-if [[ "$MODE" == "deployment-info" ]]; then
-    get_deployment_info
-elif [[ "$MODE" == "list-versions" ]]; then
-    # Also include deployment info when listing versions
     get_deployment_info
     echo ""
     output_multiline "versions" "$output"
-elif [[ "$has_updates" == "true" ]]; then
-    output_var "has_updates" "true"
-    output_multiline "updates" "$output"
-    output_var "digests_json" "$digests_json"
-else
-    output_var "has_updates" "false"
-    echo "All components are up to date"
-fi
+}
+
+# --- Mode dispatch ---
+output_var "mode" "$MODE"
+
+case "$MODE" in
+    detect-updates)
+        run_detect_updates
+        ;;
+    deployment-info)
+        get_deployment_info
+        ;;
+    list-versions)
+        run_list_versions
+        ;;
+    *)
+        err "Unknown mode: $MODE"
+        err "Valid modes: detect-updates, list-versions, deployment-info"
+        exit 1
+        ;;
+esac
