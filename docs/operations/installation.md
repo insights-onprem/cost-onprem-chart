@@ -10,6 +10,8 @@ Complete installation methods, prerequisites, and upgrade procedures for the Cos
 - [OpenShift Prerequisites](#openshift-prerequisites)
 - [Upgrade Procedures](#upgrade-procedures)
 - [Verification](#verification)
+  - [RBAC Verification](#rbac-verification)
+  - [Post-Install: RBAC User Setup](#post-install-rbac-user-setup)
 - [Resource Requirements by Component](#resource-requirements-by-component)
 - [E2E Validation (OCP Dataflow)](#e2e-validation-ocp-dataflow)
 - [Troubleshooting Installation](#troubleshooting-installation)
@@ -739,6 +741,80 @@ oc rsh -n cost-onprem deployment/cost-onprem-ingress -- \
   aws s3 ls --endpoint-url https://<your-s3-endpoint>
 ```
 
+### RBAC Verification
+
+```bash
+# Verify RBAC migration job completed successfully
+kubectl get jobs -n cost-onprem | grep rbac-migration
+
+# Check RBAC API is running
+kubectl get pods -l app.kubernetes.io/component=rbac-api -n cost-onprem
+
+# Verify seeded roles exist
+RBAC_POD=$(kubectl get pod -l app.kubernetes.io/component=rbac-api -n cost-onprem -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -it $RBAC_POD -n cost-onprem -- \
+  python manage.py shell -c "from management.models import Role; roles = Role.objects.filter(name__startswith='Cost'); print(f'Cost roles: {[r.name for r in roles]}')"
+
+# Test RBAC API status endpoint
+kubectl exec -it $RBAC_POD -n cost-onprem -- \
+  curl -s http://localhost:8000/api/rbac/v1/status/ | python3 -m json.tool
+
+# Verify Koku can reach RBAC
+KOKU_POD=$(kubectl get pod -l app.kubernetes.io/component=koku-api -n cost-onprem -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -it $KOKU_POD -n cost-onprem -- \
+  curl -s http://cost-onprem-rbac-api:8000/api/rbac/v1/status/
+
+# Verify ROS API started with RBAC enabled (wait-for-rbac init container should have completed)
+kubectl get pods -l app.kubernetes.io/component=ros-api -n cost-onprem -o jsonpath='{.items[0].status.initContainerStatuses[*].name}'
+# Expected output includes: wait-for-database wait-for-kafka wait-for-rbac
+
+# Verify ROS API has RBAC env vars injected
+ROS_POD=$(kubectl get pod -l app.kubernetes.io/component=ros-api -n cost-onprem -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -it $ROS_POD -n cost-onprem -- env | grep -E 'RBAC_ENABLE|RBACHOST|RBACPORT|RBACPROTOCOL'
+# Expected: RBAC_ENABLE=true, RBACHOST=..., RBACPORT=8000, RBACPROTOCOL=http
+```
+
+### Post-Install: RBAC User Setup
+
+After verifying the deployment, configure user access so that API calls are authorized (without RBAC permissions, authenticated users receive 403 on all endpoints):
+
+**Option A: Automatic bootstrap via Helm (recommended)**
+
+If you created a Keycloak user with `deploy-rhbk.sh` (or manually with matching `org_id` / `account_number` attributes), enable the bootstrap hook to grant Cost Administrator automatically:
+
+```bash
+helm upgrade cost-onprem ./cost-onprem -n cost-onprem \
+  --set rbac.bootstrapAdmin.enabled=true
+```
+
+The defaults (`username=admin`, `orgId=org1234567`, `accountNumber=7890123`) match the user created by `deploy-rhbk.sh`. Override them if your Keycloak user has different attributes:
+
+```bash
+helm upgrade cost-onprem ./cost-onprem -n cost-onprem \
+  --set rbac.bootstrapAdmin.enabled=true \
+  --set rbac.bootstrapAdmin.username=alice \
+  --set rbac.bootstrapAdmin.orgId=myorg123 \
+  --set rbac.bootstrapAdmin.accountNumber=9999999
+```
+
+The hook is idempotent — safe to leave enabled across upgrades.
+
+**Option B: Manual sync script**
+
+```bash
+NAMESPACE=cost-onprem ./scripts/sync-rbac-admin.sh
+```
+
+See `./scripts/sync-rbac-admin.sh --help` for custom username/org options.
+
+**Next steps:**
+
+1. **Create additional users in Keycloak** with `org_id` and `account_number` attributes
+2. **Assign roles via RBAC groups** — see the [RBAC Setup Guide](rbac-setup.md) for detailed instructions
+3. **Flush caches** after making permission changes for immediate effect
+
+For a complete walkthrough of RBAC configuration, user management, and troubleshooting, see the [RBAC Setup and Operations Guide](rbac-setup.md).
+
 ---
 
 ## Resource Requirements by Component
@@ -753,7 +829,9 @@ oc rsh -n cost-onprem deployment/cost-onprem-ingress -- \
 |-----------|------|-------------|-----------|----------------|--------------|
 | **PostgreSQL** | 1 | 500m | 1000m | 1Gi | 2Gi |
 | **Valkey** | 1 | 100m | 500m | 256Mi | 512Mi |
-| **Subtotal** | **2** | **600m** | **1.5 cores** | **1.25 GB** | **2.5 GB** |
+| **RBAC API** | 1 | 200m | 500m | 512Mi | 1Gi |
+| **RBAC Worker** | 1 | 100m | 500m | 512Mi | 2Gi |
+| **Subtotal** | **4** | **900m** | **2.5 cores** | **2.25 GB** | **5.5 GB** |
 
 ### Application Components
 

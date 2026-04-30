@@ -362,6 +362,15 @@ Common environment variables for Koku API and Celery
   value: {{ .Values.costManagement.reportDownloadSchedule | default "*/5 * * * *" | quote }}
 - name: POLLING_TIMER
   value: {{ .Values.costManagement.celery.pollingTimer | default "86400" | quote }}
+# RBAC v1 authorization backend connection
+- name: RBAC_SERVICE_HOST
+  value: {{ include "cost-onprem.rbac.serviceHost" . | quote }}
+- name: RBAC_SERVICE_PORT
+  value: {{ include "cost-onprem.rbac.service.port" . | quote }}
+- name: RBAC_SERVICE_PATH
+  value: "/api/rbac/v1/access/"
+- name: RBAC_SERVICE_PROTOCOL
+  value: "http"
 {{- end -}}
 
 {{/*

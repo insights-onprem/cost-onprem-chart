@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cost-onprem.rbac.api.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-onprem.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac-api
+spec:
+  replicas: {{ .Values.rbac.api.replicas }}
+  selector:
+    matchLabels:
+      {{- include "cost-onprem.rbac.api.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cost-onprem.labels" . | nindent 8 }}
+        app.kubernetes.io/component: rbac-api
+    spec:
+      automountServiceAccountToken: false
+
+      securityContext:
+        {{- include "cost-onprem.securityContext.pod.nonRoot" . | nindent 8 }}
+
+      initContainers:
+        {{- include "cost-onprem.initContainer.waitForDb" (list . "rbac") | nindent 8 }}
+        {{- include "cost-onprem.initContainer.waitForValkey" . | nindent 8 }}
+
+      containers:
+      - name: rbac-api
+        image: "{{ include "cost-onprem.rbac.image" . }}"
+        imagePullPolicy: {{ .Values.rbac.image.pullPolicy }}
+        workingDir: /opt/rbac/rbac
+
+        command: ["gunicorn"]
+        args:
+          - "rbac.wsgi"
+          - "--bind=0.0.0.0:{{ include "cost-onprem.rbac.service.port" . }}"
+          - "--workers=2"
+          - "--threads=2"
+          - "--timeout=120"
+          - "--access-logfile=-"
+
+        ports:
+        - name: http
+          containerPort: {{ include "cost-onprem.rbac.service.port" . }}
+          protocol: TCP
+
+        env:
+        {{- include "cost-onprem.rbac.commonEnv" . | nindent 8 }}
+        {{- if .Values.rbac.roleCreateAllowList }}
+        - name: ROLE_CREATE_ALLOW_LIST
+          value: {{ .Values.rbac.roleCreateAllowList | quote }}
+        {{- end }}
+
+        livenessProbe:
+          httpGet:
+            path: /api/rbac/v1/status/
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 5
+
+        readinessProbe:
+          httpGet:
+            path: /api/rbac/v1/status/
+            port: http
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        resources:
+          {{- toYaml .Values.rbac.api.resources | nindent 10 }}
+
+        securityContext:
+          {{- include "cost-onprem.securityContext.container" . | nindent 10 }}

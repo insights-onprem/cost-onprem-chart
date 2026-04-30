@@ -4,6 +4,7 @@
 # This chart deploys the complete Cost Management on-premise solution:
 # - ROS (Resource Optimization Service)
 # - Cost Management Service (Koku and Sources API)
+# - RBAC v1 Authorization Service (insights-rbac)
 # - Shared infrastructure (PostgreSQL, Kafka, Valkey, S3 object storage)
 #
 # Naming conventions:
@@ -62,8 +63,6 @@ ros:
     metricsPort: 9000
     pathPrefix: /api
 
-    # Service-specific configuration
-    rbacEnabled: false # RBAC is not supported yet
     dbPoolSize: 10
     dbMaxOverflow: 20
     serviceName: ros-api
@@ -194,7 +193,7 @@ costManagement:
       CACHED_VIEWS_DISABLED: "False"
       RETAIN_NUM_MONTHS: "3"
       NOTIFICATION_CHECK_TIME: "24"
-      ENHANCED_ORG_ADMIN: "True"
+      ENHANCED_ORG_ADMIN: "False"
       RBAC_CACHE_TIMEOUT: "300"
       CACHE_TIMEOUT: "3600"
       TAG_ENABLED_LIMIT: "200"
@@ -638,6 +637,61 @@ database:
     user: koku_user
     password: koku_password
 
+  # RBAC Database Configuration
+  rbac:
+    name: costonprem_rbac
+    user: rbac_user
+    password: rbac_password
+
+# -----------------------------------------------------------------------------
+# RBAC v1 Authorization Backend (insights-rbac)
+# -----------------------------------------------------------------------------
+# insights-rbac: RBAC v1 authorization backend for Koku.
+# Koku delegates all permission checks to this service via HTTP.
+# Deploys an API server (Gunicorn) and a Celery worker for async tasks.
+rbac:
+  image:
+    repository: quay.io/cloudservices/rbac
+    tag: "c2b9ccf"
+    pullPolicy: IfNotPresent
+
+  api:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+
+  # Comma-separated list of role names that non-admin users may create.
+  # Maps to ROLE_CREATE_ALLOW_LIST env var on the RBAC API.
+  # Leave empty to use the upstream default (no custom role creation).
+  roleCreateAllowList: ""
+
+  worker:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 2Gi
+
+  # Bootstrap an initial admin user with Cost Administrator permissions.
+  # Enable after creating the corresponding user in Keycloak with matching
+  # org_id and account_number attributes (e.g. via deploy-rhbk.sh).
+  # A post-install/post-upgrade hook Job creates the RBAC Tenant, Principal,
+  # Group, and Policy so the user can access the API immediately.
+  # All operations are idempotent (safe to leave enabled across upgrades).
+  bootstrapAdmin:
+    enabled: false
+    username: "admin"
+    orgId: "org1234567"
+    accountNumber: "7890123"
+
 # -----------------------------------------------------------------------------
 # Shared Infrastructure - Kafka
 # -----------------------------------------------------------------------------
@@ -787,6 +841,16 @@ jwtAuth:
       requests:
         cpu: 100m
         memory: 128Mi
+
+  # Org admin usernames: Keycloak usernames that receive is_org_admin=true in
+  # the X-Rh-Identity header. This triggers insights-rbac's admin_default role
+  # assignment (e.g. "Cost Administrator" via the admin_default group).
+  # Leave empty to keep is_org_admin=false for all users (default, most secure).
+  orgAdminUsernames: []
+  # Example:
+  #   orgAdminUsernames:
+  #     - admin
+  #     - cost-mgmt-operator
 
   # Keycloak configuration for JWT validation
   # Supported operator: Red Hat Build of Keycloak (RHBK) v22+ - k8s.keycloak.org/v2alpha1
