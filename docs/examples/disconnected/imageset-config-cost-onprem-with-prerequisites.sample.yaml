@@ -1,0 +1,64 @@
+# COMPREHENSIVE ImageSetConfiguration: OpenShift 4.20 platform + cost-onprem + all prerequisites
+#
+# This configuration mirrors everything needed for a complete disconnected deployment:
+#   - OpenShift 4.20.12 platform images
+#   - cost-onprem Helm chart and container images
+#   - OLM operators for all deployment scripts:
+#     * AMQ Streams (deploy-kafka.sh)
+#     * RHBK (deploy-rhbk.sh)
+#     * Local Storage + ODF operators (for S3-compatible storage)
+#   - Additional images for hook-only containers and script dependencies
+#
+# Tested working configuration for OpenShift 4.20.
+#
+# Usage:
+#   oc-mirror --v2 -c imageset-config-cost-onprem-with-prerequisites.sample.yaml file://mirror-output
+#
+# Before mirroring:
+# 1. Edit mirror.helm.repositories[].charts[].version to match your target chart release
+# 2. Adjust platform.channels[].minVersion/maxVersion for your specific OCP patch version
+# 3. Verify operator channels exist for your OpenShift version in OperatorHub
+#
+apiVersion: mirror.openshift.io/v2alpha1
+kind: ImageSetConfiguration
+# OCP 4.20: platform + redhat-operator-index + Marketplace index images + cost-onprem + RHODF-related operators + AMQ Streams.
+mirror:
+  platform:
+    architectures:
+      - amd64
+    graph: true
+    channels:
+      - name: stable-4.20
+        type: ocp
+        minVersion: 4.20.12
+        maxVersion: 4.20.12
+  helm:
+    repositories:
+      - name: cost-onprem
+        url: https://insights-onprem.github.io/cost-onprem-chart
+        charts:
+          - name: cost-onprem
+            version: "0.2.20-rc3"
+  additionalImages:
+    # PostgreSQL image used by both cost-onprem (Helm hook) and deploy-rhbk.sh (Keycloak DB):
+    - name: registry.redhat.io/rhel10/postgresql-16:10.1
+    # Only if using scripts/install-helm-chart.sh for S3 bucket creation:
+    - name: docker.io/amazon/aws-cli:latest
+  operators:
+    - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.20
+      packages:
+        - name: amq-streams
+          channels:
+            - name: stable
+            - name: amq-streams-3.1.x
+        - name: rhbk-operator
+          channels:
+            - name: stable-v22
+            - name: stable-v26.4
+        - name: local-storage-operator
+          channels:
+            - name: stable
+            - name: stable-4.20
+        - name: odf-operator
+          channels:
+            - name: stable-4.20

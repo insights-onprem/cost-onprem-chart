@@ -134,29 +134,36 @@ spec:
       labels:
         app: postgresql
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: postgresql
-        image: quay.io/insights-onprem/postgresql:16
+        image: registry.redhat.io/rhel10/postgresql-16:10.1
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
         ports:
         - containerPort: 5432
         env:
+        - name: POSTGRESQL_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgresql-credentials
+              key: postgres-password
         - name: POSTGRES_USER
           valueFrom:
             secretKeyRef:
               name: postgresql-credentials
               key: postgres-user
-        - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: postgresql-credentials
-              key: postgres-password
-        - name: PGDATA
-          value: /var/lib/postgresql/data/pgdata
         volumeMounts:
         - name: data
-          mountPath: /var/lib/postgresql/data
+          mountPath: /var/lib/pgsql/data
         - name: init-scripts
-          mountPath: /docker-entrypoint-initdb.d
+          mountPath: /opt/app-root/src/postgresql-init
         resources:
           requests:
             memory: "256Mi"

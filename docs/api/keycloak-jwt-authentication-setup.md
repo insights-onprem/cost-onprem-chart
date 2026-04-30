@@ -418,7 +418,7 @@ cd scripts/
 ./deploy-rhbk.sh
 ```
 
-This script automates the operator installation and basic configuration.
+This script automates the operator installation and basic configuration. It also creates a PostgreSQL StatefulSet for the Keycloak database using `registry.redhat.io/rhel10/postgresql-16:10.1`, so the target namespace (or cluster global pull configuration) must be able to pull from `registry.redhat.io`.
 
 ### Post-Installation Verification
 
