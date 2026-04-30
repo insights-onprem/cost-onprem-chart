@@ -768,3 +768,233 @@ class TestSourceStatus:
             print(f"Source status: {source['status']}")
         else:
             print(f"Source structure: {list(source.keys())}")
+
+
+# =============================================================================
+# P4 - Source Pause/Resume (FLPATH-3486)
+# =============================================================================
+
+
+@pytest.mark.sources
+@pytest.mark.api
+@pytest.mark.integration
+class TestSourcesPauseResume:
+    """External API tests for source pause/resume via gateway (FLPATH-3486)."""
+
+    def test_pause_and_resume_source(
+        self, gateway_url: str, authenticated_session: requests.Session
+    ):
+        """Verify PATCH pause/resume works via external gateway.
+
+        Validates FLPATH-3423 (PATCH IntegrityError) and FLPATH-3486
+        (paused field not accepted).
+        """
+        ocp_source_type_id = get_ocp_source_type_id(gateway_url, authenticated_session)
+
+        source_name = f"pause-test-{uuid.uuid4().hex[:8]}"
+        cluster_id = f"pause-cluster-{uuid.uuid4().hex[:8]}"
+
+        # Create source
+        create_resp = authenticated_session.post(
+            f"{gateway_url}/cost-management/v1/sources",
+            json={
+                "name": source_name,
+                "source_type_id": ocp_source_type_id,
+                "source_ref": cluster_id,
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=30,
+        )
+        assert create_resp.status_code == 201, (
+            f"Source creation failed: {create_resp.status_code} - {create_resp.text[:200]}"
+        )
+
+        source_data = create_resp.json()
+        source_id = source_data.get("id")
+        source_uuid = source_data.get("uuid")
+        assert source_id or source_uuid, "Source ID/UUID not returned"
+
+        # Use UUID for PATCH if available, otherwise ID
+        patch_id = source_uuid or source_id
+
+        try:
+            # Pause
+            pause_resp = authenticated_session.patch(
+                f"{gateway_url}/cost-management/v1/sources/{patch_id}/",
+                json={"paused": True},
+                headers={"Content-Type": "application/json"},
+                timeout=30,
+            )
+            assert pause_resp.status_code == 200, (
+                f"Pause PATCH failed: {pause_resp.status_code} - {pause_resp.text[:200]}"
+            )
+
+            # Verify paused
+            get_resp = authenticated_session.get(
+                f"{gateway_url}/cost-management/v1/sources/{patch_id}/",
+                timeout=30,
+            )
+            assert get_resp.status_code == 200
+            assert get_resp.json().get("paused") is True, (
+                f"Source not paused after PATCH: {get_resp.json()}"
+            )
+
+            # Resume
+            resume_resp = authenticated_session.patch(
+                f"{gateway_url}/cost-management/v1/sources/{patch_id}/",
+                json={"paused": False},
+                headers={"Content-Type": "application/json"},
+                timeout=30,
+            )
+            assert resume_resp.status_code == 200, (
+                f"Resume PATCH failed: {resume_resp.status_code} - {resume_resp.text[:200]}"
+            )
+
+            # Verify resumed
+            get_resp2 = authenticated_session.get(
+                f"{gateway_url}/cost-management/v1/sources/{patch_id}/",
+                timeout=30,
+            )
+            assert get_resp2.status_code == 200
+            assert get_resp2.json().get("paused") is False, (
+                f"Source not resumed after PATCH: {get_resp2.json()}"
+            )
+
+        finally:
+            authenticated_session.delete(
+                f"{gateway_url}/cost-management/v1/sources/{patch_id}/",
+                timeout=30,
+            )
+
+
+# =============================================================================
+# P5 - Source Timestamps (FLPATH-3420)
+# =============================================================================
+
+
+@pytest.mark.sources
+@pytest.mark.api
+@pytest.mark.integration
+class TestSourcesTimestamps:
+    """External API tests for source timestamp fields (FLPATH-3420)."""
+
+    def test_source_has_updated_timestamp(
+        self, gateway_url: str, authenticated_session: requests.Session
+    ):
+        """Verify GET source response includes updated_timestamp field."""
+        ocp_source_type_id = get_ocp_source_type_id(gateway_url, authenticated_session)
+
+        source_name = f"ts-test-{uuid.uuid4().hex[:8]}"
+        cluster_id = f"ts-cluster-{uuid.uuid4().hex[:8]}"
+
+        create_resp = authenticated_session.post(
+            f"{gateway_url}/cost-management/v1/sources",
+            json={
+                "name": source_name,
+                "source_type_id": ocp_source_type_id,
+                "source_ref": cluster_id,
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=30,
+        )
+        assert create_resp.status_code == 201
+        source_data = create_resp.json()
+        source_id = source_data.get("uuid") or source_data.get("id")
+
+        try:
+            # Verify field exists on detail GET
+            get_resp = authenticated_session.get(
+                f"{gateway_url}/cost-management/v1/sources/{source_id}/",
+                timeout=30,
+            )
+            assert get_resp.status_code == 200
+            detail = get_resp.json()
+            assert "updated_timestamp" in detail, (
+                f"updated_timestamp missing from source response. Keys: {list(detail.keys())}"
+            )
+            assert detail["updated_timestamp"] is not None, (
+                "updated_timestamp should not be null for a newly created source"
+            )
+
+            # Verify field exists in list response
+            list_resp = authenticated_session.get(
+                f"{gateway_url}/cost-management/v1/sources",
+                params={"name": source_name},
+                timeout=30,
+            )
+            assert list_resp.status_code == 200
+            sources = list_resp.json().get("data", [])
+            assert len(sources) > 0
+            assert "updated_timestamp" in sources[0], (
+                f"updated_timestamp missing from list response. Keys: {list(sources[0].keys())}"
+            )
+
+        finally:
+            authenticated_session.delete(
+                f"{gateway_url}/cost-management/v1/sources/{source_id}/",
+                timeout=30,
+            )
+
+    def test_updated_timestamp_advances_on_patch(
+        self, gateway_url: str, authenticated_session: requests.Session
+    ):
+        """Verify updated_timestamp increases after a PATCH.
+
+        Exercises both FLPATH-3420 (timestamp) and FLPATH-3423 (PATCH works).
+        """
+        import time
+
+        ocp_source_type_id = get_ocp_source_type_id(gateway_url, authenticated_session)
+
+        source_name = f"ts-patch-{uuid.uuid4().hex[:8]}"
+        cluster_id = f"ts-patch-cluster-{uuid.uuid4().hex[:8]}"
+
+        create_resp = authenticated_session.post(
+            f"{gateway_url}/cost-management/v1/sources",
+            json={
+                "name": source_name,
+                "source_type_id": ocp_source_type_id,
+                "source_ref": cluster_id,
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=30,
+        )
+        assert create_resp.status_code == 201
+        source_id = create_resp.json().get("uuid") or create_resp.json().get("id")
+
+        try:
+            # Record initial timestamp
+            get1 = authenticated_session.get(
+                f"{gateway_url}/cost-management/v1/sources/{source_id}/",
+                timeout=30,
+            )
+            ts1 = get1.json().get("updated_timestamp")
+            assert ts1 is not None
+
+            time.sleep(1)  # ensure wall-clock difference
+
+            # PATCH to trigger update
+            patch_resp = authenticated_session.patch(
+                f"{gateway_url}/cost-management/v1/sources/{source_id}/",
+                json={"paused": True},
+                headers={"Content-Type": "application/json"},
+                timeout=30,
+            )
+            assert patch_resp.status_code == 200
+
+            # Verify timestamp advanced
+            get2 = authenticated_session.get(
+                f"{gateway_url}/cost-management/v1/sources/{source_id}/",
+                timeout=30,
+            )
+            ts2 = get2.json().get("updated_timestamp")
+            assert ts2 is not None
+            assert ts2 > ts1, (
+                f"updated_timestamp did not advance after PATCH: {ts1} -> {ts2}"
+            )
+
+        finally:
+            authenticated_session.delete(
+                f"{gateway_url}/cost-management/v1/sources/{source_id}/",
+                timeout=30,
+            )

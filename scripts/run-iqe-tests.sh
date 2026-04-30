@@ -295,6 +295,18 @@ else
     S3_USE_SSL="true"
 fi
 
+# Get Kafka bootstrap servers from Kafka CR (Strimzi)
+# The container runs inside the cluster so it can use the internal service name
+KAFKA_NAMESPACE=${KAFKA_NAMESPACE:-kafka}
+KAFKA_BOOTSTRAP=$(kubectl get kafka -n "$KAFKA_NAMESPACE" -o jsonpath='{.items[0].status.listeners[?(@.name=="plain")].bootstrapServers}' 2>/dev/null || echo "")
+if [ -z "$KAFKA_BOOTSTRAP" ]; then
+    # Fallback to service name
+    KAFKA_BOOTSTRAP="cost-onprem-kafka-kafka-bootstrap.${KAFKA_NAMESPACE}.svc:9092"
+fi
+# Parse hostname and port
+KAFKA_HOSTNAME="${KAFKA_BOOTSTRAP%%:*}"
+KAFKA_PORT="${KAFKA_BOOTSTRAP##*:}"
+
 # Get Keycloak credentials from the auth secret
 # Try uppercase keys first (keycloak-client-secret-*), then lowercase (cost-management-auth-secret)
 KEYCLOAK_CLIENT_ID=$(kubectl get secret "$KEYCLOAK_SECRET_NAME" -n "$KEYCLOAK_SECRET_NS" -o jsonpath='{.data.CLIENT_ID}' 2>/dev/null | base64 -d || \
@@ -349,6 +361,7 @@ echo "  MASU (in-cluster): ${MASU_HOSTNAME}:${MASU_PORT}"
 echo "  S3 Endpoint: ${S3_ENDPOINT}"
 echo "  S3 Port: ${S3_PORT} (SSL: ${S3_USE_SSL})"
 echo "  S3 Buckets: koku=${S3_BUCKET_NAME}, ros=${S3_ROS_BUCKET}"
+echo "  Kafka: ${KAFKA_BOOTSTRAP}"
 echo "  OAuth URL: ${OAUTH_URL}"
 echo "  Keycloak Client ID: ${KEYCLOAK_CLIENT_ID}"
 
@@ -615,6 +628,7 @@ spec:
           -k "\${IQE_FILTER}" \
           -vv \
           --junitxml=/results/junit.xml \
+          -o junit_suite_name=iqe-cost-management-onprem \
           2>&1 | tee /results/test-output.log
       else
         iqe tests plugin cost_management \
@@ -622,6 +636,7 @@ spec:
           -m "${IQE_MARKER}" \
           -vv \
           --junitxml=/results/junit.xml \
+          -o junit_suite_name=iqe-cost-management-onprem \
           2>&1 | tee /results/test-output.log
       fi
       
@@ -752,6 +767,16 @@ spec:
       value: "${S3_BUCKET_NAME}"
     - name: S3_ROS_BUCKET
       value: "${S3_ROS_BUCKET}"
+
+    # Kafka Configuration (for MQ plugin - ROS Kafka tests)
+    # DYNACONF reads these env vars to configure the broker for cost_onprem environment
+    # Note: lowercase after DYNACONF_BROKER__ preserves case in the config dict
+    - name: DYNACONF_BROKER__hostname
+      value: "${KAFKA_HOSTNAME}"
+    - name: DYNACONF_BROKER__port
+      value: "${KAFKA_PORT}"
+    - name: DYNACONF_BROKER__securityProtocol
+      value: "PLAINTEXT"
 ${NISE_VERSION_ENV}
     imagePullPolicy: Always
     resources:
