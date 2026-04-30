@@ -51,7 +51,7 @@ jobs:
         # additionalImages lists images that oc-mirror cannot auto-discover
         # from the Helm chart (e.g. images only used in Helm hooks like
         # pre-install/pre-upgrade). Keep this list in sync with the
-        # disconnected deployment guide:
+        # disconnected deployment guide (commands to list images):
         #   docs/operations/disconnected-deployment.md
         cat > /tmp/imageset-config.yaml << 'EOF'
         apiVersion: mirror.openshift.io/v2alpha1
@@ -140,8 +140,8 @@ jobs:
             echo "       - name: $img"
           done
           echo ""
-          echo "  2. Update the air-gapped deployment guide with the same images:"
-          echo "     docs/operations/disconnected-deployment.md"
+          echo "  2. See docs/operations/disconnected-deployment.md for commands"
+          echo "     to list images from oc-mirror (dry-run mapping.txt)."
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           exit 1
         fi
