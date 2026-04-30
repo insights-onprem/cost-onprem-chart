@@ -14,7 +14,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import List, Optional
 
 import pytest
 import requests
@@ -513,6 +513,57 @@ def s3_config(cluster_config: ClusterConfig) -> Optional[S3Config]:
     )
 
 
+def get_actual_bucket_names(cluster_config: ClusterConfig) -> List[str]:
+    """Extract actual bucket names from deployed pod environment variables.
+
+    Returns the bucket names that are actually configured in the deployment,
+    which may differ from chart defaults (e.g., with S3_BUCKET_PREFIX).
+    """
+    bucket_names = []
+
+    # Get Koku bucket from koku-api deployment
+    try:
+        result = run_oc_command([
+            "get", "deployment", f"{cluster_config.helm_release_name}-koku-api",
+            "-n", cluster_config.namespace,
+            "-o", "jsonpath={.spec.template.spec.containers[0].env[?(@.name=='REQUESTED_BUCKET')].value}"
+        ], check=False)
+        if result.returncode == 0 and result.stdout.strip():
+            bucket_names.append(result.stdout.strip())
+    except Exception:
+        pass
+
+    # Get ROS bucket from koku-api deployment
+    try:
+        result = run_oc_command([
+            "get", "deployment", f"{cluster_config.helm_release_name}-koku-api",
+            "-n", cluster_config.namespace,
+            "-o", "jsonpath={.spec.template.spec.containers[0].env[?(@.name=='REQUESTED_ROS_BUCKET')].value}"
+        ], check=False)
+        if result.returncode == 0 and result.stdout.strip():
+            bucket_names.append(result.stdout.strip())
+    except Exception:
+        pass
+
+    # Get Ingress bucket from ingress deployment
+    try:
+        result = run_oc_command([
+            "get", "deployment", f"{cluster_config.helm_release_name}-ingress",
+            "-n", cluster_config.namespace,
+            "-o", "jsonpath={.spec.template.spec.containers[0].env[?(@.name=='INGRESS_STAGEBUCKET')].value}"
+        ], check=False)
+        if result.returncode == 0 and result.stdout.strip():
+            bucket_names.append(result.stdout.strip())
+    except Exception:
+        pass
+
+    # Fallback to defaults if no buckets found (shouldn't happen in normal deployment)
+    if not bucket_names:
+        bucket_names = ["koku-bucket", "ros-data", "insights-upload-perma"]
+
+    return bucket_names
+
+
 @pytest.fixture(scope="session", autouse=True)
 def s3_bucket_preflight(cluster_config: ClusterConfig, s3_config: Optional[S3Config]) -> None:
     """Pre-flight check: Ensure required S3 buckets exist before running tests.
@@ -522,17 +573,16 @@ def s3_bucket_preflight(cluster_config: ClusterConfig, s3_config: Optional[S3Con
     when the install script's bucket creation fails (e.g., network issues
     downloading the S3 client).
 
-    Required buckets (from values.yaml):
-    - koku-bucket: Main cost data storage
-    - ros-data: ROS processor data
-    - insights-upload-perma: Ingress upload storage
+    Bucket names are dynamically read from deployed pod environment variables
+    to support custom prefixes (e.g., AWS S3 global uniqueness requirements).
     """
     if s3_config is None:
         # No S3 config available - skip bucket check
         # Tests that need S3 will fail with appropriate errors
         return
 
-    required_buckets = ["koku-bucket", "ros-data", "insights-upload-perma"]
+    # Get actual bucket names from deployment configuration
+    required_buckets = get_actual_bucket_names(cluster_config)
 
     # Execute bucket check/creation inside the koku-api pod which has boto3 and credentials
     bucket_check_script = f'''
@@ -589,9 +639,10 @@ if failed:
     )
 
     if result.returncode != 0:
+        bucket_list = ", ".join(required_buckets)
         pytest.fail(
             f"S3 bucket pre-flight check failed: {result.stderr}\n"
-            "Required buckets could not be created: koku-bucket, ros-data, insights-upload-perma\n"
+            f"Required buckets could not be created: {bucket_list}\n"
             "Check S3/object storage configuration and connectivity."
         )
     elif result.stdout.strip():
