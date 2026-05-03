@@ -10,6 +10,7 @@ These tests validate the S3 storage infrastructure required for Cost Management:
 Source Reference: scripts/e2e_validator/phases/preflight.py
 """
 
+import logging
 import os
 import subprocess
 from typing import Optional
@@ -330,22 +331,28 @@ def _resolve_bucket_name(
     env_var_name: str,
     default: str,
 ) -> str:
+    log = logging.getLogger(__name__)
     try:
         result = subprocess.run(
             [
                 "kubectl", "get", "deployment",
                 f"{release_name}-{deployment_suffix}",
                 "-n", namespace,
-                "-o", f"jsonpath={{.spec.template.spec.containers[0].env[?(@.name=='{env_var_name}')].value}}",
+                "-o", f"jsonpath={{.spec.template.spec.containers[*].env[?(@.name=='{env_var_name}')].value}}",
             ],
             capture_output=True,
             text=True,
             timeout=30,
         )
         if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except Exception:
-        pass
+            return result.stdout.strip().split()[0]
+        if result.returncode != 0:
+            log.warning(
+                "Failed to resolve %s from %s (rc=%d): %s",
+                env_var_name, deployment_suffix, result.returncode, result.stderr.strip(),
+            )
+    except Exception as exc:
+        log.warning("Failed to resolve %s from %s: %s", env_var_name, deployment_suffix, exc)
     return default
 
 
