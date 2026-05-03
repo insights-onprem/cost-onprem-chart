@@ -441,20 +441,27 @@ class TestS3DataPaths:
     """Tests for S3 data path structure."""
     
     def test_can_list_bucket_contents(self, cluster_config):
-        """Verify we can list contents of the koku-bucket."""
+        """Verify we can list contents of the koku storage bucket."""
         masu_pod = get_pod_by_label(
             cluster_config.namespace,
             "app.kubernetes.io/component=cost-processor"
         )
-        
+
         if not masu_pod:
             pytest.skip("MASU/cost-processor pod not found")
-        
+
         endpoint = get_s3_endpoint_from_cluster(cluster_config.namespace)
         if not endpoint:
             pytest.skip("S3 endpoint not discoverable")
-        
-        # Use Python/boto3 since AWS CLI may not be available
+
+        bucket = _resolve_bucket_name(
+            cluster_config.namespace,
+            cluster_config.helm_release_name,
+            "koku-api",
+            "REQUESTED_BUCKET",
+            "koku-bucket",
+        )
+
         python_script = f'''
 import boto3
 import os
@@ -469,7 +476,7 @@ try:
         verify=False,
         config=Config(signature_version="s3v4", s3={{"addressing_style": "path"}}),
     )
-    response = s3.list_objects_v2(Bucket="koku-bucket", MaxKeys=10)
+    response = s3.list_objects_v2(Bucket="{bucket}", MaxKeys=10)
     count = response.get("KeyCount", 0)
     print(f"SUCCESS:OBJECTS:{{count}}")
 except Exception as e:
@@ -479,7 +486,7 @@ except Exception as e:
     else:
         print(f"ERROR:{{err}}")
 '''
-        
+
         try:
             result = subprocess.run(
                 [
@@ -492,11 +499,10 @@ except Exception as e:
                 text=True,
                 timeout=60,
             )
-            
+
             output = result.stdout.strip()
-            # Success even if empty (0 objects)
             assert "SUCCESS" in output or "NoSuchBucket" not in output, (
-                f"Cannot list koku-bucket contents: {output or result.stderr}"
+                f"Cannot list bucket '{bucket}' contents: {output or result.stderr}"
             )
         except subprocess.TimeoutExpired:
             pytest.skip("S3 list operation timed out")

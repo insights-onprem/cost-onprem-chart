@@ -137,8 +137,7 @@ is_aws_s3_endpoint_host() {
     esac
 }
 
-# AWS CLI SigV4 region inside the bucket-setup job (chart workloads use objectStorage.s3.region)
-resolve_s3_cli_region() {
+find_explicit_s3_region() {
     if [ -n "${S3_REGION:-}" ]; then
         echo "$S3_REGION"
         return 0
@@ -161,6 +160,11 @@ resolve_s3_cli_region() {
             return 0
         fi
     fi
+    return 1
+}
+
+resolve_s3_cli_region() {
+    find_explicit_s3_region && return 0
     echo "us-east-1"
 }
 
@@ -869,22 +873,26 @@ create_s3_buckets() {
         fi
     fi
 
+    local aws_region
     if is_aws_s3_endpoint_host "$endpoint_host"; then
         aws_addr_style="auto"
         echo_info "  AWS S3 endpoint: using virtual-hosted-style (addressing_style=auto) for AWS CLI"
 
-        # Validate that S3_REGION is explicitly set for AWS endpoints
-        if [ -z "${S3_REGION:-}" ]; then
-            echo_error "S3_REGION is required for AWS S3 endpoints"
-            echo_error "AWS S3 requires explicit region configuration for SigV4 authentication."
+        local explicit_region
+        if ! explicit_region=$(find_explicit_s3_region); then
+            echo_error "Region is required for AWS S3 endpoints (SigV4 authentication)."
             echo_error ""
-            echo_error "Solution: Set S3_REGION environment variable, for example:"
+            echo_error "Provide the region via environment variable or values file:"
             echo_error "  export S3_REGION=us-east-1"
-            echo_error "  export S3_ENDPOINT=s3.us-east-1.amazonaws.com"
+            echo_error "Or in your values file:"
+            echo_error "  objectStorage:"
+            echo_error "    s3:"
+            echo_error "      region: us-east-1"
             echo_error ""
             echo_error "Common AWS regions: us-east-1, us-west-2, eu-west-1, ap-southeast-1"
             exit 1
         fi
+        aws_region="$explicit_region"
 
         local expected_region=""
         case "$endpoint_host" in
@@ -898,24 +906,23 @@ create_s3_buckets() {
                 expected_region=$(echo "$endpoint_host" | sed 's/s3\.\([^.]*\)\.amazonaws\.com/\1/')
                 ;;
         esac
-        if [ -n "$expected_region" ] && [ "$expected_region" != "${S3_REGION}" ]; then
-            echo_warning "Region mismatch: S3_REGION=${S3_REGION} but endpoint suggests ${expected_region}"
+        if [ -n "$expected_region" ] && [ "$expected_region" != "$aws_region" ]; then
+            echo_warning "Region mismatch: resolved region=${aws_region} but endpoint suggests ${expected_region}"
             echo_warning "This may cause SigV4 authentication failures"
         fi
-    fi
-
-    local aws_region
-    aws_region=$(resolve_s3_cli_region)
-    if is_aws_s3_endpoint_host "$endpoint_host"; then
         echo_info "  AWS CLI region for bucket job: $aws_region"
+    else
+        aws_region=$(resolve_s3_cli_region)
     fi
 
     compute_and_export_install_bucket_names "$endpoint_host"
     local bucket_list="${RESOLVED_S3_BUCKET_INGRESS} ${RESOLVED_S3_BUCKET_KOKU} ${RESOLVED_S3_BUCKET_ROS}"
     echo_info "Creating buckets at ${s3_url}..."
 
-    local temp_secret_name="${secret_name}-bucket-job"
-    local bucket_pod_name="bucket-setup"
+    local run_id
+    run_id=$(date +%s)
+    local temp_secret_name="${secret_name}-bucket-job-${run_id}"
+    local bucket_pod_name="bucket-setup-${run_id}"
     local bucket_image="${S3_CLI_IMAGE:-amazon/aws-cli:latest}"
 
     cleanup_bucket_job() {
