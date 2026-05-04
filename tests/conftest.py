@@ -14,7 +14,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import List, Optional
 
 import pytest
 import requests
@@ -513,6 +513,43 @@ def s3_config(cluster_config: ClusterConfig) -> Optional[S3Config]:
     )
 
 
+def _resolve_deployed_bucket(
+    cluster_config: ClusterConfig,
+    deployment_suffix: str,
+    env_var_name: str,
+) -> Optional[str]:
+    log = logging.getLogger(__name__)
+    try:
+        result = run_oc_command([
+            "get", "deployment", f"{cluster_config.helm_release_name}-{deployment_suffix}",
+            "-n", cluster_config.namespace,
+            "-o", f"jsonpath={{.spec.template.spec.containers[*].env[?(@.name=='{env_var_name}')].value}}",
+        ], check=False)
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip().split()[0]
+    except Exception as exc:
+        log.warning("Failed to resolve %s from %s: %s", env_var_name, deployment_suffix, exc)
+    return None
+
+
+def get_actual_bucket_names(cluster_config: ClusterConfig) -> List[str]:
+    lookups = [
+        ("koku-api", "REQUESTED_BUCKET"),
+        ("koku-api", "REQUESTED_ROS_BUCKET"),
+        ("ingress", "INGRESS_STAGEBUCKET"),
+    ]
+    bucket_names = []
+    for deployment_suffix, env_var in lookups:
+        name = _resolve_deployed_bucket(cluster_config, deployment_suffix, env_var)
+        if name:
+            bucket_names.append(name)
+
+    if not bucket_names:
+        bucket_names = ["koku-bucket", "ros-data", "insights-upload-perma"]
+
+    return bucket_names
+
+
 @pytest.fixture(scope="session", autouse=True)
 def s3_bucket_preflight(cluster_config: ClusterConfig, s3_config: Optional[S3Config]) -> None:
     """Pre-flight check: Ensure required S3 buckets exist before running tests.
@@ -522,17 +559,16 @@ def s3_bucket_preflight(cluster_config: ClusterConfig, s3_config: Optional[S3Con
     when the install script's bucket creation fails (e.g., network issues
     downloading the S3 client).
 
-    Required buckets (from values.yaml):
-    - koku-bucket: Main cost data storage
-    - ros-data: ROS processor data
-    - insights-upload-perma: Ingress upload storage
+    Bucket names are dynamically read from deployed pod environment variables
+    to support custom prefixes (e.g., AWS S3 global uniqueness requirements).
     """
     if s3_config is None:
         # No S3 config available - skip bucket check
         # Tests that need S3 will fail with appropriate errors
         return
 
-    required_buckets = ["koku-bucket", "ros-data", "insights-upload-perma"]
+    # Get actual bucket names from deployment configuration
+    required_buckets = get_actual_bucket_names(cluster_config)
 
     # Execute bucket check/creation inside the koku-api pod which has boto3 and credentials
     bucket_check_script = f'''
@@ -589,9 +625,10 @@ if failed:
     )
 
     if result.returncode != 0:
+        bucket_list = ", ".join(required_buckets)
         pytest.fail(
             f"S3 bucket pre-flight check failed: {result.stderr}\n"
-            "Required buckets could not be created: koku-bucket, ros-data, insights-upload-perma\n"
+            f"Required buckets could not be created: {bucket_list}\n"
             "Check S3/object storage configuration and connectivity."
         )
     elif result.stdout.strip():

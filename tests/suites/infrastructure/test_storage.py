@@ -10,6 +10,7 @@ These tests validate the S3 storage infrastructure required for Cost Management:
 Source Reference: scripts/e2e_validator/phases/preflight.py
 """
 
+import logging
 import os
 import subprocess
 from typing import Optional
@@ -323,82 +324,119 @@ class TestS3Connectivity:
         )
 
 
+def _resolve_bucket_name(
+    namespace: str,
+    release_name: str,
+    deployment_suffix: str,
+    env_var_name: str,
+    default: str,
+) -> str:
+    log = logging.getLogger(__name__)
+    try:
+        result = subprocess.run(
+            [
+                "kubectl", "get", "deployment",
+                f"{release_name}-{deployment_suffix}",
+                "-n", namespace,
+                "-o", f"jsonpath={{.spec.template.spec.containers[*].env[?(@.name=='{env_var_name}')].value}}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip().split()[0]
+        if result.returncode != 0:
+            log.warning(
+                "Failed to resolve %s from %s (rc=%d): %s",
+                env_var_name, deployment_suffix, result.returncode, result.stderr.strip(),
+            )
+    except Exception as exc:
+        log.warning("Failed to resolve %s from %s: %s", env_var_name, deployment_suffix, exc)
+    return default
+
+
 @pytest.mark.infrastructure
 @pytest.mark.integration
 class TestS3Buckets:
     """Tests for required S3 buckets."""
-    
-    REQUIRED_BUCKETS = [
-        "koku-bucket",  # Main cost data bucket
-    ]
-    
-    OPTIONAL_BUCKETS = [
-        "ros-data",     # ROS data bucket (may not exist in all deployments)
-    ]
-    
-    @pytest.mark.parametrize("bucket", REQUIRED_BUCKETS)
-    def test_required_bucket_exists(self, cluster_config, bucket: str):
-        """Verify required S3 bucket exists and is accessible."""
+
+    def test_required_bucket_exists(self, cluster_config):
+        """Verify the koku storage bucket exists and is accessible."""
         masu_pod = get_pod_by_label(
             cluster_config.namespace,
             "app.kubernetes.io/component=cost-processor"
         )
-        
+
         if not masu_pod:
             pytest.skip("MASU/cost-processor pod not found for bucket check")
-        
+
         endpoint = get_s3_endpoint_from_cluster(cluster_config.namespace)
         if not endpoint:
             pytest.skip("S3 endpoint not discoverable")
-        
+
+        bucket = _resolve_bucket_name(
+            cluster_config.namespace,
+            cluster_config.helm_release_name,
+            "koku-api",
+            "REQUESTED_BUCKET",
+            "koku-bucket",
+        )
+
         status = check_bucket_exists_via_pod(
             cluster_config.namespace,
             masu_pod,
             bucket,
             endpoint,
         )
-        
+
         if status.get("error") == "timeout":
             pytest.skip(f"Bucket check timed out for '{bucket}'")
-        
+
         assert status.get("exists"), (
             f"Required bucket '{bucket}' not found: {status.get('error', 'unknown')}"
         )
-        
+
         if not status.get("accessible"):
             pytest.fail(
                 f"Bucket '{bucket}' exists but is not accessible: {status.get('error')}"
             )
-    
-    @pytest.mark.parametrize("bucket", OPTIONAL_BUCKETS)
-    def test_optional_bucket_exists(self, cluster_config, bucket: str):
-        """Check if optional S3 bucket exists (informational)."""
+
+    def test_optional_bucket_exists(self, cluster_config):
+        """Check if the ROS data bucket exists (informational)."""
         masu_pod = get_pod_by_label(
             cluster_config.namespace,
             "app.kubernetes.io/component=cost-processor"
         )
-        
+
         if not masu_pod:
             pytest.skip("MASU/cost-processor pod not found for bucket check")
-        
+
         endpoint = get_s3_endpoint_from_cluster(cluster_config.namespace)
         if not endpoint:
             pytest.skip("S3 endpoint not discoverable")
-        
+
+        bucket = _resolve_bucket_name(
+            cluster_config.namespace,
+            cluster_config.helm_release_name,
+            "koku-api",
+            "REQUESTED_ROS_BUCKET",
+            "ros-data",
+        )
+
         status = check_bucket_exists_via_pod(
             cluster_config.namespace,
             masu_pod,
             bucket,
             endpoint,
         )
-        
+
         if not status.get("exists"):
             pytest.skip(
                 f"Optional bucket '{bucket}' not found (this may be expected): "
                 f"{status.get('error', 'unknown')}"
             )
-        
-        # If we get here, bucket exists
+
         assert status.get("accessible", True), (
             f"Optional bucket '{bucket}' exists but is not accessible"
         )
@@ -410,20 +448,27 @@ class TestS3DataPaths:
     """Tests for S3 data path structure."""
     
     def test_can_list_bucket_contents(self, cluster_config):
-        """Verify we can list contents of the koku-bucket."""
+        """Verify we can list contents of the koku storage bucket."""
         masu_pod = get_pod_by_label(
             cluster_config.namespace,
             "app.kubernetes.io/component=cost-processor"
         )
-        
+
         if not masu_pod:
             pytest.skip("MASU/cost-processor pod not found")
-        
+
         endpoint = get_s3_endpoint_from_cluster(cluster_config.namespace)
         if not endpoint:
             pytest.skip("S3 endpoint not discoverable")
-        
-        # Use Python/boto3 since AWS CLI may not be available
+
+        bucket = _resolve_bucket_name(
+            cluster_config.namespace,
+            cluster_config.helm_release_name,
+            "koku-api",
+            "REQUESTED_BUCKET",
+            "koku-bucket",
+        )
+
         python_script = f'''
 import boto3
 import os
@@ -438,7 +483,7 @@ try:
         verify=False,
         config=Config(signature_version="s3v4", s3={{"addressing_style": "path"}}),
     )
-    response = s3.list_objects_v2(Bucket="koku-bucket", MaxKeys=10)
+    response = s3.list_objects_v2(Bucket="{bucket}", MaxKeys=10)
     count = response.get("KeyCount", 0)
     print(f"SUCCESS:OBJECTS:{{count}}")
 except Exception as e:
@@ -448,7 +493,7 @@ except Exception as e:
     else:
         print(f"ERROR:{{err}}")
 '''
-        
+
         try:
             result = subprocess.run(
                 [
@@ -461,11 +506,10 @@ except Exception as e:
                 text=True,
                 timeout=60,
             )
-            
+
             output = result.stdout.strip()
-            # Success even if empty (0 objects)
             assert "SUCCESS" in output or "NoSuchBucket" not in output, (
-                f"Cannot list koku-bucket contents: {output or result.stderr}"
+                f"Cannot list bucket '{bucket}' contents: {output or result.stderr}"
             )
         except subprocess.TimeoutExpired:
             pytest.skip("S3 list operation timed out")

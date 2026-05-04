@@ -26,6 +26,11 @@ The Cost Management On-Premise Helm chart is designed for OpenShift environments
 
 ### Architecture
 
+![Cost Management On-Prem Architecture](../cost-onprem-architecture-diagram.svg)
+
+<details>
+<summary>Simplified routing diagram (Mermaid)</summary>
+
 ```mermaid
 graph TB
     Client["Client"] --> Router
@@ -56,6 +61,8 @@ graph TB
     style Koku fill:#a5d6a7,stroke:#333,stroke-width:2px,color:#000
     style ROS fill:#a5d6a7,stroke:#333,stroke-width:2px,color:#000
 ```
+
+</details>
 
 ### Networking
 

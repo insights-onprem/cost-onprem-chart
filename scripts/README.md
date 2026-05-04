@@ -104,6 +104,7 @@ Deploy Red Hat Build of Keycloak (RHBK) with CoP integration.
 
 **What it creates:**
 - RHBK Operator in target namespace
+- PostgreSQL 16 for Keycloak (`registry.redhat.io/rhel10/postgresql-16:10.1`; requires pull access to `registry.redhat.io`)
 - Keycloak instance with `kubernetes` realm
 - `cost-management-operator` client
 - OpenShift OIDC integration

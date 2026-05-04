@@ -96,7 +96,7 @@ This document provides detailed information about the Helm templates used in the
 | `INGRESS_MINIOENDPOINT` | (from helper) | S3-compatible storage endpoint (env var name from upstream insights-ingress-go) |
 | `INGRESS_STAGEBUCKET` | (from helper) | S3 bucket for staged uploads |
 | `INGRESS_USESSL` | (from helper) | Whether to use SSL for S3 connection |
-| `INGRESS_KAFKA_BROKERS` | (from helper) | Kafka bootstrap servers |
+| `INGRESS_KAFKABROKERS` | (from helper) | Kafka bootstrap servers |
 | `INGRESS_KAFKAANNOUNCETOPIC` | `platform.upload.announce` | Topic for upload announcements |
 | `AWS_CONFIG_FILE` | `/etc/aws/config` | AWS SDK configuration for S3v4 signatures |
 

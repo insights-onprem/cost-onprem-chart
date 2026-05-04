@@ -1,0 +1,205 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 774" width="1200" height="774">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600;700;800&amp;display=swap');
+      text { font-family: 'Red Hat Display', 'Segoe UI', Arial, sans-serif; }
+    </style>
+    <filter id="ts" x="-2%" y="-2%" width="104%" height="108%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000" flood-opacity="0.06"/>
+    </filter>
+    <clipPath id="tc">
+      <rect x="40" y="86" width="1120" height="612" rx="8"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="774" fill="#f8f9fa"/>
+
+  <!-- Title -->
+  <text x="600" y="30" text-anchor="middle" font-size="22" font-weight="700" fill="#1a1a1a">Cost Management &#8212; What Changes</text>
+  <text x="600" y="48" text-anchor="middle" font-size="11" fill="#868e96">SaaS &#8594; On-Prem transition: only the components that differ (10 services remain unchanged)</text>
+
+  <!-- Legend -->
+  <g transform="translate(280,58)">
+    <rect width="10" height="10" rx="2" fill="#e65100"/>
+    <text x="16" y="9" font-size="9" fill="#495057">Replaced</text>
+    <rect x="85" width="10" height="10" rx="2" fill="#c62828"/>
+    <text x="101" y="9" font-size="9" fill="#495057">Removed</text>
+    <rect x="170" width="10" height="10" rx="2" fill="#283593"/>
+    <text x="186" y="9" font-size="9" fill="#495057">Merged</text>
+    <rect x="245" width="10" height="10" rx="2" fill="#1565c0"/>
+    <text x="261" y="9" font-size="9" fill="#495057">Kept (upgrade planned)</text>
+  </g>
+
+  <!-- Table shadow -->
+  <rect x="40" y="86" width="1120" height="612" rx="8" fill="#fff" filter="url(#ts)"/>
+
+  <!-- Table content (clipped to rounded rect) -->
+  <g clip-path="url(#tc)">
+    <rect x="40" y="86" width="1120" height="612" fill="#fff"/>
+
+    <!-- Column headers -->
+    <rect x="40" y="86" width="560" height="32" fill="#ffcdd2"/>
+    <text x="310" y="107" text-anchor="middle" font-size="13" font-weight="700" fill="#c62828">SaaS (console.redhat.com)</text>
+    <rect x="600" y="86" width="560" height="32" fill="#c8e6c9"/>
+    <text x="880" y="107" text-anchor="middle" font-size="13" font-weight="700" fill="#2e7d32">On-Prem (OpenShift)</text>
+
+    <!-- ===== FRONTEND & ENTRY ===== -->
+    <rect x="40" y="118" width="1120" height="22" fill="#f1f3f5"/>
+    <text x="56" y="133" font-size="8" font-weight="700" fill="#495057" letter-spacing="0.8">FRONTEND &amp; ENTRY</text>
+
+    <rect x="40" y="140" width="1120" height="32" fill="#fff3e0"/>
+    <rect x="40" y="140" width="4" height="32" fill="#e65100"/>
+    <text x="60" y="161" font-size="11" font-weight="500" fill="#1a1a1a">console.redhat.com</text>
+    <text x="616" y="161" font-size="11" font-weight="500" fill="#1a1a1a">Cost Management UI + IAM</text>
+    <rect x="1092" y="149" width="56" height="14" rx="4" fill="#e65100"/>
+    <text x="1120" y="159" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">REPLACED</text>
+
+    <rect x="40" y="172" width="1120" height="32" fill="#fff8f0"/>
+    <rect x="40" y="172" width="4" height="32" fill="#e65100"/>
+    <text x="60" y="193" font-size="11" font-weight="500" fill="#1a1a1a">Akamai CDN</text>
+    <text x="616" y="193" font-size="11" font-weight="500" fill="#1a1a1a">OpenShift Routes</text>
+    <rect x="1092" y="181" width="56" height="14" rx="4" fill="#e65100"/>
+    <text x="1120" y="191" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">REPLACED</text>
+
+    <rect x="40" y="204" width="1120" height="32" fill="#fff3e0"/>
+    <rect x="40" y="204" width="4" height="32" fill="#e65100"/>
+    <text x="60" y="225" font-size="11" font-weight="500" fill="#1a1a1a">3scale API Gateway</text>
+    <text x="616" y="225" font-size="11" font-weight="500" fill="#1a1a1a">Envoy Gateway</text>
+    <rect x="1092" y="213" width="56" height="14" rx="4" fill="#e65100"/>
+    <text x="1120" y="223" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">REPLACED</text>
+
+    <!-- ===== AUTH & IDENTITY ===== -->
+    <rect x="40" y="236" width="1120" height="22" fill="#f1f3f5"/>
+    <text x="56" y="251" font-size="8" font-weight="700" fill="#495057" letter-spacing="0.8">AUTH &amp; IDENTITY</text>
+
+    <rect x="40" y="258" width="1120" height="32" fill="#fff3e0"/>
+    <rect x="40" y="258" width="4" height="32" fill="#e65100"/>
+    <text x="60" y="279" font-size="11" font-weight="500" fill="#1a1a1a">sso.redhat.com</text>
+    <text x="616" y="279" font-size="11" font-weight="500" fill="#1a1a1a">Keycloak (RHBK)</text>
+    <rect x="1092" y="267" width="56" height="14" rx="4" fill="#e65100"/>
+    <text x="1120" y="277" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">REPLACED</text>
+
+    <rect x="40" y="290" width="1120" height="32" fill="#e3f2fd"/>
+    <rect x="40" y="290" width="4" height="32" fill="#1565c0"/>
+    <text x="60" y="311" font-size="11" font-weight="500" fill="#1a1a1a">RBAC Service</text>
+    <text x="616" y="307" font-size="11" font-weight="500" fill="#1a1a1a">RBAC Service (reused as-is)</text>
+    <text x="616" y="319" font-size="8" fill="#78909c" font-style="italic">planned upgrade to newer solution</text>
+    <rect x="1068" y="299" width="80" height="14" rx="4" fill="#1565c0"/>
+    <text x="1108" y="309" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">KEPT (for now)</text>
+
+    <!-- ===== CORE SERVICES ===== -->
+    <rect x="40" y="322" width="1120" height="22" fill="#f1f3f5"/>
+    <text x="56" y="337" font-size="8" font-weight="700" fill="#495057" letter-spacing="0.8">CORE SERVICES</text>
+
+    <rect x="40" y="344" width="1120" height="32" fill="#e8eaf6"/>
+    <rect x="40" y="344" width="4" height="32" fill="#283593"/>
+    <text x="60" y="365" font-size="11" font-weight="500" fill="#1a1a1a">Sources API (standalone)</text>
+    <text x="616" y="365" font-size="11" font-weight="500" fill="#283593" font-style="italic">Merged into Koku API</text>
+    <rect x="1092" y="353" width="56" height="14" rx="4" fill="#283593"/>
+    <text x="1120" y="363" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">MERGED</text>
+
+    <rect x="40" y="376" width="1120" height="32" fill="#ffebee"/>
+    <rect x="40" y="376" width="4" height="32" fill="#c62828"/>
+    <text x="60" y="397" font-size="11" font-weight="500" fill="#1a1a1a">Notifications</text>
+    <text x="616" y="397" font-size="11" fill="#adb5bd" font-style="italic">&#8212;</text>
+    <rect x="1092" y="385" width="56" height="14" rx="4" fill="#c62828"/>
+    <text x="1120" y="395" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">REMOVED</text>
+
+    <!-- ===== DATA & QUERY LAYER ===== -->
+    <rect x="40" y="408" width="1120" height="22" fill="#f1f3f5"/>
+    <text x="56" y="423" font-size="8" font-weight="700" fill="#495057" letter-spacing="0.8">DATA &amp; QUERY LAYER</text>
+
+    <rect x="40" y="430" width="1120" height="32" fill="#fff3e0"/>
+    <rect x="40" y="430" width="4" height="32" fill="#e65100"/>
+    <text x="60" y="451" font-size="11" font-weight="500" fill="#1a1a1a">Trino + Hive Metastore</text>
+    <text x="616" y="451" font-size="11" font-weight="500" fill="#1a1a1a">Direct PostgreSQL queries</text>
+    <rect x="1092" y="439" width="56" height="14" rx="4" fill="#e65100"/>
+    <text x="1120" y="449" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">REPLACED</text>
+
+    <!-- ===== INFRASTRUCTURE ===== -->
+    <rect x="40" y="462" width="1120" height="22" fill="#f1f3f5"/>
+    <text x="56" y="477" font-size="8" font-weight="700" fill="#495057" letter-spacing="0.8">INFRASTRUCTURE</text>
+
+    <rect x="40" y="484" width="1120" height="32" fill="#fff3e0"/>
+    <rect x="40" y="484" width="4" height="32" fill="#e65100"/>
+    <text x="60" y="505" font-size="11" font-weight="500" fill="#1a1a1a">RDS PostgreSQL</text>
+    <text x="616" y="505" font-size="11" font-weight="500" fill="#1a1a1a">PostgreSQL 16 (StatefulSet)</text>
+    <rect x="1092" y="493" width="56" height="14" rx="4" fill="#e65100"/>
+    <text x="1120" y="503" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">REPLACED</text>
+
+    <rect x="40" y="516" width="1120" height="32" fill="#fff8f0"/>
+    <rect x="40" y="516" width="4" height="32" fill="#e65100"/>
+    <text x="60" y="537" font-size="11" font-weight="500" fill="#1a1a1a">AWS S3</text>
+    <text x="616" y="537" font-size="11" font-weight="500" fill="#1a1a1a">ODF / NooBaa (S3-compatible)</text>
+    <rect x="1092" y="525" width="56" height="14" rx="4" fill="#e65100"/>
+    <text x="1120" y="535" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">REPLACED</text>
+
+    <rect x="40" y="548" width="1120" height="32" fill="#fff3e0"/>
+    <rect x="40" y="548" width="4" height="32" fill="#e65100"/>
+    <text x="60" y="569" font-size="11" font-weight="500" fill="#1a1a1a">MSK (Kafka)</text>
+    <text x="616" y="569" font-size="11" font-weight="500" fill="#1a1a1a">AMQ Streams (Kafka)</text>
+    <rect x="1092" y="557" width="56" height="14" rx="4" fill="#e65100"/>
+    <text x="1120" y="567" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">REPLACED</text>
+
+    <rect x="40" y="580" width="1120" height="32" fill="#fff8f0"/>
+    <rect x="40" y="580" width="4" height="32" fill="#e65100"/>
+    <text x="60" y="601" font-size="11" font-weight="500" fill="#1a1a1a">ElastiCache</text>
+    <text x="616" y="601" font-size="11" font-weight="500" fill="#1a1a1a">Valkey 8</text>
+    <rect x="1092" y="589" width="56" height="14" rx="4" fill="#e65100"/>
+    <text x="1120" y="599" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">REPLACED</text>
+
+    <!-- ===== DEPLOYMENT ===== -->
+    <rect x="40" y="612" width="1120" height="22" fill="#f1f3f5"/>
+    <text x="56" y="627" font-size="8" font-weight="700" fill="#495057" letter-spacing="0.8">DEPLOYMENT</text>
+
+    <rect x="40" y="634" width="1120" height="32" fill="#fff3e0"/>
+    <rect x="40" y="634" width="4" height="32" fill="#e65100"/>
+    <text x="60" y="655" font-size="11" font-weight="500" fill="#1a1a1a">Clowder Operator</text>
+    <text x="616" y="655" font-size="11" font-weight="500" fill="#1a1a1a">Helm Chart</text>
+    <rect x="1092" y="643" width="56" height="14" rx="4" fill="#e65100"/>
+    <text x="1120" y="653" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">REPLACED</text>
+
+    <rect x="40" y="666" width="1120" height="32" fill="#fff8f0"/>
+    <rect x="40" y="666" width="4" height="32" fill="#e65100"/>
+    <text x="60" y="687" font-size="11" font-weight="500" fill="#1a1a1a">app-interface / AppSRE</text>
+    <text x="616" y="687" font-size="11" font-weight="500" fill="#1a1a1a">OpenShift 4.x (customer cluster)</text>
+    <rect x="1092" y="675" width="56" height="14" rx="4" fill="#e65100"/>
+    <text x="1120" y="685" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">REPLACED</text>
+
+    <!-- Column divider -->
+    <line x1="600" y1="118" x2="600" y2="698" stroke="#dee2e6" stroke-width="1"/>
+
+    <!-- Subtle row separators -->
+    <line x1="40" y1="172" x2="1160" y2="172" stroke="rgba(0,0,0,0.04)" stroke-width="0.5"/>
+    <line x1="40" y1="204" x2="1160" y2="204" stroke="rgba(0,0,0,0.04)" stroke-width="0.5"/>
+    <line x1="40" y1="290" x2="1160" y2="290" stroke="rgba(0,0,0,0.04)" stroke-width="0.5"/>
+    <line x1="40" y1="516" x2="1160" y2="516" stroke="rgba(0,0,0,0.04)" stroke-width="0.5"/>
+    <line x1="40" y1="548" x2="1160" y2="548" stroke="rgba(0,0,0,0.04)" stroke-width="0.5"/>
+    <line x1="40" y1="580" x2="1160" y2="580" stroke="rgba(0,0,0,0.04)" stroke-width="0.5"/>
+    <line x1="40" y1="666" x2="1160" y2="666" stroke="rgba(0,0,0,0.04)" stroke-width="0.5"/>
+  </g>
+
+  <!-- Table border -->
+  <rect x="40" y="86" width="1120" height="612" rx="8" fill="none" stroke="#dee2e6" stroke-width="1.5"/>
+
+  <!-- Unchanged components note -->
+  <text x="600" y="722" text-anchor="middle" font-size="10" fill="#868e96"><tspan font-weight="600" fill="#495057">Unchanged (10):</tspan> Ingress, Koku API, MASU, Celery Workers, Kafka Listener, ROS API, ROS Processor, Kruize, ROS Poller, ROS Housekeeper</text>
+
+  <!-- Stats summary -->
+  <g transform="translate(230,738)">
+    <rect width="8" height="8" rx="2" fill="#e65100"/>
+    <text x="14" y="8" font-size="9" fill="#495057"><tspan font-weight="700">11</tspan> replaced</text>
+    <rect x="95" width="8" height="8" rx="2" fill="#c62828"/>
+    <text x="109" y="8" font-size="9" fill="#495057"><tspan font-weight="700">1</tspan> removed</text>
+    <rect x="170" width="8" height="8" rx="2" fill="#283593"/>
+    <text x="184" y="8" font-size="9" fill="#495057"><tspan font-weight="700">1</tspan> merged</text>
+    <rect x="248" width="8" height="8" rx="2" fill="#1565c0"/>
+    <text x="262" y="8" font-size="9" fill="#495057"><tspan font-weight="700">1</tspan> kept (upgrade planned)</text>
+    <rect x="400" width="8" height="8" rx="2" fill="#90a4ae"/>
+    <text x="414" y="8" font-size="9" fill="#495057"><tspan font-weight="700">10</tspan> unchanged</text>
+  </g>
+
+  <!-- Footer -->
+  <text x="1160" y="766" text-anchor="end" font-size="8" fill="#adb5bd">Cost Management &#8226; SaaS &#8594; On-Prem Transition</text>
+</svg>

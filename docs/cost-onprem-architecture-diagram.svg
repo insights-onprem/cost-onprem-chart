@@ -1,0 +1,328 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 810" width="1440" height="810">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600;700&amp;display=swap');
+      text { font-family: 'Red Hat Display', 'Segoe UI', Arial, sans-serif; }
+    </style>
+    <filter id="sh" x="-3%" y="-3%" width="106%" height="106%">
+      <feDropShadow dx="0" dy="1" stdDeviation="3" flood-color="#000" flood-opacity="0.06"/>
+    </filter>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f8f9fa"/>
+      <stop offset="100%" stop-color="#edf0f4"/>
+    </linearGradient>
+    <marker id="ab" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto"><polygon points="0 0,7 2.5,0 5" fill="#1565c0"/></marker>
+    <marker id="ag" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto"><polygon points="0 0,7 2.5,0 5" fill="#2e7d32"/></marker>
+    <marker id="ap" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto"><polygon points="0 0,7 2.5,0 5" fill="#6a1b9a"/></marker>
+    <marker id="ay" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto"><polygon points="0 0,7 2.5,0 5" fill="#455a64"/></marker>
+    <marker id="ar" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto"><polygon points="0 0,7 2.5,0 5" fill="#c62828"/></marker>
+    <marker id="at" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto"><polygon points="0 0,7 2.5,0 5" fill="#00695c"/></marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1440" height="810" rx="16" fill="url(#bg)"/>
+
+  <!-- Title -->
+  <text x="720" y="36" text-anchor="middle" font-size="24" font-weight="700" fill="#1a1a1a">Cost Management On-Premise — Architecture</text>
+  <text x="720" y="54" text-anchor="middle" font-size="12" fill="#868e96">Helm chart deployment on OpenShift — all components running on a single cluster</text>
+
+  <!-- ==================== EXTERNAL ZONE ==================== -->
+  <rect x="30" y="68" width="1380" height="62" rx="14" fill="rgba(21,101,192,0.04)" stroke="#90caf9" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="52" y="90" font-size="9" font-weight="700" fill="#1565c0" letter-spacing="0.8">EXTERNAL</text>
+
+  <!-- Operator -->
+  <g filter="url(#sh)">
+    <rect x="130" y="76" width="220" height="44" rx="8" fill="#fff" stroke="#bbdefb" stroke-width="1.5"/>
+  </g>
+  <rect x="140" y="84" width="28" height="28" rx="7" fill="#1565c0"/>
+  <text x="154" y="103" text-anchor="middle" font-size="14" fill="#fff">&#9881;</text>
+  <text x="176" y="96" font-size="10" font-weight="600" fill="#1a1a1a">Cost Management Metrics Operator</text>
+  <text x="176" y="110" font-size="9" fill="#868e96">Uploads cost data from clusters</text>
+
+  <!-- Browser -->
+  <g filter="url(#sh)">
+    <rect x="380" y="76" width="180" height="44" rx="8" fill="#fff" stroke="#bbdefb" stroke-width="1.5"/>
+  </g>
+  <rect x="390" y="84" width="28" height="28" rx="7" fill="#00695c"/>
+  <text x="404" y="103" text-anchor="middle" font-size="14" fill="#fff">&#9787;</text>
+  <text x="426" y="96" font-size="11" font-weight="600" fill="#1a1a1a">Browser Users</text>
+  <text x="426" y="110" font-size="9" fill="#868e96">Dashboard &amp; APIs</text>
+
+  <!-- OpenShift Routes -->
+  <g filter="url(#sh)">
+    <rect x="590" y="76" width="200" height="44" rx="8" fill="#fff" stroke="#bbdefb" stroke-width="1.5"/>
+  </g>
+  <rect x="600" y="84" width="28" height="28" rx="7" fill="#e65100"/>
+  <text x="614" y="103" text-anchor="middle" font-size="14" fill="#fff">&#9729;</text>
+  <text x="636" y="96" font-size="11" font-weight="600" fill="#1a1a1a">OpenShift Routes</text>
+  <text x="636" y="110" font-size="9" fill="#868e96">HTTPS &amp; TLS termination</text>
+
+  <!-- ==================== AUTH ZONE (left) ==================== -->
+  <rect x="30" y="144" width="188" height="170" rx="14" fill="rgba(198,40,40,0.04)" stroke="#ef9a9a" stroke-width="1.5"/>
+  <text x="48" y="164" font-size="9" font-weight="700" fill="#c62828" letter-spacing="0.8">AUTHENTICATION</text>
+
+  <g filter="url(#sh)">
+    <rect x="42" y="174" width="164" height="50" rx="10" fill="#fff" stroke="#e9ecef" stroke-width="1.5"/>
+  </g>
+  <rect x="52" y="186" width="26" height="26" rx="6" fill="#c62828"/>
+  <text x="65" y="204" text-anchor="middle" font-size="12" fill="#fff">&#128274;</text>
+  <text x="86" y="198" font-size="11" font-weight="600" fill="#1a1a1a">Keycloak</text>
+  <text x="86" y="212" font-size="9" fill="#868e96">OIDC &amp; JWT tokens</text>
+
+  <g filter="url(#sh)">
+    <rect x="42" y="230" width="164" height="50" rx="10" fill="#fff" stroke="#e9ecef" stroke-width="1.5"/>
+  </g>
+  <rect x="52" y="242" width="26" height="26" rx="6" fill="#c62828"/>
+  <text x="65" y="260" text-anchor="middle" font-size="12" fill="#fff">&#9787;</text>
+  <text x="86" y="254" font-size="11" font-weight="600" fill="#1a1a1a">User Mgmt</text>
+  <text x="86" y="268" font-size="9" fill="#868e96">Realm: kubernetes</text>
+
+  <!-- ==================== GATEWAY ZONE (right of auth) ==================== -->
+  <rect x="230" y="144" width="200" height="170" rx="14" fill="rgba(40,53,147,0.05)" stroke="#c5cae9" stroke-width="1.5"/>
+  <text x="248" y="164" font-size="9" font-weight="700" fill="#283593" letter-spacing="0.8">API GATEWAY</text>
+
+  <g filter="url(#sh)">
+    <rect x="242" y="174" width="176" height="50" rx="10" fill="#fff" stroke="#e9ecef" stroke-width="1.5"/>
+  </g>
+  <rect x="252" y="186" width="26" height="26" rx="6" fill="#283593"/>
+  <text x="265" y="204" text-anchor="middle" font-size="12" fill="#fff">&#9741;</text>
+  <text x="286" y="198" font-size="11" font-weight="600" fill="#1a1a1a">Envoy Gateway</text>
+  <text x="286" y="212" font-size="9" fill="#868e96">JWT auth &amp; routing</text>
+
+  <g filter="url(#sh)">
+    <rect x="242" y="230" width="176" height="50" rx="10" fill="#fff" stroke="#e9ecef" stroke-width="1.5"/>
+  </g>
+  <rect x="252" y="242" width="26" height="26" rx="6" fill="#283593"/>
+  <text x="265" y="260" text-anchor="middle" font-size="12" fill="#fff">&#8644;</text>
+  <text x="286" y="254" font-size="11" font-weight="600" fill="#1a1a1a">Path Routing</text>
+  <text x="286" y="268" font-size="9" fill="#868e96">/api/* dispatch</text>
+
+  <!-- ==================== INFRASTRUCTURE ZONE ==================== -->
+  <rect x="442" y="144" width="968" height="110" rx="14" fill="rgba(69,90,100,0.04)" stroke="#b0bec5" stroke-width="1.5"/>
+  <text x="460" y="164" font-size="9" font-weight="700" fill="#455a64" letter-spacing="0.8">INFRASTRUCTURE</text>
+
+  <!-- PostgreSQL -->
+  <g filter="url(#sh)">
+    <rect x="454" y="174" width="210" height="50" rx="10" fill="#fff" stroke="#e9ecef" stroke-width="1.5"/>
+  </g>
+  <rect x="464" y="186" width="26" height="26" rx="6" fill="#1565c0"/>
+  <text x="477" y="203" text-anchor="middle" font-size="11" fill="#fff">DB</text>
+  <text x="498" y="198" font-size="11" font-weight="600" fill="#1a1a1a">PostgreSQL 16</text>
+  <text x="498" y="212" font-size="9" fill="#868e96">3 DBs: koku, ros, kruize</text>
+
+  <!-- S3 -->
+  <g filter="url(#sh)">
+    <rect x="674" y="174" width="180" height="50" rx="10" fill="#fff" stroke="#e9ecef" stroke-width="1.5"/>
+  </g>
+  <rect x="684" y="186" width="26" height="26" rx="6" fill="#e65100"/>
+  <text x="697" y="203" text-anchor="middle" font-size="11" fill="#fff">S3</text>
+  <text x="718" y="198" font-size="11" font-weight="600" fill="#1a1a1a">S3 Storage</text>
+  <text x="718" y="212" font-size="9" fill="#868e96">Upload &amp; data buckets</text>
+
+  <!-- Kafka -->
+  <g filter="url(#sh)">
+    <rect x="864" y="174" width="180" height="50" rx="10" fill="#fff" stroke="#e9ecef" stroke-width="1.5"/>
+  </g>
+  <rect x="874" y="186" width="26" height="26" rx="6" fill="#455a64"/>
+  <text x="887" y="204" text-anchor="middle" font-size="12" fill="#fff">&#9993;</text>
+  <text x="908" y="198" font-size="11" font-weight="600" fill="#1a1a1a">Kafka</text>
+  <text x="908" y="212" font-size="9" fill="#868e96">Event streaming (4 topics)</text>
+
+  <!-- Valkey -->
+  <g filter="url(#sh)">
+    <rect x="1054" y="174" width="180" height="50" rx="10" fill="#fff" stroke="#e9ecef" stroke-width="1.5"/>
+  </g>
+  <rect x="1064" y="186" width="26" height="26" rx="6" fill="#d32f2f"/>
+  <text x="1077" y="204" text-anchor="middle" font-size="12" fill="#fff">&#9776;</text>
+  <text x="1098" y="198" font-size="11" font-weight="600" fill="#1a1a1a">Valkey 8</text>
+  <text x="1098" y="212" font-size="9" fill="#868e96">Task queue &amp; cache</text>
+
+  <!-- ==================== UI ZONE (leftmost) ==================== -->
+  <rect x="30" y="326" width="250" height="290" rx="14" fill="rgba(0,105,92,0.04)" stroke="#80cbc4" stroke-width="1.5"/>
+  <text x="48" y="348" font-size="9" font-weight="700" fill="#00695c" letter-spacing="0.8">USER INTERFACE</text>
+
+  <!-- UI -->
+  <g filter="url(#sh)">
+    <rect x="42" y="358" width="226" height="50" rx="10" fill="#fff" stroke="#e9ecef" stroke-width="1.5"/>
+  </g>
+  <rect x="52" y="370" width="26" height="26" rx="6" fill="#00695c"/>
+  <text x="65" y="388" text-anchor="middle" font-size="11" fill="#fff">&#9633;</text>
+  <text x="86" y="382" font-size="11" font-weight="600" fill="#1a1a1a">Cost Management UI</text>
+  <text x="86" y="396" font-size="9" fill="#868e96">Dashboard, reports &amp; IAM</text>
+
+  <!-- OAuth2 Proxy -->
+  <g filter="url(#sh)">
+    <rect x="42" y="416" width="226" height="50" rx="10" fill="#fff" stroke="#e9ecef" stroke-width="1.5"/>
+  </g>
+  <rect x="52" y="428" width="26" height="26" rx="6" fill="#00897b"/>
+  <text x="65" y="446" text-anchor="middle" font-size="11" fill="#fff">&#9741;</text>
+  <text x="86" y="440" font-size="11" font-weight="600" fill="#1a1a1a">OAuth2 Proxy</text>
+  <text x="86" y="454" font-size="9" fill="#868e96">Keycloak OIDC sidecar</text>
+
+  <!-- Capabilities -->
+  <rect x="42" y="478" width="226" height="100" rx="8" fill="#e0f2f1"/>
+  <text x="54" y="496" font-size="9.5" font-weight="600" fill="#00695c">CAPABILITIES</text>
+  <circle cx="58" cy="514" r="2.5" fill="#00695c"/>
+  <text x="68" y="518" font-size="10" fill="#495057">Cost trends &amp; breakdown</text>
+  <circle cx="58" cy="532" r="2.5" fill="#00695c"/>
+  <text x="68" y="536" font-size="10" fill="#495057">Per-cluster cost allocation</text>
+  <circle cx="58" cy="550" r="2.5" fill="#00695c"/>
+  <text x="68" y="554" font-size="10" fill="#495057">Resource optimization recs</text>
+  <circle cx="58" cy="568" r="2.5" fill="#00695c"/>
+  <text x="68" y="572" font-size="10" fill="#495057">Cost model management</text>
+
+  <!-- ==================== COST MANAGEMENT ZONE ==================== -->
+  <rect x="292" y="326" width="580" height="290" rx="14" fill="rgba(46,125,50,0.04)" stroke="#a5d6a7" stroke-width="1.5"/>
+  <text x="310" y="348" font-size="9" font-weight="700" fill="#2e7d32" letter-spacing="0.8">COST MANAGEMENT (KOKU)</text>
+
+  <!-- Ingress -->
+  <g filter="url(#sh)">
+    <rect x="304" y="358" width="172" height="50" rx="10" fill="#fff" stroke="#e9ecef" stroke-width="1.5"/>
+  </g>
+  <rect x="314" y="370" width="26" height="26" rx="6" fill="#2e7d32"/>
+  <text x="327" y="388" text-anchor="middle" font-size="11" fill="#fff">&#8593;</text>
+  <text x="348" y="382" font-size="11" font-weight="600" fill="#1a1a1a">Ingress</text>
+  <text x="348" y="396" font-size="9" fill="#868e96">Receives uploads, stages to S3</text>
+
+  <!-- Koku API -->
+  <g filter="url(#sh)">
+    <rect x="484" y="358" width="172" height="50" rx="10" fill="#fff" stroke="#e9ecef" stroke-width="1.5"/>
+  </g>
+  <rect x="494" y="370" width="26" height="26" rx="6" fill="#2e7d32"/>
+  <text x="507" y="388" text-anchor="middle" font-size="11" fill="#fff">&#10003;</text>
+  <text x="528" y="382" font-size="11" font-weight="600" fill="#1a1a1a">Koku API</text>
+  <text x="528" y="396" font-size="9" fill="#868e96">REST API &amp; Sources</text>
+
+  <!-- Kafka Listener -->
+  <g filter="url(#sh)">
+    <rect x="664" y="358" width="196" height="50" rx="10" fill="#fff" stroke="#e9ecef" stroke-width="1.5"/>
+  </g>
+  <rect x="674" y="370" width="26" height="26" rx="6" fill="#388e3c"/>
+  <text x="687" y="388" text-anchor="middle" font-size="11" fill="#fff">&#9993;</text>
+  <text x="708" y="382" font-size="11" font-weight="600" fill="#1a1a1a">Kafka Listener</text>
+  <text x="708" y="396" font-size="9" fill="#868e96">Consumes upload events</text>
+
+  <!-- MASU -->
+  <g filter="url(#sh)">
+    <rect x="304" y="416" width="172" height="50" rx="10" fill="#fff" stroke="#e9ecef" stroke-width="1.5"/>
+  </g>
+  <rect x="314" y="428" width="26" height="26" rx="6" fill="#388e3c"/>
+  <text x="327" y="446" text-anchor="middle" font-size="11" fill="#fff">&#9881;</text>
+  <text x="348" y="440" font-size="11" font-weight="600" fill="#1a1a1a">MASU Processor</text>
+  <text x="348" y="454" font-size="9" fill="#868e96">Data processing engine</text>
+
+  <!-- Celery Workers -->
+  <g filter="url(#sh)">
+    <rect x="484" y="416" width="376" height="50" rx="10" fill="#fff" stroke="#e9ecef" stroke-width="1.5"/>
+  </g>
+  <rect x="494" y="428" width="26" height="26" rx="6" fill="#1b5e20"/>
+  <text x="507" y="446" text-anchor="middle" font-size="11" fill="#fff">&#9881;</text>
+  <text x="528" y="440" font-size="11" font-weight="600" fill="#1a1a1a">Celery Workers (5 queues)</text>
+  <text x="528" y="454" font-size="9" fill="#868e96">Default, Priority, OCP, Summary, Cost Model + Scheduler</text>
+
+  <!-- Data flow box -->
+  <rect x="304" y="478" width="556" height="52" rx="8" fill="#f1f8e9" stroke="#c8e6c9" stroke-width="1"/>
+  <text x="314" y="496" font-size="9" font-weight="600" fill="#2e7d32" letter-spacing="0.5">DATA FLOW</text>
+  <text x="314" y="514" font-size="10" fill="#495057">Operator &#8594; Ingress &#8594; S3 + Kafka &#8594; Listener &#8594; Valkey &#8594; Workers &#8594; PostgreSQL &#8594; API</text>
+
+  <!-- ==================== ROS ZONE ==================== -->
+  <rect x="884" y="326" width="526" height="290" rx="14" fill="rgba(106,27,154,0.04)" stroke="#ce93d8" stroke-width="1.5"/>
+  <text x="902" y="348" font-size="9" font-weight="700" fill="#6a1b9a" letter-spacing="0.8">RESOURCE OPTIMIZATION (ROS)</text>
+
+  <!-- ROS API -->
+  <g filter="url(#sh)">
+    <rect x="896" y="358" width="240" height="50" rx="10" fill="#fff" stroke="#e9ecef" stroke-width="1.5"/>
+  </g>
+  <rect x="906" y="370" width="26" height="26" rx="6" fill="#6a1b9a"/>
+  <text x="919" y="388" text-anchor="middle" font-size="11" fill="#fff">&#10003;</text>
+  <text x="940" y="382" font-size="11" font-weight="600" fill="#1a1a1a">ROS API</text>
+  <text x="940" y="396" font-size="9" fill="#868e96">Recommendations endpoint</text>
+
+  <!-- ROS Processor -->
+  <g filter="url(#sh)">
+    <rect x="1148" y="358" width="250" height="50" rx="10" fill="#fff" stroke="#e9ecef" stroke-width="1.5"/>
+  </g>
+  <rect x="1158" y="370" width="26" height="26" rx="6" fill="#6a1b9a"/>
+  <text x="1171" y="388" text-anchor="middle" font-size="11" fill="#fff">&#9881;</text>
+  <text x="1192" y="382" font-size="11" font-weight="600" fill="#1a1a1a">ROS Processor</text>
+  <text x="1192" y="396" font-size="9" fill="#868e96">Processes workload data</text>
+
+  <!-- Recommendation Poller -->
+  <g filter="url(#sh)">
+    <rect x="896" y="416" width="240" height="50" rx="10" fill="#fff" stroke="#e9ecef" stroke-width="1.5"/>
+  </g>
+  <rect x="906" y="428" width="26" height="26" rx="6" fill="#8e24aa"/>
+  <text x="919" y="446" text-anchor="middle" font-size="11" fill="#fff">&#8635;</text>
+  <text x="940" y="440" font-size="11" font-weight="600" fill="#1a1a1a">Rec. Poller</text>
+  <text x="940" y="454" font-size="9" fill="#868e96">Polls Kruize for results</text>
+
+  <!-- Kruize -->
+  <g filter="url(#sh)">
+    <rect x="1148" y="416" width="250" height="50" rx="10" fill="#fff" stroke="#e9ecef" stroke-width="1.5"/>
+  </g>
+  <rect x="1158" y="428" width="26" height="26" rx="6" fill="#8e24aa"/>
+  <text x="1171" y="446" text-anchor="middle" font-size="11" fill="#fff">&#9733;</text>
+  <text x="1192" y="440" font-size="11" font-weight="600" fill="#1a1a1a">Kruize Engine</text>
+  <text x="1192" y="454" font-size="9" fill="#868e96">Optimization analysis</text>
+
+  <!-- Housekeeper -->
+  <g filter="url(#sh)">
+    <rect x="896" y="478" width="502" height="46" rx="10" fill="#fff" stroke="#e9ecef" stroke-width="1.5"/>
+  </g>
+  <rect x="906" y="488" width="26" height="26" rx="6" fill="#7b1fa2"/>
+  <text x="919" y="506" text-anchor="middle" font-size="11" fill="#fff">&#8962;</text>
+  <text x="940" y="502" font-size="11" font-weight="600" fill="#1a1a1a">Housekeeper</text>
+  <text x="1028" y="502" font-size="9" fill="#868e96">Source monitoring &amp; maintenance</text>
+
+  <!-- ROS Data flow -->
+  <rect x="896" y="532" width="502" height="38" rx="8" fill="#f3e5f5" stroke="#e1bee7" stroke-width="1"/>
+  <text x="906" y="548" font-size="9" font-weight="600" fill="#6a1b9a" letter-spacing="0.5">DATA FLOW</text>
+  <text x="906" y="562" font-size="10" fill="#495057">Kafka &#8594; Processor &#8594; Kruize &#8594; Poller &#8594; PostgreSQL &#8594; ROS API</text>
+
+  <!-- ==================== FLOW ARROWS (zone-to-zone only) ==================== -->
+  <!-- External → Gateway -->
+  <path d="M 240 120 L 330 144" stroke="#1565c0" stroke-width="1.8" fill="none" marker-end="url(#ab)"/>
+  <text x="270" y="126" font-size="8.5" font-weight="600" fill="#1565c0">HTTPS</text>
+
+  <!-- Auth → Gateway (JWT) -->
+  <path d="M 206 200 L 242 200" stroke="#c62828" stroke-width="1.8" fill="none" marker-end="url(#ar)"/>
+  <text x="210" y="194" font-size="8.5" font-weight="600" fill="#c62828">JWT</text>
+
+  <!-- Auth → UI (OIDC) -->
+  <path d="M 124 314 L 155 326" stroke="#c62828" stroke-width="1.5" fill="none" marker-end="url(#ar)" stroke-dasharray="5,3"/>
+  <text x="100" y="310" font-size="8.5" font-weight="600" fill="#c62828">OIDC login</text>
+
+  <!-- UI → Gateway (API calls) -->
+  <path d="M 200 326 L 330 314" stroke="#00695c" stroke-width="1.8" fill="none" marker-end="url(#at)"/>
+  <text x="260" y="316" font-size="8.5" font-weight="600" fill="#00695c">/api/*</text>
+
+  <!-- Gateway → Cost Mgmt -->
+  <path d="M 380 314 C 370 320, 340 328, 310 340" stroke="#283593" stroke-width="1.8" fill="none" marker-end="url(#ab)"/>
+  <text x="350" y="330" font-size="8.5" font-weight="600" fill="#283593">routes</text>
+
+  <!-- Cost Mgmt → Infrastructure -->
+  <path d="M 582 326 L 700 254" stroke="#455a64" stroke-width="1.8" fill="none" marker-end="url(#ay)"/>
+  <text x="610" y="280" font-size="8.5" font-weight="600" fill="#455a64">DB, S3, Kafka, Valkey</text>
+
+  <!-- ROS → Infrastructure -->
+  <path d="M 1100 326 L 1060 254" stroke="#455a64" stroke-width="1.8" fill="none" marker-end="url(#ay)"/>
+
+  <!-- ==================== LEGEND ==================== -->
+  <rect x="30" y="640" width="1380" height="44" rx="10" fill="rgba(255,255,255,0.6)"/>
+  <rect x="50" y="656" width="10" height="10" rx="3" fill="#283593"/>
+  <text x="66" y="665" font-size="9" fill="#868e96">Gateway &amp; Auth</text>
+  <rect x="170" y="656" width="10" height="10" rx="3" fill="#2e7d32"/>
+  <text x="186" y="665" font-size="9" fill="#868e96">Cost Processing</text>
+  <rect x="300" y="656" width="10" height="10" rx="3" fill="#6a1b9a"/>
+  <text x="316" y="665" font-size="9" fill="#868e96">Resource Optimization</text>
+  <rect x="460" y="656" width="10" height="10" rx="3" fill="#455a64"/>
+  <text x="476" y="665" font-size="9" fill="#868e96">Infrastructure</text>
+  <rect x="580" y="656" width="10" height="10" rx="3" fill="#00695c"/>
+  <text x="596" y="665" font-size="9" fill="#868e96">UI</text>
+  <rect x="640" y="656" width="10" height="10" rx="3" fill="#c62828"/>
+  <text x="656" y="665" font-size="9" fill="#868e96">Authentication</text>
+
+  <!-- Footer -->
+  <text x="1410" y="796" text-anchor="end" font-size="9" fill="#adb5bd">Cost Management On-Premise &#8226; Helm Chart Architecture</text>
+  <text x="30" y="796" font-size="9" fill="#adb5bd">OpenShift 4.x</text>
+</svg>

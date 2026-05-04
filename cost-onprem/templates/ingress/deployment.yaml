@@ -81,7 +81,7 @@ spec:
               value: /etc/aws/config
 
             # Kafka configuration
-            - name: INGRESS_KAFKA_BROKERS
+            - name: INGRESS_KAFKABROKERS
               value: {{ include "cost-onprem.kafka.bootstrapServers" . | quote }}
             - name: INGRESS_KAFKAANNOUNCETOPIC
               value: {{ .Values.ingress.kafka.topic | quote }}

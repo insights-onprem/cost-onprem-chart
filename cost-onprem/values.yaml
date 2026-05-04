@@ -37,7 +37,7 @@ global:
   initContainers:
     waitFor:
       repository: registry.access.redhat.com/ubi9/ubi-minimal
-      tag: "latest"
+      tag: "9.7"
 
 # -----------------------------------------------------------------------------
 # ROS (Resource Optimization Service) - Top-level Service
@@ -147,7 +147,7 @@ costManagement:
 
     image:
       repository: quay.io/redhat-services-prod/cost-mgmt-dev-tenant/koku
-      tag: "917373e"
+      tag: "72bbc6a"
       pullPolicy: Always
 
     replicas: 1
@@ -498,8 +498,8 @@ kruize:
 # Uses insights-ingress-go which requires INGRESS_* prefixed environment variables
 ingress:
   image:
-    repository: quay.io/insights-onprem/insights-ingress-go
-    tag: "latest"
+    repository: quay.io/redhat-user-workloads/hcc-integrations-tenant/ingress
+    tag: "3a7a2cf"
     pullPolicy: Always
 
   # Server configuration
@@ -591,8 +591,10 @@ database:
   # Unified Database Server Configuration
   server:
     image:
-      repository: quay.io/insights-onprem/postgresql
-      tag: "16"
+      repository: registry.redhat.io/rhel10/postgresql-16
+      tag: "10.1"
+      # Image entrypoint expects POSTGRESQL_* or POSTGRESQL_ADMIN_PASSWORD; chart supplies
+      # the latter. Secret key postgres-user must be the DB superuser name (default: postgres).
 
     storage:
       size: 30Gi  # Total storage for all databases (sum of individual DBs)
@@ -666,7 +668,7 @@ valkey:
   deploy: true
   image:
     repository: registry.redhat.io/rhel10/valkey-8
-    tag: "latest"
+    tag: "10.1"
     pullPolicy: IfNotPresent
 
   # Connection settings
@@ -853,7 +855,7 @@ ui:
   app:
     image:
       repository: quay.io/insights-onprem/koku-ui-onprem
-      tag: "latest"
+      tag: "a15e49551a33ed1718f1434c012cc38a2174fc64"
       pullPolicy: IfNotPresent
     port: 8080
     resources:

@@ -49,6 +49,14 @@ jobs:
           fi
           echo "Current version '$CURRENT_VERSION' is valid semantic version"
 
+          PREREL=$(semver get prerel "$CURRENT_VERSION")
+          if [ -n "$PREREL" ]; then
+            echo "is_rc=true" >> $GITHUB_OUTPUT
+            echo "Version has pre-release component: $PREREL"
+          else
+            echo "is_rc=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Get latest release version
         id: latest_release
         run: |
@@ -76,11 +84,13 @@ jobs:
           CURRENT_VERSION="${{ steps.current_version.outputs.version }}"
           LATEST_VERSION="${{ steps.latest_release.outputs.version }}"
           IS_FIRST_RELEASE="${{ steps.latest_release.outputs.is_first_release }}"
+          IS_RC="${{ steps.current_version.outputs.is_rc }}"
 
           echo "=== Version Comparison ==="
           echo "Current version: $CURRENT_VERSION"
           echo "Latest release:  $LATEST_VERSION"
           echo "First release:   $IS_FIRST_RELEASE"
+          echo "Is RC:           $IS_RC"
           echo ""
 
           if [ "$IS_FIRST_RELEASE" = "true" ]; then
@@ -105,20 +115,26 @@ jobs:
             1)
               echo "Version bumped: $LATEST_VERSION -> $CURRENT_VERSION"
               echo "result=new_version" >> $GITHUB_OUTPUT
-              echo "message=Version bumped from $LATEST_VERSION to $CURRENT_VERSION - a release will be created on merge" >> $GITHUB_OUTPUT
               echo "will_release=true" >> $GITHUB_OUTPUT
 
-              NEXT_MAJOR=$(semver bump major "$LATEST_VERSION")
-              NEXT_MINOR=$(semver bump minor "$LATEST_VERSION")
-              NEXT_PATCH=$(semver bump patch "$LATEST_VERSION")
-              if [ "$(semver compare "$CURRENT_VERSION" "$NEXT_MAJOR")" -eq 0 ]; then
-                echo "bump_type=major" >> $GITHUB_OUTPUT
-              elif [ "$(semver compare "$CURRENT_VERSION" "$NEXT_MINOR")" -eq 0 ]; then
-                echo "bump_type=minor" >> $GITHUB_OUTPUT
-              elif [ "$(semver compare "$CURRENT_VERSION" "$NEXT_PATCH")" -eq 0 ]; then
-                echo "bump_type=patch" >> $GITHUB_OUTPUT
+              if [ "$IS_RC" = "true" ]; then
+                echo "bump_type=rc" >> $GITHUB_OUTPUT
+                echo "message=RC version $CURRENT_VERSION (pre-release from $LATEST_VERSION) - an RC release will be created on merge" >> $GITHUB_OUTPUT
               else
-                echo "bump_type=custom" >> $GITHUB_OUTPUT
+                echo "message=Version bumped from $LATEST_VERSION to $CURRENT_VERSION - a release will be created on merge" >> $GITHUB_OUTPUT
+
+                NEXT_MAJOR=$(semver bump major "$LATEST_VERSION")
+                NEXT_MINOR=$(semver bump minor "$LATEST_VERSION")
+                NEXT_PATCH=$(semver bump patch "$LATEST_VERSION")
+                if [ "$(semver compare "$CURRENT_VERSION" "$NEXT_MAJOR")" -eq 0 ]; then
+                  echo "bump_type=major" >> $GITHUB_OUTPUT
+                elif [ "$(semver compare "$CURRENT_VERSION" "$NEXT_MINOR")" -eq 0 ]; then
+                  echo "bump_type=minor" >> $GITHUB_OUTPUT
+                elif [ "$(semver compare "$CURRENT_VERSION" "$NEXT_PATCH")" -eq 0 ]; then
+                  echo "bump_type=patch" >> $GITHUB_OUTPUT
+                else
+                  echo "bump_type=custom" >> $GITHUB_OUTPUT
+                fi
               fi
               ;;
             0)
@@ -147,6 +163,7 @@ jobs:
             echo "  Patch: $(semver bump patch $LATEST_VERSION)"
             echo "  Minor: $(semver bump minor $LATEST_VERSION)"
             echo "  Major: $(semver bump major $LATEST_VERSION)"
+            echo "  RC:    $(semver bump patch $LATEST_VERSION)-rc1"
             echo ""
             echo "Update cost-onprem/Chart.yaml:"
             echo "  version: $(semver bump patch $LATEST_VERSION)"
@@ -159,6 +176,7 @@ jobs:
           MESSAGE="${{ steps.version_check.outputs.message }}"
           BUMP_TYPE="${{ steps.version_check.outputs.bump_type }}"
           WILL_RELEASE="${{ steps.version_check.outputs.will_release }}"
+          IS_RC="${{ steps.current_version.outputs.is_rc }}"
 
           echo "## Version Check Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -199,6 +217,7 @@ jobs:
           echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Current Chart Version | \`${{ steps.current_version.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Latest Release | \`${{ steps.latest_release.outputs.version || 'None' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Is RC | $IS_RC |" >> $GITHUB_STEP_SUMMARY
           echo "| Will Release | $WILL_RELEASE |" >> $GITHUB_STEP_SUMMARY
 
       - name: Comment on PR (version regression)
@@ -221,7 +240,8 @@ jobs:
             The chart version must be **>=** the latest release. Suggested fixes:
             - \`$(semver bump patch ${{ steps.latest_release.outputs.version }})\` for bug fixes
             - \`$(semver bump minor ${{ steps.latest_release.outputs.version }})\` for new features
-            - \`$(semver bump major ${{ steps.latest_release.outputs.version }})\` for breaking changes`;
+            - \`$(semver bump major ${{ steps.latest_release.outputs.version }})\` for breaking changes
+            - \`$(semver bump patch ${{ steps.latest_release.outputs.version }})-rc1\` for release candidates`;
 
             github.rest.issues.createComment({
               issue_number: context.issue.number,
@@ -230,11 +250,43 @@ jobs:
               body: message
             });
 
-      - name: Comment on PR (release note)
+      - name: Comment on PR (RC release note)
         if: >-
           github.event_name == 'pull_request' &&
           github.event.pull_request.head.repo.full_name == github.repository &&
-          steps.version_check.outputs.result == 'new_version'
+          steps.version_check.outputs.result == 'new_version' &&
+          steps.current_version.outputs.is_rc == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const message = `## RC Release Pending
+
+            This PR creates a **release candidate** version.
+
+            | | Version |
+            |---|---------|
+            | **Latest stable release** | \`${{ steps.latest_release.outputs.version || 'None' }}\` |
+            | **This PR (RC)** | \`${{ steps.current_version.outputs.version }}\` |
+
+            On merge, release **cost-onprem-${{ steps.current_version.outputs.version }}** will be created as a **pre-release**.
+
+            - It will **not** appear as the latest release
+            - Helm users must use \`--devel\` to see it: \`helm search repo --devel cost-onprem\`
+            - Promote to stable with: \`./scripts/bump-version.sh --patch\``;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: message
+            });
+
+      - name: Comment on PR (stable release note)
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          steps.version_check.outputs.result == 'new_version' &&
+          steps.current_version.outputs.is_rc != 'true'
         uses: actions/github-script@v7
         with:
           script: |

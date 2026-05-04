@@ -231,6 +231,8 @@ oc get namespace my-app-namespace --show-labels | grep cost_management_optimizat
 
 ## Data Upload Process
 
+![Data Processing Flow](../data-processing-flow.svg)
+
 ### Upload Workflow
 
 ```
