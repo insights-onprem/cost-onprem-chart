@@ -131,8 +131,15 @@ def authenticated_context(
     page.fill('input[name="password"]', password)
     page.click('input[type="submit"], button[type="submit"]')
     
-    # Wait for redirect back to UI
-    page.wait_for_url(f"{ui_url}**", timeout=15000)
+    # Wait for redirect back to UI - use wildcard pattern that matches any path
+    # After login, UI may redirect to /openshift/cost-management or other paths
+    from urllib.parse import urlparse
+    parsed = urlparse(ui_url)
+    ui_host_pattern = f"**{parsed.netloc}**"
+    page.wait_for_url(ui_host_pattern, timeout=15000)
+    
+    # Wait for page to fully load
+    page.wait_for_load_state("networkidle")
     
     page.close()
     
@@ -140,47 +147,37 @@ def authenticated_context(
     context.close()
 
 
-@pytest.fixture(scope="function")
-def authenticated_page(authenticated_context: BrowserContext) -> Generator[Page, None, None]:
-    """Create a page with authenticated session."""
-    page = authenticated_context.new_page()
-    yield page
-    page.close()
-
-
 # =============================================================================
 # Screenshot/Trace Fixtures
 # =============================================================================
 
 
-@pytest.fixture(scope="function", autouse=True)
-def capture_on_failure(request, page: Page):
-    """Capture screenshot and trace on test failure.
+@pytest.fixture(scope="function")
+def authenticated_page(authenticated_context: BrowserContext, request) -> Generator[Page, None, None]:
+    """Create a page with authenticated session.
     
-    Automatically captures debugging artifacts when a test fails.
-    Artifacts are saved to tests/reports/screenshots/
+    Automatically captures screenshot on test failure.
     """
-    yield
+    page = authenticated_context.new_page()
+    yield page
     
-    if request.node.rep_call.failed if hasattr(request.node, "rep_call") else False:
-        # Create screenshots directory
+    # Capture screenshot on failure
+    if hasattr(request.node, "rep_call") and request.node.rep_call.failed:
         screenshots_dir = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
             "reports",
             "screenshots"
         )
         os.makedirs(screenshots_dir, exist_ok=True)
-        
-        # Generate filename from test name
         test_name = request.node.name.replace("/", "_").replace("::", "_")
-        
-        # Capture screenshot
         screenshot_path = os.path.join(screenshots_dir, f"{test_name}.png")
         try:
             page.screenshot(path=screenshot_path, full_page=True)
             print(f"\n📸 Screenshot saved: {screenshot_path}")
         except Exception as e:
             print(f"\n⚠️ Failed to capture screenshot: {e}")
+    
+    page.close()
 
 
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)
