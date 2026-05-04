@@ -855,7 +855,7 @@ ui:
   app:
     image:
       repository: quay.io/insights-onprem/koku-ui-onprem
-      tag: "latest-861fb4695015a95b6887bd9e433f940a00ffe494"
+      tag: "a15e49551a33ed1718f1434c012cc38a2174fc64"
       pullPolicy: IfNotPresent
     port: 8080
     resources:
