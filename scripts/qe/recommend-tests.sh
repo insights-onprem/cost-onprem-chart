@@ -296,6 +296,16 @@ fi
 output_var "suggested_profile" "$max_profile"
 output_var "needs_deeper_testing" "$needs_deeper"
 
+# Map profile to Prow /test command
+case "$max_profile" in
+    smoke)    prow_cmd="/test e2e" ;;
+    extended) prow_cmd="/test e2e-iqe-extended" ;;
+    stable)   prow_cmd="/test e2e-iqe-stable" ;;
+    full)     prow_cmd="/test e2e-iqe-stable" ;;
+    *)        prow_cmd="/test e2e" ;;
+esac
+output_var "prow_command" "$prow_cmd"
+
 if [[ "$has_component" == "true" ]]; then
     table_header="| Component | Impact | Description |\n|-----------|--------|-------------|"
     output_multiline "component_table" "${table_header}\n${component_rows}"

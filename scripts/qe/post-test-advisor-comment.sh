@@ -40,7 +40,6 @@ fi
 
 REPO="${GITHUB_REPOSITORY:-}"
 if [[ -z "$REPO" ]]; then
-    # Try to detect from git remote
     REPO=$(git remote get-url origin 2>/dev/null | sed -E 's|.*github.com[:/]||; s|\.git$||' || true)
 fi
 
@@ -51,6 +50,20 @@ fi
 
 TABLE="${COMPONENT_TABLE:-}"
 
+# --- Map profile to Prow job name -----------------------------------------
+
+prow_command_for_profile() {
+    case "$1" in
+        smoke)    echo "/test e2e" ;;
+        extended) echo "/test e2e-iqe-extended" ;;
+        stable)   echo "/test e2e-iqe-stable" ;;
+        full)     echo "/test e2e-iqe-stable" ;;
+        *)        echo "/test e2e" ;;
+    esac
+}
+
+PROW_COMMAND=$(prow_command_for_profile "$PROFILE")
+
 # --- Build comment body ----------------------------------------------------
 
 BODY="[TEST-ADVISOR] This PR includes changes that may benefit from deeper IQE testing beyond the default \`smoke\` profile.
@@ -60,6 +73,10 @@ BODY="[TEST-ADVISOR] This PR includes changes that may benefit from deeper IQE t
 ${TABLE}
 
 **Recommended profile:** \`${PROFILE}\`
+**Recommended Prow command:**
+\`\`\`
+${PROW_COMMAND}
+\`\`\`
 
 <details>
 <summary>How to trigger additional tests</summary>
@@ -83,6 +100,19 @@ The default \`e2e\` job (smoke profile) runs automatically. To run a deeper prof
 \`\`\`bash
 ./scripts/deploy-test-cost-onprem.sh --iqe-only --iqe-profile ${PROFILE}
 \`\`\`
+
+</details>
+
+<details>
+<summary>Upstream CI verification</summary>
+
+Before merging, confirm the updated components passed CI in their upstream repos:
+
+- **koku**: [GitHub Actions](https://github.com/project-koku/koku/actions)
+- **kruize/autotune**: [GitHub Actions](https://github.com/kruize/autotune/actions)
+- **ros-ocp-backend**: [GitHub Actions](https://github.com/project-koku/ros-ocp-backend/actions)
+
+Check that the image tag referenced in this PR corresponds to a passing build upstream.
 
 </details>"
 

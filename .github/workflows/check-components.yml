@@ -1,13 +1,19 @@
 # Check Components Workflow
 #
-# Monitors container images tagged as "latest" in values.yaml for updates.
-# When changes are detected, updates component-updates.json and creates a PR
-# to trigger the test suite. Does NOT modify values.yaml or Chart.yaml -
-# version bumps are left to human reviewers.
+# Monitors container images in values.yaml for upstream updates.
+# When changes are detected:
+#   1. Updates values.yaml with new concrete tags
+#   2. Increments Chart.yaml RC version
+#   3. Creates a release-ready PR (one at a time; old ones are closed)
+#   4. Recommends an IQE test profile based on impacted components
 #
 # Modes:
-#   - detect-updates (default): Check for changes, update JSON, create PR for testing
+#   - detect-updates (default): Check for changes, prepare release PR
 #   - list-versions: Report current digests and last modified dates
+#
+# Branch strategy:
+#   Prefixed branches: automated/component-update-YYYYMMDD-HHMMSS
+#   Only one automated PR exists at a time; old PRs/branches are closed/deleted.
 #
 # Schedule: Every 4 hours
 # Manual: Run via workflow_dispatch with mode selection
@@ -63,83 +69,98 @@ jobs:
           echo ""
           echo "${{ steps.check.outputs.versions }}"
 
-      # --- detect-updates mode: update JSON and create PR for testing ---
+      # --- detect-updates mode: commit chart changes and create PR ---
 
-      - name: Create test PR
+      - name: Close existing automated PRs
+        id: close-old
+        if: steps.check.outputs.mode == 'detect-updates' && steps.check.outputs.has_updates == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Find and close any existing automated component-update PRs
+          EXISTING_PRS=$(gh pr list \
+            --search "head:automated/component-update-" \
+            --state open \
+            --json number,headRefName \
+            --jq '.[] | "\(.number) \(.headRefName)"' 2>/dev/null || true)
+
+          if [[ -n "$EXISTING_PRS" ]]; then
+            while IFS=' ' read -r pr_number branch_name; do
+              echo "Closing existing PR #${pr_number} (branch: ${branch_name})"
+              gh pr close "$pr_number" \
+                --comment "Superseded by newer component update detection." \
+                --delete-branch 2>/dev/null || true
+            done <<< "$EXISTING_PRS"
+          else
+            echo "No existing automated PRs to close"
+          fi
+
+      - name: Create release PR
         id: create-pr
         if: steps.check.outputs.mode == 'detect-updates' && steps.check.outputs.has_updates == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          BRANCH="automated/component-test-$(date +%Y%m%d)"
-          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          BRANCH="automated/component-update-$(date -u +%Y%m%d-%H%M%S)"
+          CHART_VERSION="${{ steps.check.outputs.chart_version }}"
 
-          # Verify component-updates.json was modified
-          if ! git diff --quiet HEAD -- component-updates.json; then
-            echo "Changes detected in component-updates.json"
-            
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git checkout -b "$BRANCH"
-            git add component-updates.json
-            git commit -m "chore: component updates detected - trigger test run
-
-Updated components:
-${{ steps.check.outputs.updates_summary }}"
-            
-            # Force push is safe for automated ephemeral branches
-            git push -u origin "$BRANCH" --force
-          else
-            echo "No changes to component-updates.json, skipping"
+          # Verify chart files were modified
+          if git diff --quiet HEAD -- cost-onprem/values.yaml cost-onprem/Chart.yaml; then
+            echo "No changes to chart files, skipping PR creation"
             echo "pr_created=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # Build PR body
-          cat > /tmp/pr-body.md <<EOF
-          ## Component Updates Detected
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add cost-onprem/values.yaml cost-onprem/Chart.yaml component-updates.json
+          git commit -m "$(cat <<EOF
+          chore: bump component images → ${CHART_VERSION}
 
-          The following container images have new \`latest\` digests:
+          Updated components:
+          ${{ steps.check.outputs.updates_summary }}
+          EOF
+          )"
+
+          git push -u origin "$BRANCH"
+
+          # Build PR body
+          cat > /tmp/pr-body.md <<'PREOF'
+          ## Component Updates
 
           ${{ steps.check.outputs.updates_summary }}
 
           ### What This PR Does
 
-          - Updates \`component-updates.json\` with detected changes
-          - Triggers the test suite to validate the new images
-          - **Does NOT modify \`values.yaml\` or \`Chart.yaml\`**
+          - Updates image tags in `values.yaml` to the latest concrete versions
+          - Increments `Chart.yaml` version to `${{ steps.check.outputs.chart_version }}`
+          - This PR is **release-ready** pending test validation
 
           ### Reviewer Actions
 
-          1. **Wait for tests** to complete
-          2. **If tests pass**: Optionally bump versions in \`values.yaml\` if desired
-          3. **If tests fail**: Investigate and coordinate with upstream
-          4. **Close or merge** this PR once addressed
+          1. **Wait for CI** (`e2e` smoke job runs automatically)
+          2. **Trigger deeper tests** if recommended (see test-advisor comment below)
+          3. **Verify upstream CI** — confirm the new image versions passed their own CI pipelines
+          4. **Approve & merge** once satisfied
 
-          > **Note**: This PR only tracks the change detection. Version bumps are intentionally left to human reviewers.
+          > **Upstream validation**: Before merging, confirm that the updated component
+          > versions have passed CI in their respective upstream repositories
+          > (e.g., [koku CI](https://github.com/project-koku/koku/actions),
+          > [kruize CI](https://github.com/kruize/autotune/actions)).
 
           ---
           *Generated by check-components workflow*
-          EOF
+          PREOF
 
-          # Check for existing PR on this branch
-          EXISTING=$(gh pr list --head "$BRANCH" --state open --json number -q '.[0].number')
-
-          if [[ -n "$EXISTING" ]]; then
-            gh pr edit "$EXISTING" --body-file /tmp/pr-body.md
-            echo "Updated existing PR #$EXISTING"
-            echo "pr_number=$EXISTING" >> "$GITHUB_OUTPUT"
-          else
-            PR_URL=$(gh pr create \
-              --title "test: validate component updates ($(date +%Y-%m-%d))" \
-              --body-file /tmp/pr-body.md \
-              --label "component-update" \
-              --label "automated" \
-              --label "test-only")
-            PR_NUM=$(echo "$PR_URL" | grep -oE '[0-9]+$')
-            echo "Created PR #$PR_NUM"
-            echo "pr_number=$PR_NUM" >> "$GITHUB_OUTPUT"
-          fi
+          PR_URL=$(gh pr create \
+            --title "chore: component updates → ${CHART_VERSION}" \
+            --body-file /tmp/pr-body.md \
+            --label "component-update" \
+            --label "automated")
+          PR_NUM=$(echo "$PR_URL" | grep -oE '[0-9]+$')
+          echo "Created PR #$PR_NUM on branch $BRANCH"
+          echo "pr_number=$PR_NUM" >> "$GITHUB_OUTPUT"
 
       # --- Recommend test profile based on changed components ---
 
