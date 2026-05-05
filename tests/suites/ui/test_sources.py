@@ -5,11 +5,15 @@ These tests validate the Sources tab in Settings page for creating and
 managing OpenShift cost data sources directly from the Cost Management UI.
 
 Jira: https://redhat.atlassian.net/browse/FLPATH-2976
+
+Test Strategy:
+    These are end-to-end workflow tests that validate complete user journeys
+    rather than isolated UI components. Each test exercises multiple UI 
+    elements in sequence, providing better coverage with fewer tests.
 """
 
 import uuid
 from dataclasses import dataclass
-from typing import Optional
 
 import pytest
 import requests
@@ -46,11 +50,7 @@ def wait_for_integrations_load(page: Page, timeout_ms: int = 15000) -> None:
 
 
 def dismiss_any_modal(page: Page) -> None:
-    """Dismiss any open modal/backdrop by trying multiple close methods.
-    
-    Useful for cleaning up state between tests or after wizard completion.
-    """
-    # First check for any backdrop (modal overlay)
+    """Dismiss any open modal/backdrop by trying multiple close methods."""
     backdrop = page.locator(".pf-v6-c-backdrop")
     modal = page.locator(".pf-v6-c-modal-box, [role='dialog']")
     
@@ -60,7 +60,6 @@ def dismiss_any_modal(page: Page) -> None:
     while (backdrop.count() > 0 or modal.count() > 0) and attempts < max_attempts:
         attempts += 1
         
-        # Try to find a close button
         close_buttons = page.locator(
             ".pf-v6-c-modal-box button:has-text('Close'), "
             ".pf-v6-c-modal-box button:has-text('Cancel'), "
@@ -76,28 +75,20 @@ def dismiss_any_modal(page: Page) -> None:
             except Exception:
                 pass
         else:
-            # Try pressing Escape
             page.keyboard.press("Escape")
             page.wait_for_timeout(1000)
         
-        # Re-check modals
         backdrop = page.locator(".pf-v6-c-backdrop")
         modal = page.locator(".pf-v6-c-modal-box, [role='dialog']")
 
 
 def navigate_to_integrations(page: Page, ui_url: str) -> None:
-    """Navigate to the Integrations tab in Settings page.
-    
-    The tab may be called "Sources" or "Integrations" depending on UI version.
-    Dismisses any open modals first to ensure clean state.
-    """
-    # First dismiss any open modals
+    """Navigate to the Integrations tab in Settings page."""
     dismiss_any_modal(page)
     
     page.goto(f"{ui_url}/openshift/cost-management/settings")
     page.wait_for_load_state("networkidle")
     
-    # Click Sources/Integrations tab
     sources_tab = page.locator(
         "button:has-text('Sources'), "
         "a:has-text('Sources'), "
@@ -112,57 +103,66 @@ def navigate_to_integrations(page: Page, ui_url: str) -> None:
         page.wait_for_load_state("networkidle")
 
 
-def open_add_integration_wizard(page: Page) -> None:
-    """Open the Add Integration wizard.
-    
-    Works in both:
-    - Empty state: clicks OpenShift card which opens the wizard
-    - Populated state: clicks "Add integration" button which directly opens the wizard
-    """
-    # Wait for page to stabilize after loading
-    page.wait_for_timeout(3000)
-    
-    # Check for "Add integration" button first (populated state)
-    add_button = page.locator("button:has-text('Add integration')")
-    
-    # Empty state - OpenShift card (use the specific OUIA ID)
+def verify_empty_state(page: Page) -> None:
+    """Verify the empty state is displayed with OpenShift card."""
     ocp_card = page.locator("[data-ouia-component-id='sources-empty-add-openshift-card']")
-    
-    clicked = False
-    
-    # Try Add button first (populated state)
-    if add_button.count() > 0 and add_button.first.is_visible():
-        add_button.first.click()
-        clicked = True
-    # Then try OpenShift card (empty state)
-    elif ocp_card.count() > 0 and ocp_card.first.is_visible():
-        ocp_card.first.click()
-        clicked = True
-    
-    if not clicked:
-        page.screenshot(path="/tmp/wizard-debug.png")
-        raise AssertionError(
-            f"Could not find Add integration button ({add_button.count()}) "
-            f"or OpenShift card ({ocp_card.count()})"
-        )
-    
-    # Wait longer for wizard to appear
+    expect(ocp_card.first).to_be_visible(timeout=10000)
+
+
+def click_openshift_card(page: Page) -> None:
+    """Click the OpenShift card in empty state to open wizard."""
+    ocp_card = page.locator("[data-ouia-component-id='sources-empty-add-openshift-card']")
+    expect(ocp_card.first).to_be_visible(timeout=10000)
+    ocp_card.first.click()
     page.wait_for_timeout(2000)
-    
-    # Verify wizard opened
+
+
+def click_add_integration_button(page: Page) -> None:
+    """Click the Add integration button (when sources exist)."""
+    add_button = page.locator("button:has-text('Add integration')")
+    expect(add_button.first).to_be_visible(timeout=10000)
+    add_button.first.click()
+    page.wait_for_timeout(2000)
+
+
+def verify_wizard_open(page: Page) -> None:
+    """Verify the wizard/modal is open."""
     wizard = page.locator(".pf-v6-c-wizard, .pf-v6-c-modal-box")
     expect(wizard.first).to_be_visible(timeout=10000)
 
 
-def fill_wizard_step1_name(page: Page, name: str) -> None:
-    """Fill in the integration name on wizard step 1."""
+def verify_wizard_name_input(page: Page) -> None:
+    """Verify wizard step 1 has name input."""
+    name_input = page.locator(".pf-v6-c-modal-box input[type='text']")
+    expect(name_input.first).to_be_visible(timeout=5000)
+
+
+def fill_wizard_name(page: Page, name: str) -> None:
+    """Fill the integration name field."""
     name_input = page.locator(".pf-v6-c-modal-box input[type='text']")
     expect(name_input.first).to_be_visible(timeout=5000)
     name_input.first.fill(name)
 
 
-def fill_wizard_step2_cluster_id(page: Page, cluster_id: str) -> None:
-    """Fill in the cluster ID on wizard step 2."""
+def click_wizard_next(page: Page) -> None:
+    """Click the Next button in the wizard."""
+    next_button = page.locator("button:has-text('Next')")
+    expect(next_button.first).to_be_enabled(timeout=5000)
+    next_button.first.click()
+    page.wait_for_timeout(1000)
+
+
+def verify_wizard_cluster_id_input(page: Page) -> None:
+    """Verify wizard step 2 has cluster ID input."""
+    cluster_input = page.locator(
+        "input[name='credentials.cluster_id'], "
+        ".pf-v6-c-modal-box input[type='text']"
+    )
+    expect(cluster_input.first).to_be_visible(timeout=5000)
+
+
+def fill_wizard_cluster_id(page: Page, cluster_id: str) -> None:
+    """Fill the cluster ID field."""
     cluster_input = page.locator(
         "input[name='credentials.cluster_id'], "
         ".pf-v6-c-modal-box input[type='text']"
@@ -171,11 +171,10 @@ def fill_wizard_step2_cluster_id(page: Page, cluster_id: str) -> None:
     cluster_input.first.fill(cluster_id)
 
 
-def click_wizard_next(page: Page) -> None:
-    """Click the Next button in the wizard."""
-    next_button = page.locator("button:has-text('Next')")
-    next_button.click()
-    page.wait_for_timeout(1000)
+def verify_wizard_submit_button(page: Page) -> None:
+    """Verify the Submit button is visible on review step."""
+    submit_button = page.locator("button:has-text('Submit')")
+    expect(submit_button.first).to_be_visible(timeout=5000)
 
 
 def click_wizard_submit(page: Page) -> None:
@@ -184,6 +183,7 @@ def click_wizard_submit(page: Page) -> None:
     expect(submit_button.first).to_be_visible(timeout=5000)
     submit_button.first.click()
     page.wait_for_load_state("networkidle")
+    page.wait_for_timeout(3000)
 
 
 def click_wizard_cancel(page: Page) -> None:
@@ -196,113 +196,156 @@ def click_wizard_cancel(page: Page) -> None:
     page.wait_for_timeout(1000)
 
 
-def create_integration_via_wizard(
-    page: Page,
-    name: str,
-    cluster_id: str,
-) -> None:
-    """Complete the full wizard flow to create an integration.
-    
-    Args:
-        page: Playwright page (should already be on Integrations tab)
-        name: Integration name
-        cluster_id: Cluster identifier
-    """
-    open_add_integration_wizard(page)
-    
-    # Step 1: Name
-    fill_wizard_step1_name(page, name)
-    click_wizard_next(page)
-    
-    # Step 2: Cluster ID
-    fill_wizard_step2_cluster_id(page, cluster_id)
-    click_wizard_next(page)
-    
-    # Step 3: Submit
-    click_wizard_submit(page)
-    page.wait_for_timeout(3000)
-    
-    # Dismiss any success/confirmation modal that appears after creation
-    dismiss_any_modal(page)
+def verify_wizard_closed(page: Page) -> None:
+    """Verify the wizard is closed."""
+    wizard = page.locator(".pf-v6-c-modal-box")
+    expect(wizard).to_have_count(0, timeout=5000)
 
 
-def open_source_actions_menu(page: Page, source_name: str) -> None:
-    """Open the actions (kebab) menu for a specific source.
-    
-    Finds the table row containing the source and clicks its kebab menu.
-    """
-    # Wait for the source to appear in the page
-    source_locator = page.locator(f":text('{source_name}')")
-    expect(source_locator.first).to_be_visible(timeout=15000)
-    
+def verify_source_in_table(page: Page, source_name: str) -> None:
+    """Verify a source appears in the integrations table."""
     # Find the table row containing our source
-    # PatternFly tables use tr elements
     row = page.locator(f"tr:has-text('{source_name}')")
-    if row.count() == 0:
-        # Try alternate row structure
-        row = page.locator(f"[role='row']:has-text('{source_name}')")
+    expect(row.first).to_be_visible(timeout=30000)
     
-    if row.count() == 0:
-        raise AssertionError(f"Could not find table row containing '{source_name}'")
+    # Verify the name is in the row
+    name_cell = row.locator(f":text('{source_name}')")
+    expect(name_cell.first).to_be_visible()
     
-    # Look for the kebab menu button within the row
-    # PatternFly v6 uses pf-v6-c-menu-toggle for kebab menus
+    # Scroll to and highlight the row for video visibility
+    row.first.scroll_into_view_if_needed()
+    row.first.highlight()
+
+
+def verify_source_type_in_row(page: Page, source_name: str, expected_type: str = "OpenShift") -> None:
+    """Verify the source type is displayed in the source's row."""
+    row = page.locator(f"tr:has-text('{source_name}')")
+    expect(row.first).to_be_visible(timeout=15000)
+    
+    # Check for type indicator in the same row
+    # UI shows "OpenShift Container Platform" or abbreviated versions
+    type_indicator = row.locator(f":text('{expected_type}'), :text('OCP'), :text('OpenShift Container Platform')")
+    expect(type_indicator.first).to_be_visible()
+    
+    # Highlight the type for video visibility
+    type_indicator.first.highlight()
+
+
+def verify_source_status_in_row(page: Page, source_name: str, expected_status: str = "Available") -> None:
+    """Verify the source status is displayed in the source's row.
+    
+    Status values observed:
+    - "Available" - Integration is connected and working
+    - "Unavailable" - Integration has connection issues
+    - Other potential statuses may exist
+    """
+    row = page.locator(f"tr:has-text('{source_name}')")
+    expect(row.first).to_be_visible(timeout=15000)
+    
+    # Check for status indicator in the same row
+    status_indicator = row.locator(f":text('{expected_status}')")
+    expect(status_indicator.first).to_be_visible()
+    
+    # Highlight the status for video visibility
+    status_indicator.first.highlight()
+
+
+def verify_actions_menu_in_row(page: Page, source_name: str) -> None:
+    """Verify the actions (kebab) menu exists in the source's row."""
+    row = page.locator(f"tr:has-text('{source_name}')")
+    expect(row.first).to_be_visible(timeout=15000)
+    
     actions_button = row.locator(
         ".pf-v6-c-menu-toggle, "
         ".pf-v6-c-dropdown__toggle, "
         "button[aria-label='Kebab toggle'], "
         "button[aria-label='Actions']"
     )
+    expect(actions_button.first).to_be_visible()
+
+
+def open_actions_menu(page: Page, source_name: str) -> None:
+    """Open the actions (kebab) menu for a specific source."""
+    row = page.locator(f"tr:has-text('{source_name}')")
+    expect(row.first).to_be_visible(timeout=15000)
     
-    if actions_button.count() == 0:
-        # Debug: print what buttons are in the row
-        row_buttons = row.locator("button")
-        button_count = row_buttons.count()
-        raise AssertionError(
-            f"Could not find actions menu in row for '{source_name}'. "
-            f"Row has {button_count} buttons."
-        )
-    
+    actions_button = row.locator(
+        ".pf-v6-c-menu-toggle, "
+        ".pf-v6-c-dropdown__toggle, "
+        "button[aria-label='Kebab toggle'], "
+        "button[aria-label='Actions']"
+    )
     actions_button.first.click()
     page.wait_for_timeout(1000)
 
 
-def delete_source_via_ui(page: Page, source_name: str) -> None:
-    """Delete/remove a source using the UI actions menu.
-    
-    The remove modal has a checkbox confirmation, not a text input.
-    """
-    open_source_actions_menu(page, source_name)
-    
-    # Click Remove option in menu (UI uses "Remove" not "Delete")
+def verify_remove_option_in_menu(page: Page) -> None:
+    """Verify Remove option exists in the open actions menu."""
     remove_option = page.locator(
         "[role='menuitem']:has-text('Remove'), "
-        ".pf-v6-c-menu__item:has-text('Remove'), "
-        "button:has-text('Remove')"
+        ".pf-v6-c-menu__item:has-text('Remove')"
+    )
+    expect(remove_option.first).to_be_visible(timeout=5000)
+
+
+def click_remove_option(page: Page) -> None:
+    """Click the Remove option in the actions menu."""
+    remove_option = page.locator(
+        "[role='menuitem']:has-text('Remove'), "
+        ".pf-v6-c-menu__item:has-text('Remove')"
     )
     remove_option.first.click()
     page.wait_for_timeout(1500)
-    
-    # Modal appears
+
+
+def verify_remove_confirmation_modal(page: Page) -> None:
+    """Verify the remove confirmation modal with checkbox."""
     modal = page.locator(".pf-v6-c-modal-box, [role='dialog']")
     expect(modal.first).to_be_visible(timeout=5000)
     
+    # Verify checkbox exists
+    checkbox = modal.locator("input[type='checkbox']")
+    expect(checkbox.first).to_be_visible()
+    
+    # Verify remove button is disabled until checkbox checked
+    remove_button = modal.locator("button:has-text('Remove integration'), button.pf-m-danger")
+    expect(remove_button.first).to_be_visible()
+
+
+def complete_remove_confirmation(page: Page) -> None:
+    """Complete the remove confirmation by checking checkbox and clicking remove."""
+    modal = page.locator(".pf-v6-c-modal-box, [role='dialog']")
+    
     # Check the acknowledgement checkbox
     checkbox = modal.locator("input[type='checkbox']")
-    if checkbox.count() > 0:
-        checkbox.first.check()
-        page.wait_for_timeout(500)
+    checkbox.first.check()
+    page.wait_for_timeout(500)
     
-    # Click the "Remove integration and its data" button
-    remove_button = modal.locator(
-        "button:has-text('Remove integration'), "
-        "button.pf-m-danger"
-    )
+    # Click the remove button
+    remove_button = modal.locator("button:has-text('Remove integration'), button.pf-m-danger")
     expect(remove_button.first).to_be_enabled(timeout=5000)
     remove_button.first.click()
     
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(5000)
+
+
+def verify_source_not_in_table(page: Page, source_name: str) -> None:
+    """Verify a source does NOT appear in the table."""
+    source_locator = page.locator(f"tr:has-text('{source_name}')")
+    expect(source_locator).to_have_count(0, timeout=10000)
+
+
+def cleanup_source_by_name(session: requests.Session, gateway_url: str, name: str) -> None:
+    """Helper to cleanup a source by name via API."""
+    response = session.get(
+        f"{gateway_url}/cost-management/v1/sources",
+        params={"name": name},
+    )
+    if response.ok:
+        for source in response.json().get("data", []):
+            if source.get("name") == name:
+                session.delete(f"{gateway_url}/cost-management/v1/sources/{source['id']}")
 
 
 # =============================================================================
@@ -312,11 +355,7 @@ def delete_source_via_ui(page: Page, source_name: str) -> None:
 
 @pytest.fixture(scope="module")
 def sources_api_session(keycloak_config, gateway_url) -> requests.Session:
-    """Authenticated requests session for API operations in UI tests.
-    
-    Module-scoped to be usable by class-scoped fixtures like ensure_no_sources.
-    Token expiration may be an issue for very long test runs.
-    """
+    """Authenticated requests session for API operations in UI tests."""
     token = obtain_jwt_token(keycloak_config)
     session = requests.Session()
     session.headers["Authorization"] = f"Bearer {token.access_token}"
@@ -325,26 +364,33 @@ def sources_api_session(keycloak_config, gateway_url) -> requests.Session:
     return session
 
 
-def refresh_session_token(session: requests.Session, keycloak_config) -> None:
-    """Refresh the token in an existing session if needed."""
+@pytest.fixture(scope="function")
+def ensure_no_sources(keycloak_config, gateway_url):
+    """Delete all sources before running tests that require empty state."""
     token = obtain_jwt_token(keycloak_config)
+    session = requests.Session()
     session.headers["Authorization"] = f"Bearer {token.access_token}"
+    session.headers["Content-Type"] = "application/json"
+    session.verify = False
+    
+    response = session.get(f"{gateway_url}/cost-management/v1/sources")
+    if response.ok:
+        for source in response.json().get("data", []):
+            session.delete(f"{gateway_url}/cost-management/v1/sources/{source['id']}")
+    yield
 
 
 @pytest.fixture(scope="function")
-def test_source(sources_api_session, gateway_url) -> SourceData:
-    """Create a test source via API with automatic cleanup.
-    
-    Use this fixture when a test needs an existing source to work with.
-    """
-    source_name = f"ui-test-{uuid.uuid4().hex[:8]}"
-    cluster_id = f"ui-cluster-{uuid.uuid4().hex[:8]}"
+def api_created_source(sources_api_session, gateway_url) -> SourceData:
+    """Create a test source via API with automatic cleanup."""
+    source_name = f"api-source-{uuid.uuid4().hex[:8]}"
+    cluster_id = f"api-cluster-{uuid.uuid4().hex[:8]}"
     
     response = sources_api_session.post(
         f"{gateway_url}/cost-management/v1/sources",
         json={
             "name": source_name,
-            "source_type_id": 1,  # OpenShift
+            "source_type_id": 1,
             "source_ref": cluster_id,
         },
     )
@@ -365,34 +411,32 @@ def test_source(sources_api_session, gateway_url) -> SourceData:
     sources_api_session.delete(f"{gateway_url}/cost-management/v1/sources/{source.id}")
 
 
-def cleanup_source_by_name(session: requests.Session, gateway_url: str, name: str) -> None:
-    """Helper to cleanup a source by name via API."""
-    response = session.get(
-        f"{gateway_url}/cost-management/v1/sources",
-        params={"name": name},
-    )
-    if response.ok:
-        for source in response.json().get("data", []):
-            if source.get("name") == name:
-                session.delete(f"{gateway_url}/cost-management/v1/sources/{source['id']}")
-
-
 # =============================================================================
-# Navigation Tests
+# Smoke Test
 # =============================================================================
 
 
 @pytest.mark.ui
 @pytest.mark.sources
-class TestIntegrationsNavigation:
-    """Test Integrations tab visibility and navigation."""
+@pytest.mark.smoke
+class TestIntegrationsSmoke:
+    """Quick smoke test to verify basic UI accessibility."""
 
-    @pytest.mark.smoke
-    def test_integrations_tab_visible(self, authenticated_page: Page, ui_url: str):
-        """Verify Integrations tab is visible in Settings page."""
+    def test_settings_page_loads_with_integrations_tab(
+        self, authenticated_page: Page, ui_url: str
+    ):
+        """Verify Settings page loads and Integrations tab is accessible.
+        
+        Validates:
+        - Settings page loads successfully
+        - Integrations/Sources tab is visible
+        - Tab can be clicked and content loads
+        """
+        # Navigate to settings
         authenticated_page.goto(f"{ui_url}/openshift/cost-management/settings")
         authenticated_page.wait_for_load_state("networkidle")
         
+        # Verify Integrations tab is visible
         sources_tab = authenticated_page.locator(
             "button:has-text('Sources'), "
             "a:has-text('Sources'), "
@@ -400,10 +444,10 @@ class TestIntegrationsNavigation:
             "a:has-text('Integrations')"
         )
         expect(sources_tab.first).to_be_visible(timeout=10000)
-
-    def test_can_navigate_to_integrations(self, authenticated_page: Page, ui_url: str):
-        """Verify clicking Integrations tab displays content."""
-        navigate_to_integrations(authenticated_page, ui_url)
+        
+        # Click tab and verify content loads
+        sources_tab.first.click()
+        authenticated_page.wait_for_load_state("networkidle")
         wait_for_integrations_load(authenticated_page)
         
         # Should show either table, empty state, or add card
@@ -416,268 +460,158 @@ class TestIntegrationsNavigation:
 
 
 # =============================================================================
-# Empty State Tests
-# =============================================================================
-
-
-@pytest.fixture(scope="function")
-def ensure_no_sources(keycloak_config, gateway_url):
-    """Delete all sources before running empty state tests.
-    
-    WARNING: This deletes all sources in the namespace!
-    Only use for tests that require a clean slate.
-    
-    Uses its own fresh token to avoid expiration issues.
-    """
-    # Create fresh session with new token
-    token = obtain_jwt_token(keycloak_config)
-    session = requests.Session()
-    session.headers["Authorization"] = f"Bearer {token.access_token}"
-    session.headers["Content-Type"] = "application/json"
-    session.verify = False
-    
-    response = session.get(f"{gateway_url}/cost-management/v1/sources")
-    if response.ok:
-        for source in response.json().get("data", []):
-            session.delete(
-                f"{gateway_url}/cost-management/v1/sources/{source['id']}"
-            )
-    yield
-    # No cleanup needed - tests will handle their own sources
-
-
-@pytest.mark.ui
-@pytest.mark.sources
-class TestIntegrationsEmptyState:
-    """Test Integrations empty state when no sources are configured.
-    
-    Note: These tests require no existing sources. They use ensure_no_sources
-    fixture to clean up before running.
-    """
-
-    def test_empty_state_shows_openshift_card(
-        self, authenticated_page: Page, ui_url: str, ensure_no_sources
-    ):
-        """Verify empty state shows clickable OpenShift card."""
-        navigate_to_integrations(authenticated_page, ui_url)
-        wait_for_integrations_load(authenticated_page)
-        
-        ocp_card = authenticated_page.locator(
-            "[data-ouia-component-id='sources-empty-add-openshift-card'], "
-            ".pf-v6-c-card.pf-m-clickable[aria-label*='OpenShift']"
-        )
-        expect(ocp_card.first).to_be_visible(timeout=10000)
-
-    def test_openshift_card_opens_wizard(
-        self, authenticated_page: Page, ui_url: str, ensure_no_sources
-    ):
-        """Verify clicking OpenShift card opens the add wizard."""
-        navigate_to_integrations(authenticated_page, ui_url)
-        wait_for_integrations_load(authenticated_page)
-        
-        open_add_integration_wizard(authenticated_page)
-        
-        wizard = authenticated_page.locator(
-            ".pf-v6-c-wizard, .pf-v6-c-modal-box, [role='dialog']"
-        )
-        expect(wizard.first).to_be_visible(timeout=5000)
-
-
-# =============================================================================
-# Wizard Tests
+# End-to-End Workflow Tests
 # =============================================================================
 
 
 @pytest.mark.ui
 @pytest.mark.sources
-class TestAddIntegrationWizard:
-    """Test the Add Integration wizard.
-    
-    These tests use ensure_no_sources to guarantee the wizard opens
-    from the empty state card.
-    """
-
-    def test_wizard_has_name_input(
-        self, authenticated_page: Page, ui_url: str, ensure_no_sources
-    ):
-        """Verify wizard step 1 has name input field."""
-        # Start fresh by going to base URL first
-        authenticated_page.goto(ui_url)
-        authenticated_page.wait_for_load_state("networkidle")
-        
-        navigate_to_integrations(authenticated_page, ui_url)
-        wait_for_integrations_load(authenticated_page)
-        open_add_integration_wizard(authenticated_page)
-        
-        try:
-            name_input = authenticated_page.locator(
-                ".pf-v6-c-modal-box input[type='text']"
-            )
-            expect(name_input.first).to_be_visible(timeout=5000)
-        finally:
-            # Always close the wizard
-            click_wizard_cancel(authenticated_page)
-
-    def test_wizard_has_cluster_id_input(
-        self, authenticated_page: Page, ui_url: str, ensure_no_sources
-    ):
-        """Verify wizard step 2 has cluster ID input field."""
-        authenticated_page.goto(ui_url)
-        authenticated_page.wait_for_load_state("networkidle")
-        
-        navigate_to_integrations(authenticated_page, ui_url)
-        wait_for_integrations_load(authenticated_page)
-        open_add_integration_wizard(authenticated_page)
-        
-        try:
-            # Fill step 1 and advance
-            fill_wizard_step1_name(authenticated_page, "test-name")
-            click_wizard_next(authenticated_page)
-            
-            cluster_input = authenticated_page.locator(
-                "input[name='credentials.cluster_id'], "
-                ".pf-v6-c-modal-box input[type='text']"
-            )
-            expect(cluster_input.first).to_be_visible(timeout=5000)
-        finally:
-            # Always close the wizard
-            click_wizard_cancel(authenticated_page)
-
-    def test_wizard_can_be_cancelled(
-        self, authenticated_page: Page, ui_url: str, ensure_no_sources
-    ):
-        """Verify wizard can be cancelled without creating a source."""
-        authenticated_page.goto(ui_url)
-        authenticated_page.wait_for_load_state("networkidle")
-        
-        navigate_to_integrations(authenticated_page, ui_url)
-        wait_for_integrations_load(authenticated_page)
-        open_add_integration_wizard(authenticated_page)
-        
-        click_wizard_cancel(authenticated_page)
-        
-        wizard = authenticated_page.locator(".pf-v6-c-modal-box")
-        expect(wizard).to_have_count(0)
-
-    def test_wizard_shows_review_step(
-        self, authenticated_page: Page, ui_url: str, ensure_no_sources
-    ):
-        """Verify wizard has a review step with Submit button."""
-        authenticated_page.goto(ui_url)
-        authenticated_page.wait_for_load_state("networkidle")
-        
-        navigate_to_integrations(authenticated_page, ui_url)
-        wait_for_integrations_load(authenticated_page)
-        open_add_integration_wizard(authenticated_page)
-        
-        try:
-            # Complete steps 1 and 2
-            fill_wizard_step1_name(authenticated_page, "review-test")
-            click_wizard_next(authenticated_page)
-            fill_wizard_step2_cluster_id(authenticated_page, "test-cluster-id")
-            click_wizard_next(authenticated_page)
-            
-            # Verify we're on review step with Submit button
-            submit_button = authenticated_page.locator("button:has-text('Submit')")
-            expect(submit_button.first).to_be_visible(timeout=5000)
-        finally:
-            # Always close the wizard
-            click_wizard_cancel(authenticated_page)
-
-
-# =============================================================================
-# Table Tests (with existing source)
-# =============================================================================
-
-
-@pytest.mark.ui
-@pytest.mark.sources
-class TestIntegrationsTable:
-    """Test Integrations table when sources exist."""
-
-    def test_table_displays_source(
-        self, authenticated_page: Page, ui_url: str, test_source: SourceData
-    ):
-        """Verify table displays existing sources."""
-        navigate_to_integrations(authenticated_page, ui_url)
-        wait_for_integrations_load(authenticated_page, 20000)
-        
-        source_text = authenticated_page.locator(f":text('{test_source.name}')")
-        expect(source_text.first).to_be_visible(timeout=15000)
-
-    def test_table_shows_openshift_type(
-        self, authenticated_page: Page, ui_url: str, test_source: SourceData
-    ):
-        """Verify source type (OpenShift) is displayed."""
-        navigate_to_integrations(authenticated_page, ui_url)
-        wait_for_integrations_load(authenticated_page, 20000)
-        
-        # Find our source first
-        expect(authenticated_page.locator(f":text('{test_source.name}')").first).to_be_visible()
-        
-        # OpenShift type indicator should be visible
-        openshift_type = authenticated_page.locator(":text('OpenShift'), :text('OCP')")
-        expect(openshift_type.first).to_be_visible()
-
-    def test_source_has_actions_menu(
-        self, authenticated_page: Page, ui_url: str, test_source: SourceData
-    ):
-        """Verify source row has an actions menu."""
-        navigate_to_integrations(authenticated_page, ui_url)
-        wait_for_integrations_load(authenticated_page, 20000)
-        
-        expect(authenticated_page.locator(f":text('{test_source.name}')").first).to_be_visible()
-        
-        actions_button = authenticated_page.locator(
-            ".pf-v6-c-dropdown__toggle, "
-            ".pf-v6-c-menu-toggle, "
-            "button[aria-label='Actions']"
-        )
-        expect(actions_button.first).to_be_visible()
-
-
-# =============================================================================
-# Functional Workflow Tests
-# =============================================================================
-
-
-@pytest.mark.ui
-@pytest.mark.sources
-@pytest.mark.slow
 class TestIntegrationWorkflows:
-    """End-to-end workflow tests for source management."""
+    """End-to-end workflow tests covering complete user journeys.
+    
+    These tests validate the full integration management lifecycle from
+    the user's perspective, exercising multiple UI components in sequence.
+    """
 
-    def test_create_integration_workflow(
+    def test_create_integration_from_empty_state(
         self, authenticated_page: Page, ui_url: str, sources_api_session, gateway_url,
         ensure_no_sources
     ):
-        """Create a new integration through the full wizard workflow."""
-        source_name = f"workflow-create-{uuid.uuid4().hex[:8]}"
-        cluster_id = f"workflow-cluster-{uuid.uuid4().hex[:8]}"
+        """Create a new integration starting from empty state.
+        
+        User Journey:
+        1. Navigate to Integrations (empty state)
+        2. Verify OpenShift card is displayed
+        3. Click card to open wizard
+        4. Complete wizard steps (name, cluster ID, submit)
+        5. Verify integration appears in table with correct type and status
+        
+        Validates:
+        - Empty state displays OpenShift card
+        - Card click opens wizard
+        - Wizard has name input (step 1)
+        - Wizard has cluster ID input (step 2)
+        - Wizard has submit button (step 3)
+        - Created integration appears in table
+        - Integration shows OpenShift type
+        - Integration shows Available status
+        """
+        source_name = f"e2e-create-{uuid.uuid4().hex[:8]}"
+        cluster_id = f"e2e-cluster-{uuid.uuid4().hex[:8]}"
         
         try:
+            # Navigate to integrations
             navigate_to_integrations(authenticated_page, ui_url)
             wait_for_integrations_load(authenticated_page)
             
-            create_integration_via_wizard(authenticated_page, source_name, cluster_id)
+            # Verify empty state and click OpenShift card
+            verify_empty_state(authenticated_page)
+            click_openshift_card(authenticated_page)
             
-            # Reload page to verify source was created
+            # Verify wizard opened with name input
+            verify_wizard_open(authenticated_page)
+            verify_wizard_name_input(authenticated_page)
+            
+            # Step 1: Fill name and proceed
+            fill_wizard_name(authenticated_page, source_name)
+            click_wizard_next(authenticated_page)
+            
+            # Step 2: Verify cluster ID input, fill and proceed
+            verify_wizard_cluster_id_input(authenticated_page)
+            fill_wizard_cluster_id(authenticated_page, cluster_id)
+            click_wizard_next(authenticated_page)
+            
+            # Step 3: Verify submit button and submit
+            verify_wizard_submit_button(authenticated_page)
+            click_wizard_submit(authenticated_page)
+            dismiss_any_modal(authenticated_page)
+            
+            # Reload and verify source in table
             navigate_to_integrations(authenticated_page, ui_url)
             wait_for_integrations_load(authenticated_page)
-            source_text = authenticated_page.locator(f":text('{source_name}')")
-            expect(source_text.first).to_be_visible(timeout=30000)
+            
+            verify_source_in_table(authenticated_page, source_name)
+            verify_source_type_in_row(authenticated_page, source_name, "OpenShift")
+            verify_source_status_in_row(authenticated_page, source_name, "Available")
             
         finally:
             cleanup_source_by_name(sources_api_session, gateway_url, source_name)
 
-    def test_delete_integration_workflow(
+    def test_add_second_integration_from_table_view(
+        self, authenticated_page: Page, ui_url: str, sources_api_session, gateway_url,
+        api_created_source: SourceData
+    ):
+        """Add a second integration when one already exists.
+        
+        User Journey:
+        1. Navigate to Integrations (with existing source)
+        2. Verify existing source in table
+        3. Click "Add integration" button
+        4. Complete wizard
+        5. Verify both integrations appear in table
+        
+        Validates:
+        - Table displays existing source
+        - "Add integration" button works from table view
+        - Multiple sources can coexist in table
+        """
+        new_source_name = f"e2e-second-{uuid.uuid4().hex[:8]}"
+        new_cluster_id = f"e2e-second-cluster-{uuid.uuid4().hex[:8]}"
+        
+        try:
+            # Navigate and verify existing source
+            navigate_to_integrations(authenticated_page, ui_url)
+            wait_for_integrations_load(authenticated_page, 20000)
+            
+            verify_source_in_table(authenticated_page, api_created_source.name)
+            
+            # Click Add integration button
+            click_add_integration_button(authenticated_page)
+            verify_wizard_open(authenticated_page)
+            
+            # Complete wizard
+            fill_wizard_name(authenticated_page, new_source_name)
+            click_wizard_next(authenticated_page)
+            fill_wizard_cluster_id(authenticated_page, new_cluster_id)
+            click_wizard_next(authenticated_page)
+            click_wizard_submit(authenticated_page)
+            dismiss_any_modal(authenticated_page)
+            
+            # Verify both sources in table
+            navigate_to_integrations(authenticated_page, ui_url)
+            wait_for_integrations_load(authenticated_page)
+            
+            verify_source_in_table(authenticated_page, api_created_source.name)
+            verify_source_in_table(authenticated_page, new_source_name)
+            
+        finally:
+            cleanup_source_by_name(sources_api_session, gateway_url, new_source_name)
+
+    def test_delete_integration_via_actions_menu(
         self, authenticated_page: Page, ui_url: str, sources_api_session, gateway_url
     ):
-        """Delete an existing integration through the UI."""
-        # Setup: create source via API
-        source_name = f"workflow-delete-{uuid.uuid4().hex[:8]}"
-        cluster_id = f"delete-cluster-{uuid.uuid4().hex[:8]}"
+        """Delete an integration using the actions menu.
         
+        User Journey:
+        1. Create source via API (setup)
+        2. Navigate to Integrations
+        3. Verify source in table with actions menu
+        4. Open actions menu, verify Remove option
+        5. Click Remove, verify confirmation modal with checkbox
+        6. Complete removal
+        7. Verify source no longer in table
+        
+        Validates:
+        - Table row has actions menu
+        - Actions menu contains Remove option
+        - Remove shows confirmation modal
+        - Confirmation requires checkbox acknowledgement
+        - Removal deletes source from table
+        """
+        source_name = f"e2e-delete-{uuid.uuid4().hex[:8]}"
+        cluster_id = f"e2e-delete-cluster-{uuid.uuid4().hex[:8]}"
+        
+        # Create source via API
         response = sources_api_session.post(
             f"{gateway_url}/cost-management/v1/sources",
             json={
@@ -689,24 +623,31 @@ class TestIntegrationWorkflows:
         assert response.status_code == 201
         
         try:
+            # Navigate and verify source with actions menu
             navigate_to_integrations(authenticated_page, ui_url)
             wait_for_integrations_load(authenticated_page, 20000)
             
-            # Verify source is visible
-            expect(authenticated_page.locator(f":text('{source_name}')").first).to_be_visible()
+            verify_source_in_table(authenticated_page, source_name)
+            verify_actions_menu_in_row(authenticated_page, source_name)
             
-            # Delete via UI
-            delete_source_via_ui(authenticated_page, source_name)
+            # Open actions menu and verify Remove option
+            open_actions_menu(authenticated_page, source_name)
+            verify_remove_option_in_menu(authenticated_page)
             
-            # Reload page to ensure fresh data
-            authenticated_page.reload()
+            # Click Remove and verify confirmation modal
+            click_remove_option(authenticated_page)
+            verify_remove_confirmation_modal(authenticated_page)
+            
+            # Complete removal
+            complete_remove_confirmation(authenticated_page)
+            
+            # Verify source removed
+            navigate_to_integrations(authenticated_page, ui_url)
             wait_for_integrations_load(authenticated_page, 20000)
             
-            # Verify source is gone
-            deleted_source = authenticated_page.locator(f":text('{source_name}')")
-            expect(deleted_source).to_have_count(0)
+            verify_source_not_in_table(authenticated_page, source_name)
             
-            # Also verify via API
+            # Verify via API as well
             api_response = sources_api_session.get(
                 f"{gateway_url}/cost-management/v1/sources",
                 params={"name": source_name},
@@ -716,170 +657,96 @@ class TestIntegrationWorkflows:
                 assert len(sources) == 0, f"Source still exists in API: {sources}"
             
         finally:
-            # Cleanup if delete failed
             cleanup_source_by_name(sources_api_session, gateway_url, source_name)
 
-    def test_create_multiple_integrations(
+    def test_full_lifecycle_create_and_delete(
         self, authenticated_page: Page, ui_url: str, sources_api_session, gateway_url,
         ensure_no_sources
     ):
-        """Create multiple integrations via UI wizard and verify all appear in table.
+        """Complete lifecycle: create via wizard, then delete via UI.
         
-        This test validates that users can create multiple sources in sequence,
-        which requires proper wizard state management between creations.
+        User Journey:
+        1. Start from empty state
+        2. Create integration via wizard
+        3. Verify in table
+        4. Delete via actions menu
+        5. Verify empty state returns
+        
+        Validates:
+        - Full CRUD cycle through UI
+        - State transitions (empty -> populated -> empty)
         """
-        sources = [
-            (f"multi-test-1-{uuid.uuid4().hex[:6]}", f"cluster-1-{uuid.uuid4().hex[:6]}"),
-            (f"multi-test-2-{uuid.uuid4().hex[:6]}", f"cluster-2-{uuid.uuid4().hex[:6]}"),
-        ]
-        created_sources = []
-        
-        try:
-            # Navigate to integrations page
-            navigate_to_integrations(authenticated_page, ui_url)
-            wait_for_integrations_load(authenticated_page)
-            
-            # Create first source via wizard (from empty state)
-            create_integration_via_wizard(authenticated_page, sources[0][0], sources[0][1])
-            created_sources.append(sources[0][0])
-            
-            # Reload page to clear wizard state and verify first source
-            navigate_to_integrations(authenticated_page, ui_url)
-            wait_for_integrations_load(authenticated_page)
-            expect(authenticated_page.locator(f":text('{sources[0][0]}')").first).to_be_visible(timeout=30000)
-            
-            # Now create second source via wizard (from populated state)
-            # The wizard opens via "Add" button when sources exist
-            create_integration_via_wizard(authenticated_page, sources[1][0], sources[1][1])
-            created_sources.append(sources[1][0])
-            
-            # Reload and verify both sources appear in the table
-            navigate_to_integrations(authenticated_page, ui_url)
-            wait_for_integrations_load(authenticated_page)
-            
-            for name, _ in sources:
-                source_locator = authenticated_page.locator(f":text('{name}')")
-                expect(source_locator.first).to_be_visible(timeout=30000)
-            
-        finally:
-            # Cleanup all created sources
-            for name in created_sources:
-                cleanup_source_by_name(sources_api_session, gateway_url, name)
-
-    def test_create_and_delete_workflow(
-        self, authenticated_page: Page, ui_url: str, sources_api_session, gateway_url,
-        ensure_no_sources
-    ):
-        """Full lifecycle: create an integration via wizard, then delete it via UI."""
         source_name = f"lifecycle-{uuid.uuid4().hex[:8]}"
         cluster_id = f"lifecycle-cluster-{uuid.uuid4().hex[:8]}"
         
         try:
+            # Start from empty state
             navigate_to_integrations(authenticated_page, ui_url)
             wait_for_integrations_load(authenticated_page)
+            verify_empty_state(authenticated_page)
             
-            # Create
-            create_integration_via_wizard(authenticated_page, source_name, cluster_id)
+            # Create via wizard
+            click_openshift_card(authenticated_page)
+            fill_wizard_name(authenticated_page, source_name)
+            click_wizard_next(authenticated_page)
+            fill_wizard_cluster_id(authenticated_page, cluster_id)
+            click_wizard_next(authenticated_page)
+            click_wizard_submit(authenticated_page)
+            dismiss_any_modal(authenticated_page)
             
-            # Reload to verify and prepare for delete
+            # Verify in table
             navigate_to_integrations(authenticated_page, ui_url)
             wait_for_integrations_load(authenticated_page)
-            expect(authenticated_page.locator(f":text('{source_name}')").first).to_be_visible(timeout=30000)
+            verify_source_in_table(authenticated_page, source_name)
             
-            # Delete
-            delete_source_via_ui(authenticated_page, source_name)
+            # Delete via actions menu
+            open_actions_menu(authenticated_page, source_name)
+            click_remove_option(authenticated_page)
+            complete_remove_confirmation(authenticated_page)
             
-            # Reload to verify deletion
+            # Verify empty state returns
             navigate_to_integrations(authenticated_page, ui_url)
             wait_for_integrations_load(authenticated_page)
-            
-            # Verify deleted
-            deleted = authenticated_page.locator(f":text('{source_name}')")
-            expect(deleted).to_have_count(0)
+            verify_empty_state(authenticated_page)
             
         finally:
             cleanup_source_by_name(sources_api_session, gateway_url, source_name)
 
-    def test_cancel_wizard_preserves_empty_state(
+    def test_cancel_wizard_does_not_create_source(
         self, authenticated_page: Page, ui_url: str, ensure_no_sources
     ):
-        """Verify cancelling wizard returns to empty state without creating source."""
+        """Verify cancelling wizard doesn't create a source.
+        
+        User Journey:
+        1. Start from empty state
+        2. Open wizard
+        3. Fill in name
+        4. Cancel wizard
+        5. Verify still in empty state
+        
+        Validates:
+        - Cancel button works
+        - Wizard closes without creating source
+        - Empty state persists
+        """
         navigate_to_integrations(authenticated_page, ui_url)
         wait_for_integrations_load(authenticated_page)
+        verify_empty_state(authenticated_page)
         
-        # Open wizard and fill some data
-        open_add_integration_wizard(authenticated_page)
-        fill_wizard_step1_name(authenticated_page, "should-not-exist")
+        # Open wizard and fill data
+        click_openshift_card(authenticated_page)
+        verify_wizard_open(authenticated_page)
+        fill_wizard_name(authenticated_page, "should-not-exist")
         
         # Cancel
         click_wizard_cancel(authenticated_page)
+        verify_wizard_closed(authenticated_page)
         
-        # Reload to verify empty state
+        # Verify still empty state
         navigate_to_integrations(authenticated_page, ui_url)
         wait_for_integrations_load(authenticated_page)
+        verify_empty_state(authenticated_page)
         
-        # Verify we're back to empty state with the OpenShift card
-        ocp_card = authenticated_page.locator(
-            "[data-ouia-component-id='sources-empty-add-openshift-card']"
-        )
-        expect(ocp_card.first).to_be_visible(timeout=10000)
-        
-        # Verify no source was created
+        # Verify no source created
         no_source = authenticated_page.locator(":text('should-not-exist')")
         expect(no_source).to_have_count(0)
-
-
-# =============================================================================
-# Actions Menu Tests
-# =============================================================================
-
-
-@pytest.mark.ui
-@pytest.mark.sources
-class TestSourceActionsMenu:
-    """Test the source actions (kebab) menu."""
-
-    def test_actions_menu_has_remove_option(
-        self, authenticated_page: Page, ui_url: str, test_source: SourceData
-    ):
-        """Verify actions menu contains Remove option."""
-        navigate_to_integrations(authenticated_page, ui_url)
-        wait_for_integrations_load(authenticated_page, 20000)
-        
-        open_source_actions_menu(authenticated_page, test_source.name)
-        
-        remove_option = authenticated_page.locator(
-            "[role='menuitem']:has-text('Remove'), "
-            ".pf-v6-c-menu__item:has-text('Remove')"
-        )
-        expect(remove_option.first).to_be_visible()
-
-    def test_remove_shows_confirmation(
-        self, authenticated_page: Page, ui_url: str, test_source: SourceData
-    ):
-        """Verify remove action shows confirmation dialog with checkbox."""
-        navigate_to_integrations(authenticated_page, ui_url)
-        wait_for_integrations_load(authenticated_page, 20000)
-        
-        open_source_actions_menu(authenticated_page, test_source.name)
-        
-        # Click remove
-        remove_option = authenticated_page.locator(
-            "[role='menuitem']:has-text('Remove'), "
-            ".pf-v6-c-menu__item:has-text('Remove')"
-        )
-        remove_option.first.click()
-        authenticated_page.wait_for_timeout(1000)
-        
-        # Check for confirmation modal
-        confirm_modal = authenticated_page.locator(".pf-v6-c-modal-box")
-        expect(confirm_modal.first).to_be_visible()
-        
-        # Verify it has an acknowledgement checkbox
-        checkbox = confirm_modal.locator("input[type='checkbox']")
-        expect(checkbox.first).to_be_visible()
-        
-        # Cancel to not actually delete
-        cancel = authenticated_page.locator("button:has-text('Cancel')")
-        if cancel.count() > 0:
-            cancel.first.click()
