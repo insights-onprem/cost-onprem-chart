@@ -428,7 +428,7 @@ run_detect_updates() {
 
                     if [[ -z "$concrete_tag" ]]; then
                         warn "Could not resolve concrete tag for $image (digest: ${latest_digest:0:20}...)"
-                        echo "$latest_digest" > "$cache_file"
+                        # Don't cache — retry resolution on next run
                         continue
                     fi
 
@@ -440,10 +440,10 @@ run_detect_updates() {
 
                     local component_name
                     component_name=$(basename "$image")
-                    has_updates="true"
 
                     # Patch values.yaml with the new tag
                     if patch_values_tag "$image" "$concrete_tag"; then
+                        has_updates="true"
                         log "UPDATED: $image: $current_tag → $concrete_tag"
                     else
                         err "FAILED to patch $image, skipping"

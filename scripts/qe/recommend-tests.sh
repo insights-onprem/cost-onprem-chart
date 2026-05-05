@@ -235,16 +235,17 @@ if [[ -z "$changed_files" ]]; then
 fi
 
 # 1) Check values.yaml for image tag changes — look up each in components map
+#    Parse the diff hunk-by-hunk so each added tag: line binds to the
+#    repository: that appears in the same hunk context (not a global search).
 values_diff=$(git diff "${BASE_BRANCH}...HEAD" -- cost-onprem/values.yaml 2>/dev/null || echo "")
 
 if [[ -n "$values_diff" ]]; then
-    while IFS= read -r tag_line; do
-        [[ -z "$tag_line" ]] && continue
+    # Extract (repository, tag) pairs from diff hunks:
+    # For each hunk, track the most recent repository: line (context or added),
+    # then emit "repo|tag" when an added tag: line is found.
+    while IFS='|' read -r repo component_tag; do
+        [[ -z "$repo" || -z "$component_tag" ]] && continue
 
-        repo_line=$(echo "$values_diff" | grep -B5 "$(echo "$tag_line" | sed 's/^+//')" | grep 'repository:' | tail -1 || true)
-        [[ -z "$repo_line" ]] && continue
-
-        repo=$(echo "$repo_line" | sed 's/.*repository: *//' | tr -d '"' | tr -d "'")
         component=$(basename "$repo")
 
         profile=$(get_component_field "$component" "profile")
@@ -256,7 +257,27 @@ if [[ -n "$values_diff" ]]; then
         else
             add_row "$component" "unknown" "Image updated (no mapping in test-impact-map.yaml)"
         fi
-    done < <(echo "$values_diff" | grep -E '^\+.*tag:' | grep -v '^\+\+\+')
+    done < <(echo "$values_diff" | awk '
+        /^@@/ { repo = "" }
+        /repository:/ {
+            line = $0
+            sub(/^[+ -]/, "", line)
+            sub(/.*repository:[ \t]*/, "", line)
+            gsub(/["'"'"']/, "", line)
+            gsub(/^[ \t]+|[ \t]+$/, "", line)
+            repo = line
+        }
+        /^\+.*tag:/ && !/^\+\+\+/ {
+            if (repo != "") {
+                tag = $0
+                sub(/^\+/, "", tag)
+                sub(/.*tag:[ \t]*/, "", tag)
+                gsub(/["'"'"']/, "", tag)
+                gsub(/^[ \t]+|[ \t]+$/, "", tag)
+                print repo "|" tag
+            }
+        }
+    ')
 fi
 
 # 2) Evaluate path-based rules
