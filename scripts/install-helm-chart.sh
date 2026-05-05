@@ -15,8 +15,11 @@
 #   S3_PORT         - S3 port (default: 443, used with S3_ENDPOINT)
 #   S3_USE_SSL      - Whether S3 uses TLS (default: true, used with S3_ENDPOINT)
 #   S3_VERIFY_SSL   - Verify S3 TLS certificates (default: false; internal services use cluster CA)
-#   S3_ACCESS_KEY   - S3 access key (bypasses secret lookup in bucket creation)
-#   S3_SECRET_KEY   - S3 secret key (bypasses secret lookup in bucket creation)
+#   S3_ACCESS_KEY   - S3 access key (creates storage secret when set with S3_SECRET_KEY; also for bucket job)
+#   S3_SECRET_KEY   - S3 secret key (creates storage secret when set with S3_ACCESS_KEY)
+#   S3_REGION       - S3 region for SigV4 (required for AWS S3; sets objectStorage.s3.region and CLI signing)
+#   S3_BUCKET_PREFIX - AWS/public S3: prefix for globally unique buckets (<prefix>-ingress-upload, -koku, -ros)
+#   S3_BUCKET_INGRESS / S3_BUCKET_KOKU / S3_BUCKET_ROS - Override individual bucket names (override prefix)
 #   SKIP_S3_SETUP   - Skip S3 bucket creation entirely (default: false)
 #   S3_CLI_IMAGE    - Container image with AWS CLI for bucket creation (default: amazon/aws-cli:latest)
 #
@@ -32,6 +35,11 @@
 #
 #   # Generic S3 backend (non-ODF)
 #   S3_ENDPOINT=s3.openshift-storage.svc S3_PORT=443 ./install-helm-chart.sh
+#
+#   # AWS S3 (credentials via env; use public CA / verify SSL; buckets must be globally unique)
+#   S3_ENDPOINT=s3.us-east-1.amazonaws.com S3_REGION=us-east-1 S3_VERIFY_SSL=true \\
+#     S3_BUCKET_PREFIX=myorg-costonprem-prod \\
+#     S3_ACCESS_KEY=... S3_SECRET_KEY=... ./install-helm-chart.sh
 
 set -e  # Exit on any error
 
@@ -104,6 +112,156 @@ parse_s3_host() {
 # Extract namespace from FQDN: "s4.ns.svc.cluster.local" => "ns"
 parse_s3_namespace() {
     parse_s3_host "$1" | cut -d. -f2
+}
+
+# Helm chart fullname for cost-onprem (matches templates/_helpers.tpl cost-onprem.fullname)
+helm_release_fullname() {
+    local chart_name="cost-onprem"
+    if [[ "${HELM_RELEASE_NAME}" == *"$chart_name"* ]]; then
+        echo "${HELM_RELEASE_NAME}"
+    else
+        echo "${HELM_RELEASE_NAME}-${chart_name}"
+    fi
+}
+
+# Secret name used for S3 credentials (matches cost-onprem.storage.secretName default)
+storage_credentials_secret_name() {
+    echo "$(helm_release_fullname)-storage-credentials"
+}
+
+# True if endpoint hostname is AWS S3 (virtual-hosted style; do not force path-style addressing)
+is_aws_s3_endpoint_host() {
+    case "$1" in
+        # AWS S3 endpoints
+        *.amazonaws.com) return 0 ;;
+        # Exclude S4 test endpoints and other local services
+        s4.*svc.cluster.local|s4.*svc|*.openshift-storage.svc*) return 1 ;;
+        *) return 1 ;;
+    esac
+}
+
+find_explicit_s3_region() {
+    if [ -n "${S3_REGION:-}" ]; then
+        echo "$S3_REGION"
+        return 0
+    fi
+    local vf v
+    vf="${VALUES_FILE:-}"
+    if [ -n "$vf" ] && [ -f "$vf" ] && command_exists yq; then
+        v=$(yq '.objectStorage.s3.region // ""' "$vf" 2>/dev/null)
+        if [ -n "$v" ] && [ "$v" != "null" ] && [ "$v" != "onprem" ]; then
+            echo "$v"
+            return 0
+        fi
+    fi
+    local chart_dir="${CHART_DIR:-${SCRIPT_DIR}/../cost-onprem}"
+    local base_values="${chart_dir}/values.yaml"
+    if [ -f "$base_values" ] && command_exists yq; then
+        v=$(yq '.objectStorage.s3.region // ""' "$base_values" 2>/dev/null)
+        if [ -n "$v" ] && [ "$v" != "null" ] && [ "$v" != "onprem" ]; then
+            echo "$v"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+resolve_s3_cli_region() {
+    find_explicit_s3_region && return 0
+    echo "us-east-1"
+}
+
+# Bucket name for the S3 setup job: VALUES_FILE may be a partial overlay without
+# ingress/costManagement.storage keys; yq then returns YAML null (string "null").
+# Order: user values → chart values.yaml → hard-coded default (matches chart defaults).
+resolve_install_bucket_name() {
+    local yq_path="$1"
+    local hard_default="$2"
+    local chart_dir="${CHART_DIR:-${SCRIPT_DIR}/../cost-onprem}"
+    local chart_values="${chart_dir}/values.yaml"
+    local user_f="${VALUES_FILE:-}"
+    local v=""
+    local f
+
+    for f in "$user_f" "$chart_values"; do
+        [ -z "$f" ] || [ ! -f "$f" ] && continue
+        command_exists yq || continue
+        v=$(yq "$yq_path" "$f" 2>/dev/null || true)
+        v="${v//$'\r'/}"
+        v="${v#\"}"
+        v="${v%\"}"
+        if [ -n "$v" ] && [ "$v" != "null" ] && [ "$v" != "~" ]; then
+            echo "$v"
+            return 0
+        fi
+    done
+    echo "$hard_default"
+}
+
+validate_s3_bucket_name() {
+    local name="$1"
+    local label="$2"
+    local len=${#name}
+    if [ "$len" -lt 3 ] || [ "$len" -gt 63 ]; then
+        echo_error "S3 bucket name '$name' ($label) must be 3-63 characters (got $len)"
+        return 1
+    fi
+    if echo "$name" | grep -qE '[^a-z0-9.-]'; then
+        echo_error "S3 bucket name '$name' ($label) contains invalid characters (allowed: a-z, 0-9, hyphens, dots)"
+        return 1
+    fi
+    if echo "$name" | grep -qE '^-|-$'; then
+        echo_error "S3 bucket name '$name' ($label) must not start or end with a hyphen"
+        return 1
+    fi
+    return 0
+}
+
+compute_and_export_install_bucket_names() {
+    local endpoint_host="${1:-}"
+    local ingress_bucket koku_bucket ros_bucket
+
+    ingress_bucket=$(resolve_install_bucket_name '.ingress.storage.bucket' 'insights-upload-perma')
+    koku_bucket=$(resolve_install_bucket_name '.costManagement.storage.bucketName' 'koku-bucket')
+    ros_bucket=$(resolve_install_bucket_name '.costManagement.storage.rosBucketName' 'ros-data')
+
+    if [ -n "${S3_BUCKET_PREFIX:-}" ]; then
+        ingress_bucket="${S3_BUCKET_PREFIX}-ingress-upload"
+        koku_bucket="${S3_BUCKET_PREFIX}-koku"
+        ros_bucket="${S3_BUCKET_PREFIX}-ros"
+    fi
+    [ -n "${S3_BUCKET_INGRESS:-}" ] && ingress_bucket="$S3_BUCKET_INGRESS"
+    [ -n "${S3_BUCKET_KOKU:-}" ] && koku_bucket="$S3_BUCKET_KOKU"
+    [ -n "${S3_BUCKET_ROS:-}" ] && ros_bucket="$S3_BUCKET_ROS"
+
+    local bucket_valid=true
+    validate_s3_bucket_name "$ingress_bucket" "ingress" || bucket_valid=false
+    validate_s3_bucket_name "$koku_bucket" "koku" || bucket_valid=false
+    validate_s3_bucket_name "$ros_bucket" "ros" || bucket_valid=false
+    if [ "$bucket_valid" = "false" ]; then
+        echo_error "Fix bucket names via S3_BUCKET_PREFIX, S3_BUCKET_INGRESS/KOKU/ROS, or values file"
+        exit 1
+    fi
+
+    if is_aws_s3_endpoint_host "$endpoint_host"; then
+        if [ "$ingress_bucket" = "insights-upload-perma" ] || \
+           [ "$koku_bucket" = "koku-bucket" ] || \
+           [ "$ros_bucket" = "ros-data" ]; then
+            echo_error "AWS S3 bucket names must be globally unique across all AWS accounts."
+            echo_error "Do not use the chart defaults (insights-upload-perma, koku-bucket, ros-data) on public AWS."
+            echo_error ""
+            echo_error "Set a unique prefix or explicit names, for example:"
+            echo_error "  export S3_BUCKET_PREFIX=\"myorg-costonprem-prod\""
+            echo_error "    → buckets: myorg-costonprem-prod-ingress-upload, myorg-costonprem-prod-koku, myorg-costonprem-prod-ros"
+            echo_error "Or: S3_BUCKET_INGRESS, S3_BUCKET_KOKU, S3_BUCKET_ROS (DNS-safe, lowercase)"
+            echo_error "Or define ingress.storage.bucket and costManagement.storage.bucketName / rosBucketName in VALUES_FILE."
+            exit 1
+        fi
+    fi
+
+    export RESOLVED_S3_BUCKET_INGRESS="$ingress_bucket"
+    export RESOLVED_S3_BUCKET_KOKU="$koku_bucket"
+    export RESOLVED_S3_BUCKET_ROS="$ros_bucket"
 }
 
 # Read a value from the user-supplied Helm values file using yq
@@ -456,23 +614,24 @@ create_database_credentials_secret() {
 create_storage_credentials_secret() {
     echo_info "Creating storage credentials secret..."
 
-    # Use the same naming convention as the Helm chart fullname template
-    # The fullname template logic: if release name contains chart name, use release name as-is
-    # Otherwise use: ${HELM_RELEASE_NAME}-${CHART_NAME}
-    # For cost-onprem-test release: fullname = cost-onprem-test (contains "cost-onprem")
-    # For other releases: fullname = ${HELM_RELEASE_NAME}-cost-onprem
-    local chart_name="cost-onprem"
-    local fullname
-    if [[ "$HELM_RELEASE_NAME" == *"$chart_name"* ]]; then
-        fullname="$HELM_RELEASE_NAME"
-    else
-        fullname="${HELM_RELEASE_NAME}-${chart_name}"
-    fi
-    local secret_name="${fullname}-storage-credentials"
+    local secret_name
+    secret_name=$(storage_credentials_secret_name)
 
     # Check if secret already exists
     if kubectl get secret "$secret_name" -n "$NAMESPACE" >/dev/null 2>&1; then
         echo_warning "Storage credentials secret '$secret_name' already exists"
+        return 0
+    fi
+
+    # Explicit credentials (AWS S3, MinIO, etc.) — highest priority when both are set
+    if [ -n "${S3_ACCESS_KEY:-}" ] && [ -n "${S3_SECRET_KEY:-}" ]; then
+        echo_info "Creating storage credentials from S3_ACCESS_KEY / S3_SECRET_KEY"
+        kubectl create secret generic "$secret_name" \
+            --namespace="$NAMESPACE" \
+            --from-literal=access-key="$S3_ACCESS_KEY" \
+            --from-literal=secret-key="$S3_SECRET_KEY"
+        echo_success "Storage credentials created from environment variables"
+        echo_info "  Storage backend: generic S3 (credentials from S3_ACCESS_KEY / S3_SECRET_KEY)"
         return 0
     fi
 
@@ -558,18 +717,23 @@ create_storage_credentials_secret() {
         echo_error ""
         echo_info "Available options:"
         echo_info ""
-        echo_info "Option 1: Provide credentials manually (recommended for generic S3)"
+        echo_info "Option 1: Export keys and re-run (AWS S3 / external S3)"
+        echo_info "  export S3_ACCESS_KEY=<access-key> S3_SECRET_KEY=<secret-key>"
+        echo_info "  export S3_ENDPOINT=<hostname>   # e.g. s3.us-east-1.amazonaws.com"
+        echo_info "  export S3_REGION=<region>       # required for AWS (e.g. us-east-1)"
+        echo_info ""
+        echo_info "Option 2: Provide credentials via Kubernetes secret"
         echo_info "  kubectl create secret generic $s3_creds_secret \\"
         echo_info "      --namespace=$NAMESPACE \\"
         echo_info "      --from-literal=access-key=<your-access-key> \\"
         echo_info "      --from-literal=secret-key=<your-secret-key>"
         echo_info "  Then set S3_ENDPOINT=<hostname> when re-running this script."
         echo_info ""
-        echo_info "Option 2: Configure in values.yaml (production)"
+        echo_info "Option 3: Configure in values.yaml (production)"
         echo_info "  - Set objectStorage.endpoint and objectStorage.secretName"
         echo_info "  - Pre-create the secret with 'access-key' and 'secret-key' keys"
         echo_info ""
-        echo_info "Option 3: Deploy with S4 (Testing/CI only)"
+        echo_info "Option 4: Deploy with S4 (Testing/CI only)"
         echo_info "  - First deploy S4: ./scripts/deploy-s4-test.sh cost-onprem"
         echo_info "  - Then re-run this installation script"
         echo_info ""
@@ -589,9 +753,14 @@ create_storage_credentials_secret() {
 #   S3_ACCESS_KEY            - Manual S3 access key override
 #   S3_SECRET_KEY            - Manual S3 secret key override
 #   S3_CLI_IMAGE             - Container image with AWS CLI (default: amazon/aws-cli:latest)
-#   S3_VERIFY_SSL            - Verify TLS certificates (default: false)
+#   S3_VERIFY_SSL            - Verify TLS certificates (default: false; use true for AWS/public CAs)
+#   S3_REGION                - Same as top-level docs; used for SigV4 in bucket job and Helm when set
+#   S3_BUCKET_PREFIX         - Prefix for bucket names: <prefix>-ingress-upload, <prefix>-koku, <prefix>-ros
+#   S3_BUCKET_INGRESS / S3_BUCKET_KOKU / S3_BUCKET_ROS - Override individual names (after prefix)
 create_s3_buckets() {
     echo_info "Creating S3 buckets..."
+
+    unset RESOLVED_S3_BUCKET_INGRESS RESOLVED_S3_BUCKET_KOKU RESOLVED_S3_BUCKET_ROS 2>/dev/null || true
 
     # Check if S3 setup should be skipped entirely
     if [ "${SKIP_S3_SETUP:-false}" = "true" ]; then
@@ -600,7 +769,8 @@ create_s3_buckets() {
         return 0
     fi
 
-    local secret_name="${HELM_RELEASE_NAME}-storage-credentials"
+    local secret_name
+    secret_name=$(storage_credentials_secret_name)
 
     # Get S3 credentials from environment variables or secret
     local access_key="${S3_ACCESS_KEY:-}"
@@ -616,6 +786,14 @@ create_s3_buckets() {
     fi
 
     if [ -z "$access_key" ] || [ -z "$secret_key" ]; then
+        # Check if this might be a CI/S4 environment where credentials are managed differently
+        if [ -n "${S3_ENDPOINT:-}" ] && [[ "$S3_ENDPOINT" == *"svc.cluster.local"* ]]; then
+            echo_warning "S3 credentials not found for cluster-local endpoint: $S3_ENDPOINT"
+            echo_warning "This may be a CI/S4 environment. Skipping bucket creation."
+            echo_info "If buckets don't exist, they may need to be created manually or by S4 setup."
+            return 0
+        fi
+
         echo_error "S3 credentials not found in secret $secret_name or environment variables"
         echo_error "Cannot proceed without S3 storage. Aborting installation."
         echo_error ""
@@ -625,8 +803,8 @@ create_s3_buckets() {
     fi
 
     # Determine S3 endpoint and configuration
-    # Priority: S3_ENDPOINT env var > NooBaa auto-detect > values.yaml fallback
-    local s3_url no_verify_ssl
+    # Priority: S3_ENDPOINT env > NooBaa > VALUES_FILE objectStorage > chart values.yaml
+    local s3_url no_verify_ssl endpoint_host="" aws_addr_style="path"
 
     # Default to skipping verification: most on-prem S3 backends use certs
     # signed by the cluster service CA, which is not in the container's trust
@@ -635,7 +813,14 @@ create_s3_buckets() {
     local verify_ssl="${S3_VERIFY_SSL:-false}"
 
     if [ -n "${S3_ENDPOINT:-}" ]; then
-        # PRIORITY 1: Explicit S3_ENDPOINT env var (S4, or any S3 backend)
+        # Explicit S3_ENDPOINT (AWS, S4, NooBaa override, etc.)
+        endpoint_host=$(parse_s3_host "$S3_ENDPOINT")
+
+        # Auto-enable SSL verification for AWS endpoints unless explicitly disabled
+        if is_aws_s3_endpoint_host "$endpoint_host" && [ -z "${S3_VERIFY_SSL:-}" ]; then
+            verify_ssl="true"
+            echo_info "  Auto-enabled SSL verification for AWS S3 endpoint (override with S3_VERIFY_SSL=false)"
+        fi
         local s3_port="${S3_PORT:-443}"
         local s3_ssl="${S3_USE_SSL:-true}"
         if [ "$s3_ssl" = "true" ]; then
@@ -648,23 +833,35 @@ create_s3_buckets() {
         echo_info "  ✓ Using S3_ENDPOINT: $s3_url"
     elif kubectl get crd noobaas.noobaa.io >/dev/null 2>&1 && \
        kubectl get noobaa -n openshift-storage >/dev/null 2>&1; then
-        # PRIORITY 3: NooBaa auto-detection (ODF S3 backend)
-        # Internal service-serving certs are signed by the cluster CA which
-        # the AWS CLI container does not trust, so verification is skipped.
+        # NooBaa auto-detection (ODF S3 backend)
+        endpoint_host="s3.openshift-storage.svc"
         s3_url="https://s3.openshift-storage.svc:443"
         no_verify_ssl="--no-verify-ssl"
         echo_info "  ✓ Detected: NooBaa S3 (via ODF)"
     else
-        # PRIORITY 4: Read objectStorage settings from base values.yaml
+        # Read objectStorage from user values file first, then bundled chart values.yaml
         local chart_dir="${CHART_DIR:-${SCRIPT_DIR}/../cost-onprem}"
         local base_values="${chart_dir}/values.yaml"
         local s3_ep="" s3_port="443" s3_ssl="true"
-        if [ -f "$base_values" ] && command_exists yq; then
-            s3_ep=$(yq '.objectStorage.endpoint // ""' "$base_values" 2>/dev/null)
-            s3_port=$(yq '.objectStorage.port // 443' "$base_values" 2>/dev/null)
-            s3_ssl=$(yq '.objectStorage.useSSL // true' "$base_values" 2>/dev/null)
+        local src_values=""
+        if [ -n "${VALUES_FILE:-}" ] && [ -f "$VALUES_FILE" ] && command_exists yq; then
+            src_values="$VALUES_FILE"
+        elif [ -f "$base_values" ]; then
+            src_values="$base_values"
         fi
-        if [ -n "$s3_ep" ]; then
+        if [ -n "$src_values" ] && command_exists yq; then
+            s3_ep=$(yq '.objectStorage.endpoint // ""' "$src_values" 2>/dev/null)
+            s3_port=$(yq '.objectStorage.port // 443' "$src_values" 2>/dev/null)
+            s3_ssl=$(yq '.objectStorage.useSSL // true' "$src_values" 2>/dev/null)
+        fi
+        if [ -n "$s3_ep" ] && [ "$s3_ep" != "null" ]; then
+            endpoint_host=$(parse_s3_host "$s3_ep")
+
+            if is_aws_s3_endpoint_host "$endpoint_host" && [ -z "${S3_VERIFY_SSL:-}" ]; then
+                verify_ssl="true"
+                echo_info "  Auto-enabled SSL verification for AWS S3 endpoint (override with S3_VERIFY_SSL=false)"
+            fi
+
             if [ "$s3_ssl" = "true" ]; then
                 s3_url="https://${s3_ep}:${s3_port}"
                 [ "$verify_ssl" = "true" ] && no_verify_ssl="" || no_verify_ssl="--no-verify-ssl"
@@ -672,97 +869,156 @@ create_s3_buckets() {
                 s3_url="http://${s3_ep}:${s3_port}"
                 no_verify_ssl=""
             fi
-            echo_info "  ✓ Using S3 from values.yaml: $s3_url"
+            echo_info "  ✓ Using S3 from values (${src_values##*/}): $s3_url"
         else
             echo_error "Could not detect S3 storage backend"
-            echo_error "Checked for: S3_ENDPOINT env var, NooBaa CRD, values.yaml objectStorage"
+            echo_error "Checked for: S3_ENDPOINT env var, NooBaa CRD, values objectStorage.endpoint"
             echo_error ""
             echo_error "Solutions:"
-            echo_error "  1. Set S3_ENDPOINT=<hostname> (e.g., S3_ENDPOINT=s3.openshift-storage.svc)"
-            echo_error "     Optional: S3_PORT=443 S3_USE_SSL=true (defaults)"
-            echo_error "  2. Configure objectStorage.endpoint in values.yaml"
-            echo_error "  3. Deploy S4 for dev/test: ./scripts/deploy-s4-test.sh cost-onprem"
-            echo_error "  4. Set SKIP_S3_SETUP=true to skip bucket creation"
+            echo_error "  1. AWS S3: S3_ENDPOINT=s3.<region>.amazonaws.com S3_REGION=<region> S3_ACCESS_KEY=... S3_SECRET_KEY=..."
+            echo_error "  2. Set S3_ENDPOINT for any S3-compatible endpoint (optional: S3_PORT, S3_USE_SSL)"
+            echo_error "  3. Set objectStorage.endpoint in VALUES_FILE or ensure chart values.yaml is available"
+            echo_error "  4. Deploy S4 for dev/test: ./scripts/deploy-s4-test.sh cost-onprem"
+            echo_error "  5. Set SKIP_S3_SETUP=true to skip bucket creation"
             exit 1
         fi
     fi
 
-    # Read bucket names from values.yaml (single source of truth)
-    local chart_dir="${CHART_DIR:-${SCRIPT_DIR}/../cost-onprem}"
-    local values_file="${chart_dir}/values.yaml"
-    local ingress_bucket koku_bucket ros_bucket bucket_list
-    if [ -f "$values_file" ] && command_exists yq; then
-        ingress_bucket=$(yq '.ingress.storage.bucket' "$values_file")
-        koku_bucket=$(yq '.costManagement.storage.bucketName' "$values_file")
-        ros_bucket=$(yq '.costManagement.storage.rosBucketName' "$values_file")
-        echo_info "Bucket names from values.yaml: $ingress_bucket $koku_bucket $ros_bucket"
-    else
-        # Fallback to defaults if values.yaml or yq not available (e.g., GitHub release install)
-        ingress_bucket="insights-upload-perma"
-        koku_bucket="koku-bucket"
-        ros_bucket="ros-data"
-        echo_info "Using default bucket names (values.yaml or yq not available)"
-    fi
-    bucket_list="$ingress_bucket $koku_bucket $ros_bucket"
+    local aws_region
+    if is_aws_s3_endpoint_host "$endpoint_host"; then
+        aws_addr_style="auto"
+        echo_info "  AWS S3 endpoint: using virtual-hosted-style (addressing_style=auto) for AWS CLI"
 
+        local explicit_region
+        if ! explicit_region=$(find_explicit_s3_region); then
+            echo_error "Region is required for AWS S3 endpoints (SigV4 authentication)."
+            echo_error ""
+            echo_error "Provide the region via environment variable or values file:"
+            echo_error "  export S3_REGION=us-east-1"
+            echo_error "Or in your values file:"
+            echo_error "  objectStorage:"
+            echo_error "    s3:"
+            echo_error "      region: us-east-1"
+            echo_error ""
+            echo_error "Common AWS regions: us-east-1, us-west-2, eu-west-1, ap-southeast-1"
+            exit 1
+        fi
+        aws_region="$explicit_region"
+
+        local expected_region=""
+        case "$endpoint_host" in
+            s3.dualstack.*.amazonaws.com)
+                expected_region=$(echo "$endpoint_host" | sed 's/s3\.dualstack\.\([^.]*\)\.amazonaws\.com/\1/')
+                ;;
+            s3-*.*.amazonaws.com)
+                expected_region=$(echo "$endpoint_host" | sed 's/s3-[^.]*\.\([^.]*\)\.amazonaws\.com/\1/')
+                ;;
+            s3.*.amazonaws.com)
+                expected_region=$(echo "$endpoint_host" | sed 's/s3\.\([^.]*\)\.amazonaws\.com/\1/')
+                ;;
+        esac
+        if [ -n "$expected_region" ] && [ "$expected_region" != "$aws_region" ]; then
+            echo_warning "Region mismatch: resolved region=${aws_region} but endpoint suggests ${expected_region}"
+            echo_warning "This may cause SigV4 authentication failures"
+        fi
+        echo_info "  AWS CLI region for bucket job: $aws_region"
+    else
+        aws_region=$(resolve_s3_cli_region)
+    fi
+
+    compute_and_export_install_bucket_names "$endpoint_host"
+    local bucket_list="${RESOLVED_S3_BUCKET_INGRESS} ${RESOLVED_S3_BUCKET_KOKU} ${RESOLVED_S3_BUCKET_ROS}"
     echo_info "Creating buckets at ${s3_url}..."
 
-    # Use kubectl run --rm for one-shot bucket creation (auto-cleanup).
-    # The image must contain the AWS CLI; override S3_CLI_IMAGE for air-gapped
-    # environments where the default image is mirrored to a private registry.
-    # Real failures (connectivity, permissions) will cause non-zero exit.
-    #
-    # IMPORTANT: --overrides must NOT include a "containers" array.
-    # When --overrides contains "containers", kubectl's strategic merge patch
-    # clobbers the command generated by --command, causing the pod to run
-    # the image default entrypoint which exits immediately without executing
-    # any bucket creation commands.
-    # Pod-level securityContext is sufficient; OpenShift SCC (nonroot-v2)
-    # automatically applies container-level security constraints.
-    # HOME=/tmp lets the AWS CLI write its config without a dedicated volume mount.
+    local run_id
+    run_id=$(date +%s)
+    local temp_secret_name="${secret_name}-bucket-job-${run_id}"
+    local bucket_pod_name="bucket-setup-${run_id}"
     local bucket_image="${S3_CLI_IMAGE:-amazon/aws-cli:latest}"
-    local output
-    if output=$(kubectl run bucket-setup --rm -i --restart=Never \
-        --image="$bucket_image" \
-        -n "$NAMESPACE" \
-        --overrides='{
-            "spec": {
-                "securityContext": {
-                    "runAsNonRoot": true,
-                    "runAsUser": 1001,
-                    "seccompProfile": {
-                        "type": "RuntimeDefault"
-                    }
-                }
-            }
-        }' \
-        --command -- sh -c "
-            set -e
-            export HOME=/tmp
-            export AWS_ACCESS_KEY_ID='${access_key}'
-            export AWS_SECRET_ACCESS_KEY='${secret_key}'
-            export AWS_DEFAULT_REGION=us-east-1  # required by CLI for SigV4 signing; value is ignored by non-AWS S3 backends
-            mkdir -p \$HOME/.aws
-            printf '[default]\ns3 =\n    addressing_style = path\n' > \$HOME/.aws/config
-            for bucket in ${bucket_list}; do
-                if aws s3api head-bucket --bucket \${bucket} --endpoint-url ${s3_url} ${no_verify_ssl} 2>/dev/null; then
-                    echo \"ℹ️  Bucket \${bucket} already exists\"
-                else
-                    aws s3 mb s3://\${bucket} --endpoint-url ${s3_url} ${no_verify_ssl}
-                    echo \"✅ Created bucket: \${bucket}\"
-                fi
-            done
-            echo ''
-            echo 'Available buckets:'
-            aws s3 ls --endpoint-url ${s3_url} ${no_verify_ssl}
-        " 2>&1); then
+
+    cleanup_bucket_job() {
+        kubectl delete pod "$bucket_pod_name" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+        kubectl delete secret "$temp_secret_name" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+    }
+
+    cleanup_bucket_job
+    echo_info "Creating credentials secret for bucket creation job..."
+    kubectl create secret generic "$temp_secret_name" \
+        --namespace="$NAMESPACE" \
+        --from-literal=access-key="$access_key" \
+        --from-literal=secret-key="$secret_key"
+
+    trap cleanup_bucket_job EXIT INT TERM
+
+    kubectl create -f - <<PODEOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${bucket_pod_name}
+  namespace: ${NAMESPACE}
+spec:
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: bucket-setup
+    image: ${bucket_image}
+    env:
+    - name: AWS_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: ${temp_secret_name}
+          key: access-key
+    - name: AWS_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: ${temp_secret_name}
+          key: secret-key
+    - name: AWS_DEFAULT_REGION
+      value: "${aws_region}"
+    - name: HOME
+      value: "/tmp"
+    command: ["sh", "-c"]
+    args:
+    - |
+      set -e
+      mkdir -p /tmp/.aws
+      printf '[default]\ns3 =\n    addressing_style = ${aws_addr_style}\n' > /tmp/.aws/config
+      for bucket in ${bucket_list}; do
+        if aws s3api head-bucket --bucket \${bucket} --endpoint-url ${s3_url} ${no_verify_ssl} 2>/dev/null; then
+          echo "Bucket \${bucket} already exists"
+        else
+          aws s3 mb s3://\${bucket} --endpoint-url ${s3_url} ${no_verify_ssl}
+          echo "Created bucket: \${bucket}"
+        fi
+      done
+      echo ''
+      echo 'Available buckets:'
+      aws s3 ls --endpoint-url ${s3_url} ${no_verify_ssl}
+PODEOF
+
+    echo_info "Waiting for bucket creation job to complete..."
+    local output pod_phase
+    if kubectl wait --for=jsonpath='{.status.phase}'=Succeeded \
+        pod/"$bucket_pod_name" -n "$NAMESPACE" --timeout=300s 2>/dev/null; then
+        output=$(kubectl logs "$bucket_pod_name" -n "$NAMESPACE" 2>&1 || true)
         echo "$output"
         echo_success "S3 buckets ready"
+        cleanup_bucket_job
+        trap - EXIT INT TERM
         return 0
     else
+        pod_phase=$(kubectl get pod "$bucket_pod_name" -n "$NAMESPACE" \
+            -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+        output=$(kubectl logs "$bucket_pod_name" -n "$NAMESPACE" 2>&1 || echo "No logs available")
         echo "$output"
-        echo_error "Failed to create S3 buckets. Cannot proceed without storage."
+        echo_error "Failed to create S3 buckets (pod phase: $pod_phase). Cannot proceed without storage."
         echo_error "Check S3 connectivity and credentials."
+        cleanup_bucket_job
+        trap - EXIT INT TERM
         exit 1
     fi
 }
@@ -829,9 +1085,10 @@ preflight_validate() {
         # NooBaa detection
         if ! kubectl get crd noobaas.noobaa.io >/dev/null 2>&1 || \
            ! kubectl get noobaa -n openshift-storage >/dev/null 2>&1; then
-            echo_warning "No S3 backend detected (OBC, S3_ENDPOINT, or NooBaa)"
-            echo_info "  Chart will use default 's3.openshift-storage.svc.cluster.local'"
-            echo_info "  Override with S3_ENDPOINT=<hostname> or --set objectStorage.endpoint=..."
+            echo_warning "No in-cluster ODF/NooBaa S3 detected (OBC, S3_ENDPOINT, or NooBaa)"
+            echo_info "  For AWS S3 set S3_ENDPOINT (e.g. s3.us-east-1.amazonaws.com) and S3_REGION"
+            echo_info "  Otherwise chart defaults to 's3.openshift-storage.svc.cluster.local'"
+            echo_info "  Override with --set objectStorage.endpoint=... or a VALUES_FILE"
             warnings=$((warnings + 1))
         fi
     fi
@@ -992,13 +1249,17 @@ deploy_helm_chart() {
         echo_info "  Bucket: $EXTERNAL_OBC_BUCKET_NAME"
         echo_info "  Bucket configured for ingress, Koku, and ROS components"
     elif [ -n "${S3_ENDPOINT:-}" ]; then
-        # Explicit S3_ENDPOINT env var (generic S3 backend)
+        # Explicit S3_ENDPOINT env var (AWS S3, S4, NooBaa override, etc.)
         local s3_port="${S3_PORT:-443}"
         local s3_ssl="${S3_USE_SSL:-true}"
         echo_info "Configuring S3 endpoint from S3_ENDPOINT env var"
         helm_cmd="$helm_cmd --set objectStorage.endpoint=\"${S3_ENDPOINT}\""
         helm_cmd="$helm_cmd --set objectStorage.port=${s3_port}"
         helm_cmd="$helm_cmd --set objectStorage.useSSL=${s3_ssl}"
+        if [ -n "${S3_REGION:-}" ]; then
+            helm_cmd="$helm_cmd --set objectStorage.s3.region=\"${S3_REGION}\""
+            echo_info "objectStorage.s3.region=${S3_REGION} (AWS S3 / SigV4)"
+        fi
         echo_success "✓ S3 endpoint configured: ${S3_ENDPOINT} (port ${s3_port}, SSL=${s3_ssl})"
     elif kubectl get crd noobaas.noobaa.io >/dev/null 2>&1 && \
          kubectl get noobaa -n openshift-storage >/dev/null 2>&1; then
@@ -1008,6 +1269,14 @@ deploy_helm_chart() {
         helm_cmd="$helm_cmd --set objectStorage.port=443"
         helm_cmd="$helm_cmd --set objectStorage.useSSL=true"
         echo_success "✓ S3 endpoint configured: s3.openshift-storage.svc (port 443, SSL)"
+    fi
+
+    # Bucket names from create_s3_buckets (AWS/global S3 uniqueness, S3_BUCKET_* env, or chart defaults).
+    if [ "$USER_S3_CONFIGURED" != "true" ] && [ -n "${RESOLVED_S3_BUCKET_INGRESS:-}" ]; then
+        helm_cmd="$helm_cmd --set ingress.storage.bucket=\"${RESOLVED_S3_BUCKET_INGRESS}\""
+        helm_cmd="$helm_cmd --set costManagement.storage.bucketName=\"${RESOLVED_S3_BUCKET_KOKU}\""
+        helm_cmd="$helm_cmd --set costManagement.storage.rosBucketName=\"${RESOLVED_S3_BUCKET_ROS}\""
+        echo_info "Helm bucket names: ${RESOLVED_S3_BUCKET_INGRESS}, ${RESOLVED_S3_BUCKET_KOKU}, ${RESOLVED_S3_BUCKET_ROS}"
     fi
 
     # Tell Helm about the script-managed storage credentials secret so it
@@ -1823,9 +2092,9 @@ main() {
             if [ -n "$USER_S3_SECRET_NAME" ]; then
                 echo_info "  Credentials Secret: $USER_S3_SECRET_NAME (user-managed)"
             else
-                echo_info "  Credentials Secret: will be created by install script"
+                echo_info "  Credentials Secret: will be created by install script (or use S3_ACCESS_KEY/S3_SECRET_KEY)"
             fi
-            echo_info "Skipping S3 auto-detection"
+            echo_info "Helm S3 --set overrides skipped (values file defines object storage)"
         fi
     fi
 
@@ -1842,19 +2111,22 @@ main() {
     fi
 
     # Determine whether to skip storage credential and bucket creation:
-    #   - USER_S3_CONFIGURED=true + secretName set → skip credentials + buckets
-    #   - USER_S3_CONFIGURED=true + no secretName  → create credentials, skip buckets
+    #   - USER_S3_CONFIGURED=true + secretName set → skip credentials + buckets (fully user-managed)
+    #   - USER_S3_CONFIGURED=true + no secretName + S3_ACCESS_KEY set → create credentials + buckets
+    #   - USER_S3_CONFIGURED=true + no secretName + no env creds → create credentials, skip buckets
     #   - USING_EXTERNAL_OBC=true                  → skip credentials + buckets (OBC provides both)
     #   - Otherwise                                → auto-detect and create both
     local skip_storage_credentials="false"
     local skip_bucket_creation="false"
 
     if [ "$USER_S3_CONFIGURED" = "true" ]; then
-        # User manages their S3 — always skip bucket creation
-        skip_bucket_creation="true"
         if [ -n "$USER_S3_SECRET_NAME" ]; then
-            # User also manages their own credentials secret
             skip_storage_credentials="true"
+            skip_bucket_creation="true"
+        elif [ -n "${S3_ACCESS_KEY:-}" ] && [ -n "${S3_SECRET_KEY:-}" ]; then
+            skip_bucket_creation="false"
+        else
+            skip_bucket_creation="true"
         fi
     elif [ "$USING_EXTERNAL_OBC" = "true" ]; then
         skip_storage_credentials="true"
@@ -1889,15 +2161,7 @@ main() {
             echo_error "Failed to create storage credentials. Cannot proceed with installation."
             exit 1
         fi
-        # Compute the same secret name used by create_storage_credentials_secret
-        local chart_name="cost-onprem"
-        local fullname
-        if [[ "$HELM_RELEASE_NAME" == *"$chart_name"* ]]; then
-            fullname="$HELM_RELEASE_NAME"
-        else
-            fullname="${HELM_RELEASE_NAME}-${chart_name}"
-        fi
-        STORAGE_CREDENTIALS_SECRET="${fullname}-storage-credentials"
+        STORAGE_CREDENTIALS_SECRET="$(storage_credentials_secret_name)"
     else
         if [ -n "$USER_S3_SECRET_NAME" ]; then
             echo_info "Skipping storage credentials creation (using secret: $USER_S3_SECRET_NAME)"
@@ -2057,25 +2321,28 @@ case "${1:-}" in
         echo "                            Example: my-kafka-bootstrap.kafka:9092"
         echo ""
         echo "S3 Storage Configuration:"
-        echo "  Option 1 (Recommended for production): Configure in values.yaml"
-        echo "    Set objectStorage.endpoint, objectStorage.port, objectStorage.useSSL,"
-        echo "    objectStorage.secretName in your values file."
-        echo "    The script skips all S3 auto-detection when objectStorage.endpoint is set."
+        echo "  Option 1: values.yaml (ODF, AWS S3, or any S3-compatible backend)"
+        echo "    Set objectStorage.endpoint, port, useSSL, objectStorage.s3.region (AWS),"
+        echo "    and optionally objectStorage.secretName if you manage credentials yourself."
+        echo "    When endpoint is set, the script skips Helm --set for S3 (your file wins)."
+        echo "    Credentials/buckets are still created unless secretName is set (then fully user-managed)."
         echo ""
-        echo "  Option 2 (Generic S3): Explicit endpoint via environment variable"
-        echo "    S3_ENDPOINT           - S3 endpoint hostname (e.g., s3.openshift-storage.svc)"
+        echo "  Option 2: Environment variables (typical for AWS S3)"
+        echo "    S3_ENDPOINT           - Hostname only (e.g., s3.us-east-1.amazonaws.com)"
+        echo "    S3_REGION             - Region for SigV4 (e.g., us-east-1); sets objectStorage.s3.region"
         echo "    S3_PORT               - S3 port (default: 443)"
         echo "    S3_USE_SSL            - Whether to use TLS (default: true)"
-        echo "    S3_VERIFY_SSL         - Verify TLS certificates (default: false)"
+        echo "    S3_VERIFY_SSL         - Verify TLS (default: false; use true for AWS/public CAs)"
+        echo "    S3_ACCESS_KEY / S3_SECRET_KEY - Create storage secret when both are set"
+        echo "    S3_BUCKET_PREFIX      - Unique prefix for AWS buckets (<p>-ingress-upload, <p>-koku, <p>-ros)"
+        echo "    S3_BUCKET_INGRESS / S3_BUCKET_KOKU / S3_BUCKET_ROS - Override individual bucket names"
         echo ""
-        echo "  Option 3 (Automated): Let the script auto-detect"
-        echo "    (OBC auto-detection)  - Detects ObjectBucketClaim 'ros-data-ceph' automatically"
-        echo "    (NooBaa fallback)     - Falls back to NooBaa if available"
+        echo "  Option 3 (Automated): In-cluster backends"
+        echo "    OBC auto-detection    - ObjectBucketClaim 'ros-data-ceph'"
+        echo "    NooBaa / ODF          - When NooBaa CR exists in openshift-storage"
         echo ""
-        echo "  Option 4: Environment variable overrides"
-        echo "    S3_ACCESS_KEY         - Manual S3 access key for credential/bucket creation"
-        echo "    S3_SECRET_KEY         - Manual S3 secret key for credential/bucket creation"
-        echo "    SKIP_S3_SETUP         - Skip S3 bucket creation entirely (default: false)"
+        echo "  Option 4: Overrides"
+        echo "    SKIP_S3_SETUP         - Skip S3 bucket creation (default: false)"
         echo ""
         echo "Chart Source Options:"
         echo "  - Default: Installs from Helm chart repository (recommended)"

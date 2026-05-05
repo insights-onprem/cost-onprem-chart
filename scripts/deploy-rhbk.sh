@@ -8,6 +8,10 @@
 #
 # Environment Variables:
 #   LOG_LEVEL - Control output verbosity (ERROR|WARN|INFO|DEBUG, default: WARN)
+#   RHBK_NAMESPACE - Target namespace for operator, Keycloak, and DB (default: keycloak)
+#
+# Keycloak database image (embedded in deploy_postgresql):
+#   registry.redhat.io/rhel10/postgresql-16:10.1
 #
 # Examples:
 #   # Default (clean output)
@@ -349,10 +353,19 @@ spec:
         app: keycloak-db
         component: database
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: postgres
-          image: registry.redhat.io/rhel9/postgresql-15:latest
+          image: registry.redhat.io/rhel10/postgresql-16:10.1
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
           ports:
             - name: postgres
               containerPort: 5432
@@ -370,8 +383,6 @@ spec:
                 secretKeyRef:
                   name: keycloak-db-secret
                   key: password
-            - name: PGDATA
-              value: "/var/lib/pgsql/data/pgdata"
           volumeMounts:
             - name: postgres-storage
               mountPath: /var/lib/pgsql/data
