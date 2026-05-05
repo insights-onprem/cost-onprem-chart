@@ -214,12 +214,21 @@ run_pytest() {
     # Change to tests directory
     cd "$TESTS_DIR"
 
+    # Check if pytest-html is available and add HTML reporting if so
+    local html_args=()
+    if python -c "import pytest_html" 2>/dev/null; then
+        log_info "pytest-html available, enabling HTML report"
+        html_args=("--html=reports/report.html" "--self-contained-html")
+    else
+        log_warning "pytest-html not available, skipping HTML report"
+    fi
+
     # Log the full pytest command being executed (critical for CI debugging)
     echo ""
     echo "============================================================"
     echo "PYTEST COMMAND"
     echo "============================================================"
-    echo "pytest ${pytest_args[*]}"
+    echo "pytest ${html_args[*]} ${pytest_args[*]}"
     echo ""
     echo "Working directory: $(pwd)"
     echo "NAMESPACE=${NAMESPACE}"
@@ -228,9 +237,9 @@ run_pytest() {
     echo "============================================================"
     echo ""
 
-    # Run pytest with JUnit XML output
+    # Run pytest with JUnit XML output (HTML report added if available)
     local exit_code=0
-    pytest "${pytest_args[@]}" || exit_code=$?
+    pytest "${html_args[@]}" "${pytest_args[@]}" || exit_code=$?
 
     return $exit_code
 }
