@@ -15,6 +15,7 @@ import json
 import os
 import platform
 import subprocess
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -556,36 +557,43 @@ def perf_timer():
 
 
 class PerfTimer:
-    """Timer utility for performance measurements."""
+    """Thread-safe timer utility for performance measurements.
+
+    All dict mutations are guarded by a lock so concurrent ThreadPoolExecutor
+    workers can safely call start/stop/measure without corrupting state.
+    """
     
     def __init__(self):
         self._timings: Dict[str, TimingMetric] = {}
         self._active: Dict[str, float] = {}
+        self._lock = threading.Lock()
     
     def start(self, name: str, metadata: Optional[Dict[str, Any]] = None):
         """Start timing an operation."""
-        self._active[name] = time.time()
-        self._timings[name] = TimingMetric(
-            name=name,
-            duration_seconds=0,
-            start_time=datetime.now(timezone.utc).isoformat(),
-            end_time="",
-            metadata=metadata or {},
-        )
+        with self._lock:
+            self._active[name] = time.time()
+            self._timings[name] = TimingMetric(
+                name=name,
+                duration_seconds=0,
+                start_time=datetime.now(timezone.utc).isoformat(),
+                end_time="",
+                metadata=metadata or {},
+            )
     
     def stop(self, name: str) -> float:
         """Stop timing and return duration."""
-        if name not in self._active:
-            return 0.0
-        
-        end_time = time.time()
-        duration = end_time - self._active[name]
-        
-        self._timings[name].duration_seconds = duration
-        self._timings[name].end_time = datetime.now(timezone.utc).isoformat()
-        
-        del self._active[name]
-        return duration
+        with self._lock:
+            if name not in self._active:
+                return 0.0
+            
+            end_time = time.time()
+            duration = end_time - self._active[name]
+            
+            self._timings[name].duration_seconds = duration
+            self._timings[name].end_time = datetime.now(timezone.utc).isoformat()
+            
+            del self._active[name]
+            return duration
     
     def measure(self, name: str, metadata: Optional[Dict[str, Any]] = None):
         """Context manager for timing an operation."""
@@ -593,11 +601,13 @@ class PerfTimer:
     
     def get_timings(self) -> List[TimingMetric]:
         """Get all completed timings."""
-        return list(self._timings.values())
+        with self._lock:
+            return list(self._timings.values())
     
     def get_timing(self, name: str) -> Optional[TimingMetric]:
         """Get a specific timing."""
-        return self._timings.get(name)
+        with self._lock:
+            return self._timings.get(name)
 
 
 class _TimerContext:
@@ -773,7 +783,11 @@ class PerfCleanupTracker:
         ))
     
     def cleanup(self, rh_identity_header: str):
-        """Clean up all tracked resources."""
+        """Clean up all tracked resources.
+
+        Raises RuntimeError if any cleanup operations fail, so test frameworks
+        surface dirty state rather than silently proceeding.
+        """
         if not self._cleanup_enabled:
             print(f"\n[PERF CLEANUP] Skipped (E2E_CLEANUP_AFTER=false)")
             print(f"  Tracked resources: {len(self.resources)}")
@@ -792,6 +806,8 @@ class PerfCleanupTracker:
         
         koku_api_url = f"http://{self.helm_release}-koku-api.{self.namespace}.svc.cluster.local:8000/api/cost-management/v1"
         
+        failures = []
+        
         for resource in self.resources:
             # Delete source via API
             if resource.source_id and ingress_pod:
@@ -806,9 +822,13 @@ class PerfCleanupTracker:
                     ):
                         print(f"  Deleted source {resource.source_id}")
                     else:
-                        print(f"  Warning: Could not delete source {resource.source_id}")
+                        msg = f"Could not delete source {resource.source_id}"
+                        print(f"  Warning: {msg}")
+                        failures.append(msg)
                 except Exception as e:
-                    print(f"  Error deleting source {resource.source_id}: {e}")
+                    msg = f"Error deleting source {resource.source_id}: {e}"
+                    print(f"  {msg}")
+                    failures.append(msg)
             
             # Clean database records
             if resource.cluster_id and db_pod:
@@ -816,12 +836,27 @@ class PerfCleanupTracker:
                     if cleanup_database_records(self.namespace, db_pod, resource.cluster_id):
                         print(f"  Cleaned DB records for cluster {resource.cluster_id}")
                     else:
-                        print(f"  Warning: Could not clean DB for cluster {resource.cluster_id}")
+                        msg = f"Could not clean DB for cluster {resource.cluster_id}"
+                        print(f"  Warning: {msg}")
+                        failures.append(msg)
                 except Exception as e:
-                    print(f"  Error cleaning DB for cluster {resource.cluster_id}: {e}")
+                    msg = f"Error cleaning DB for cluster {resource.cluster_id}: {e}"
+                    print(f"  {msg}")
+                    failures.append(msg)
         
         self.resources.clear()
-        print("[PERF CLEANUP] Complete")
+        
+        if failures:
+            print(f"[PERF CLEANUP] Completed with {len(failures)} failure(s)")
+            import warnings
+            warnings.warn(
+                f"Performance test cleanup had {len(failures)} failure(s): "
+                + "; ".join(failures[:3]),
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        else:
+            print("[PERF CLEANUP] Complete")
 
 
 @pytest.fixture

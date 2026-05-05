@@ -22,6 +22,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TESTS_DIR="${REPO_ROOT}/tests"
 
+# Track whether setup completed so the trap knows if cleanup advice is needed
+_SETUP_COMPLETED=false
+
+_on_exit() {
+    local exit_code=$?
+    if [[ "$exit_code" -ne 0 && "$_SETUP_COMPLETED" != "true" && "$CLEAN_ONLY" != "true" ]]; then
+        echo ""
+        echo -e "${RED}[setup-test-data] Script interrupted (exit $exit_code).${NC}"
+        echo -e "${YELLOW}Sources may have been created. To clean up:${NC}"
+        echo "  ./scripts/setup-test-data.sh --clean --clean-prefix ${SOURCE_PREFIX}-${SCENARIO:-unknown}"
+        echo ""
+    fi
+}
+trap _on_exit EXIT
+
 # Defaults
 NAMESPACE="${NAMESPACE:-cost-onprem}"
 HELM_RELEASE_NAME="${HELM_RELEASE_NAME:-cost-onprem}"
@@ -629,6 +644,7 @@ main() {
     # Setup new data
     setup_test_data "$SCENARIO"
     
+    _SETUP_COMPLETED=true
     log_success "Test data setup complete!"
 }
 

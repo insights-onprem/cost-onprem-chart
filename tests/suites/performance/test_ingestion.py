@@ -480,6 +480,7 @@ class TestIngestionThroughput:
         perf_collector: PerfResultCollector,
         rh_identity_header: str,
         perf_cleanup,
+        perf_config,
     ):
         """PERF-ING-003: Concurrent uploads - N sources uploading simultaneously.
         
@@ -490,6 +491,9 @@ class TestIngestionThroughput:
         - Time to complete all
         - Error rate
         """
+        # Cap workers so the test client doesn't become the bottleneck
+        concurrent_sources = min(concurrent_sources, perf_config.concurrent_upload_max)
+        
         ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
         if not ingress_pod:
             pytest.skip("Ingress pod not found")

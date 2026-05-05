@@ -323,7 +323,10 @@ class TestMultiClusterScale:
             "degradation_detected": breaking_point is not None,
         }
         perf_result.timings = perf_timer.get_timings()
-        perf_result.passed = sources_created >= batch_size  # At least one batch succeeded
+        # Require at least half the target sources to be created, not just one batch.
+        # With batch_size=5 and max_sources=25, 1 batch is only 20% of the target.
+        min_required = max(batch_size, max_sources // 2)
+        perf_result.passed = sources_created >= min_required
         
         perf_collector.add_result(perf_result)
     

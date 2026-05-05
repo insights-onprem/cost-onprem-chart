@@ -58,6 +58,7 @@ from e2e_helpers import (
     register_source,
     upload_with_retry,
     wait_for_provider,
+    wait_for_summary_tables,
 )
 from utils import (
     create_upload_package_from_files,
@@ -384,11 +385,20 @@ def upload_worker(
     cluster_id: str,
     state: SoakTestState,
     interval_seconds: float,
+    db_pod: Optional[str] = None,
 ):
-    """Background worker that performs periodic uploads."""
+    """Background worker that performs periodic uploads with processing verification.
+
+    After every 3rd successful upload, verifies that data has been ingested by
+    checking summary tables. This catches silent data drops without adding
+    excessive overhead on every upload cycle.
+    """
     ensure_nise_available()
     
     upload_count = 0
+    uploads_since_verify = 0
+    VERIFY_EVERY_N = 3
+    
     while not state.stop_event.is_set():
         try:
             # Generate 1 day of data
@@ -425,16 +435,33 @@ def upload_worker(
                             "application/vnd.redhat.hccm.filename+tgz",
                             max_retries=3,
                         ):
-                            state.uploads_completed += 1
+                            state.increment_uploads(success=True)
                             upload_count += 1
+                            uploads_since_verify += 1
+                            
+                            # Periodically verify processing
+                            if db_pod and uploads_since_verify >= VERIFY_EVERY_N:
+                                uploads_since_verify = 0
+                                try:
+                                    schema = wait_for_summary_tables(
+                                        namespace, db_pod, cluster_id,
+                                        timeout=120, interval=30,
+                                    )
+                                    if not schema:
+                                        state.add_error(
+                                            f"Processing verification failed after upload {upload_count}: "
+                                            "summary tables not populated"
+                                        )
+                                except Exception as ve:
+                                    state.add_error(f"Processing verification error: {ve}")
                         else:
-                            state.uploads_failed += 1
+                            state.increment_uploads(success=False)
                             state.add_error(f"Upload {upload_count + 1} failed")
                 else:
-                    state.uploads_failed += 1
+                    state.increment_uploads(success=False)
                     state.add_error(f"NISE generation failed for upload {upload_count + 1}")
         except Exception as e:
-            state.uploads_failed += 1
+            state.increment_uploads(success=False)
             state.add_error(f"Upload worker error: {e}")
         
         state.stop_event.wait(interval_seconds)
@@ -468,14 +495,14 @@ def query_worker(
             )
             
             if response.status_code in [200, 404]:
-                state.queries_completed += 1
+                state.increment_queries(success=True)
             else:
-                state.queries_failed += 1
+                state.increment_queries(success=False)
                 state.add_error(f"Query failed: {endpoint} returned {response.status_code}")
             
             query_idx += 1
         except Exception as e:
-            state.queries_failed += 1
+            state.increment_queries(success=False)
             state.add_error(f"Query worker error: {e}")
         
         state.stop_event.wait(interval_seconds)
@@ -690,6 +717,9 @@ class TestSoakStability:
         # Initialize state
         state = SoakTestState()
         
+        # Get DB pod for processing verification
+        db_pod = get_pod_by_label(cluster_config.namespace, "app.kubernetes.io/component=database")
+        
         # Start background workers
         threads = []
         
@@ -712,6 +742,7 @@ class TestSoakStability:
                 cluster_id,
                 state,
                 soak_config.upload_interval_seconds,
+                db_pod,
             ),
         )
         upload_thread.start()

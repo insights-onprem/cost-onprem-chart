@@ -167,7 +167,8 @@ Fill this in during investigation:
 
 ### Query Details
 ```
-Full URL: https://cost-onprem-gateway-cost-onprem.apps.ocp-edge94.qe.lab.redhat.com/api/cost-management/v1/reports/openshift/costs/?group_by[project]=*&group_by[node]=*&group_by[cluster]=*&filter[time_scope_units]=day&filter[time_scope_value]=-30&filter[resolution]=daily
+Full URL: https://${GATEWAY_ROUTE_HOST}/api/cost-management/v1/reports/openshift/costs/?group_by[project]=*&group_by[node]=*&group_by[cluster]=*&filter[time_scope_units]=day&filter[time_scope_value]=-30&filter[resolution]=daily
+# GATEWAY_ROUTE_HOST: oc get route cost-onprem-api -n ${NAMESPACE} -o jsonpath='{.spec.host}'
 Response time (cold): 282ms
 Response time (warm): 7-20ms (cached by Valkey/Redis)
 Response size: 2666 bytes
