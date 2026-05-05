@@ -43,10 +43,23 @@ class SourceData:
 def wait_for_integrations_load(page: Page, timeout_ms: int = 15000) -> None:
     """Wait for the Integrations page to finish loading.
     
-    The Integrations page shows a loading state for 10-15 seconds while
-    searching for integrations.
+    The page is considered loaded when either:
+    - A table with sources is visible
+    - The empty state card is visible
+    - The loading spinner disappears
     """
-    page.wait_for_timeout(timeout_ms)
+    # Wait for loading spinner to disappear (if present)
+    spinner = page.locator(".pf-v6-c-spinner, .pf-c-spinner")
+    if spinner.count() > 0:
+        spinner.first.wait_for(state="hidden", timeout=timeout_ms)
+    
+    # Wait for content to appear (table OR empty state)
+    content = page.locator(
+        ".pf-v6-c-table tbody tr, "
+        "[data-ouia-component-id='sources-empty-add-openshift-card'], "
+        "button:has-text('Add integration')"
+    )
+    content.first.wait_for(state="visible", timeout=timeout_ms)
 
 
 def dismiss_any_modal(page: Page) -> None:
@@ -71,12 +84,16 @@ def dismiss_any_modal(page: Page) -> None:
         if close_buttons.count() > 0:
             try:
                 close_buttons.first.click()
-                page.wait_for_timeout(1000)
+                # Wait for modal to close
+                modal.first.wait_for(state="hidden", timeout=3000)
             except Exception:
                 pass
         else:
             page.keyboard.press("Escape")
-            page.wait_for_timeout(1000)
+            try:
+                modal.first.wait_for(state="hidden", timeout=3000)
+            except Exception:
+                pass
         
         backdrop = page.locator(".pf-v6-c-backdrop")
         modal = page.locator(".pf-v6-c-modal-box, [role='dialog']")
@@ -106,7 +123,10 @@ def navigate_to_integrations(page: Page, ui_url: str) -> None:
 def verify_empty_state(page: Page) -> None:
     """Verify the empty state is displayed with OpenShift card."""
     ocp_card = page.locator("[data-ouia-component-id='sources-empty-add-openshift-card']")
-    expect(ocp_card.first).to_be_visible(timeout=10000)
+    expect(
+        ocp_card.first,
+        "Empty state should display OpenShift card for adding first integration"
+    ).to_be_visible(timeout=10000)
 
 
 def click_openshift_card(page: Page) -> None:
@@ -114,7 +134,9 @@ def click_openshift_card(page: Page) -> None:
     ocp_card = page.locator("[data-ouia-component-id='sources-empty-add-openshift-card']")
     expect(ocp_card.first).to_be_visible(timeout=10000)
     ocp_card.first.click()
-    page.wait_for_timeout(2000)
+    # Wait for wizard to appear
+    wizard = page.locator(".pf-v6-c-wizard, .pf-v6-c-modal-box")
+    wizard.first.wait_for(state="visible", timeout=5000)
 
 
 def click_add_integration_button(page: Page) -> None:
@@ -122,7 +144,9 @@ def click_add_integration_button(page: Page) -> None:
     add_button = page.locator("button:has-text('Add integration')")
     expect(add_button.first).to_be_visible(timeout=10000)
     add_button.first.click()
-    page.wait_for_timeout(2000)
+    # Wait for wizard to appear
+    wizard = page.locator(".pf-v6-c-wizard, .pf-v6-c-modal-box")
+    wizard.first.wait_for(state="visible", timeout=5000)
 
 
 def verify_wizard_open(page: Page) -> None:
@@ -133,13 +157,26 @@ def verify_wizard_open(page: Page) -> None:
 
 def verify_wizard_name_input(page: Page) -> None:
     """Verify wizard step 1 has name input."""
-    name_input = page.locator(".pf-v6-c-modal-box input[type='text']")
+    # Use specific locators: name attribute, aria-label, or form group label
+    name_input = page.locator(
+        "input[name='name'], "
+        "input[aria-label='Integration name'], "
+        "input[aria-label='Name'], "
+        ".pf-v6-c-form__group:has-text('Name') input[type='text'], "
+        ".pf-v6-c-modal-box input[type='text']"
+    )
     expect(name_input.first).to_be_visible(timeout=5000)
 
 
 def fill_wizard_name(page: Page, name: str) -> None:
     """Fill the integration name field."""
-    name_input = page.locator(".pf-v6-c-modal-box input[type='text']")
+    name_input = page.locator(
+        "input[name='name'], "
+        "input[aria-label='Integration name'], "
+        "input[aria-label='Name'], "
+        ".pf-v6-c-form__group:has-text('Name') input[type='text'], "
+        ".pf-v6-c-modal-box input[type='text']"
+    )
     expect(name_input.first).to_be_visible(timeout=5000)
     name_input.first.fill(name)
 
@@ -149,13 +186,19 @@ def click_wizard_next(page: Page) -> None:
     next_button = page.locator("button:has-text('Next')")
     expect(next_button.first).to_be_enabled(timeout=5000)
     next_button.first.click()
-    page.wait_for_timeout(1000)
+    # Wait for next step content to load
+    page.wait_for_load_state("domcontentloaded")
 
 
 def verify_wizard_cluster_id_input(page: Page) -> None:
     """Verify wizard step 2 has cluster ID input."""
+    # Use specific locators: name attribute, aria-label, or form group label
     cluster_input = page.locator(
         "input[name='credentials.cluster_id'], "
+        "input[name='cluster_id'], "
+        "input[aria-label='Cluster identifier'], "
+        "input[aria-label='Cluster ID'], "
+        ".pf-v6-c-form__group:has-text('Cluster') input[type='text'], "
         ".pf-v6-c-modal-box input[type='text']"
     )
     expect(cluster_input.first).to_be_visible(timeout=5000)
@@ -165,6 +208,10 @@ def fill_wizard_cluster_id(page: Page, cluster_id: str) -> None:
     """Fill the cluster ID field."""
     cluster_input = page.locator(
         "input[name='credentials.cluster_id'], "
+        "input[name='cluster_id'], "
+        "input[aria-label='Cluster identifier'], "
+        "input[aria-label='Cluster ID'], "
+        ".pf-v6-c-form__group:has-text('Cluster') input[type='text'], "
         ".pf-v6-c-modal-box input[type='text']"
     )
     expect(cluster_input.first).to_be_visible(timeout=5000)
@@ -183,7 +230,12 @@ def click_wizard_submit(page: Page) -> None:
     expect(submit_button.first).to_be_visible(timeout=5000)
     submit_button.first.click()
     page.wait_for_load_state("networkidle")
-    page.wait_for_timeout(3000)
+    # Wait for wizard to close or success indicator
+    wizard = page.locator(".pf-v6-c-wizard, .pf-v6-c-modal-box")
+    try:
+        wizard.first.wait_for(state="hidden", timeout=10000)
+    except Exception:
+        pass  # Modal may still be open with success message
 
 
 def click_wizard_cancel(page: Page) -> None:
@@ -193,7 +245,9 @@ def click_wizard_cancel(page: Page) -> None:
         "button[aria-label='Close']"
     )
     cancel_button.first.click()
-    page.wait_for_timeout(1000)
+    # Wait for wizard to close
+    wizard = page.locator(".pf-v6-c-modal-box")
+    wizard.first.wait_for(state="hidden", timeout=5000)
 
 
 def verify_wizard_closed(page: Page) -> None:
@@ -206,11 +260,17 @@ def verify_source_in_table(page: Page, source_name: str) -> None:
     """Verify a source appears in the integrations table."""
     # Find the table row containing our source
     row = page.locator(f"tr:has-text('{source_name}')")
-    expect(row.first).to_be_visible(timeout=30000)
+    expect(
+        row.first,
+        f"Source '{source_name}' should appear in integrations table"
+    ).to_be_visible(timeout=30000)
     
     # Verify the name is in the row
     name_cell = row.locator(f":text('{source_name}')")
-    expect(name_cell.first).to_be_visible()
+    expect(
+        name_cell.first,
+        f"Source name '{source_name}' should be visible in table row"
+    ).to_be_visible()
     
     # Scroll to and highlight the row for video visibility
     row.first.scroll_into_view_if_needed()
@@ -220,12 +280,18 @@ def verify_source_in_table(page: Page, source_name: str) -> None:
 def verify_source_type_in_row(page: Page, source_name: str, expected_type: str = "OpenShift") -> None:
     """Verify the source type is displayed in the source's row."""
     row = page.locator(f"tr:has-text('{source_name}')")
-    expect(row.first).to_be_visible(timeout=15000)
+    expect(
+        row.first,
+        f"Table row for source '{source_name}' should be visible"
+    ).to_be_visible(timeout=15000)
     
     # Check for type indicator in the same row
     # UI shows "OpenShift Container Platform" or abbreviated versions
     type_indicator = row.locator(f":text('{expected_type}'), :text('OCP'), :text('OpenShift Container Platform')")
-    expect(type_indicator.first).to_be_visible()
+    expect(
+        type_indicator.first,
+        f"Source '{source_name}' should show type '{expected_type}'"
+    ).to_be_visible()
     
     # Highlight the type for video visibility
     type_indicator.first.highlight()
@@ -240,11 +306,17 @@ def verify_source_status_in_row(page: Page, source_name: str, expected_status: s
     - Other potential statuses may exist
     """
     row = page.locator(f"tr:has-text('{source_name}')")
-    expect(row.first).to_be_visible(timeout=15000)
+    expect(
+        row.first,
+        f"Table row for source '{source_name}' should be visible"
+    ).to_be_visible(timeout=15000)
     
     # Check for status indicator in the same row
     status_indicator = row.locator(f":text('{expected_status}')")
-    expect(status_indicator.first).to_be_visible()
+    expect(
+        status_indicator.first,
+        f"Source '{source_name}' should have status '{expected_status}'"
+    ).to_be_visible()
     
     # Highlight the status for video visibility
     status_indicator.first.highlight()
@@ -276,7 +348,9 @@ def open_actions_menu(page: Page, source_name: str) -> None:
         "button[aria-label='Actions']"
     )
     actions_button.first.click()
-    page.wait_for_timeout(1000)
+    # Wait for menu to appear
+    menu = page.locator(".pf-v6-c-menu, .pf-v6-c-dropdown__menu, [role='menu']")
+    menu.first.wait_for(state="visible", timeout=3000)
 
 
 def verify_remove_option_in_menu(page: Page) -> None:
@@ -295,7 +369,9 @@ def click_remove_option(page: Page) -> None:
         ".pf-v6-c-menu__item:has-text('Remove')"
     )
     remove_option.first.click()
-    page.wait_for_timeout(1500)
+    # Wait for confirmation modal to appear
+    modal = page.locator(".pf-v6-c-modal-box, [role='dialog']")
+    modal.first.wait_for(state="visible", timeout=5000)
 
 
 def verify_remove_confirmation_modal(page: Page) -> None:
@@ -319,21 +395,24 @@ def complete_remove_confirmation(page: Page) -> None:
     # Check the acknowledgement checkbox
     checkbox = modal.locator("input[type='checkbox']")
     checkbox.first.check()
-    page.wait_for_timeout(500)
     
-    # Click the remove button
+    # Click the remove button (wait for it to become enabled after checkbox)
     remove_button = modal.locator("button:has-text('Remove integration'), button.pf-m-danger")
     expect(remove_button.first).to_be_enabled(timeout=5000)
     remove_button.first.click()
     
+    # Wait for modal to close and page to refresh
     page.wait_for_load_state("networkidle")
-    page.wait_for_timeout(5000)
+    modal.first.wait_for(state="hidden", timeout=10000)
 
 
 def verify_source_not_in_table(page: Page, source_name: str) -> None:
     """Verify a source does NOT appear in the table."""
     source_locator = page.locator(f"tr:has-text('{source_name}')")
-    expect(source_locator).to_have_count(0, timeout=10000)
+    expect(
+        source_locator,
+        f"Source '{source_name}' should NOT appear in table after deletion"
+    ).to_have_count(0, timeout=10000)
 
 
 def cleanup_source_by_name(session: requests.Session, gateway_url: str, name: str) -> None:
@@ -364,9 +443,17 @@ def sources_api_session(keycloak_config, gateway_url) -> requests.Session:
     return session
 
 
+# Test source name prefixes - only these are deleted by ensure_no_sources
+TEST_SOURCE_PREFIXES = ("e2e-", "api-source-", "lifecycle-", "should-not-exist")
+
+
 @pytest.fixture(scope="function")
 def ensure_no_sources(keycloak_config, gateway_url):
-    """Delete all sources before running tests that require empty state."""
+    """Delete test-created sources before running tests that require empty state.
+    
+    Only deletes sources with names starting with known test prefixes to avoid
+    interfering with other tests or manually created sources during parallel execution.
+    """
     token = obtain_jwt_token(keycloak_config)
     session = requests.Session()
     session.headers["Authorization"] = f"Bearer {token.access_token}"
@@ -376,7 +463,9 @@ def ensure_no_sources(keycloak_config, gateway_url):
     response = session.get(f"{gateway_url}/cost-management/v1/sources")
     if response.ok:
         for source in response.json().get("data", []):
-            session.delete(f"{gateway_url}/cost-management/v1/sources/{source['id']}")
+            name = source.get("name", "")
+            if name.startswith(TEST_SOURCE_PREFIXES):
+                session.delete(f"{gateway_url}/cost-management/v1/sources/{source['id']}")
     yield
 
 

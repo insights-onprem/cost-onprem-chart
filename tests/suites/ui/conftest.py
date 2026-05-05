@@ -25,6 +25,23 @@ Rich Reporting Configuration:
     
     For CI, set ARTIFACT_DIR to copy reports to the artifact collection location.
     Orphaned video files (from passing tests) are cleaned up before copying.
+
+Parallel Execution Limitations:
+    These fixtures are designed for single-threaded execution. If using pytest-xdist
+    for parallel test execution, be aware:
+    
+    - The session-scoped `browser` fixture is NOT thread-safe. Each worker would
+      need its own browser instance. Consider using worker_id fixture from xdist.
+    
+    - The module-scoped `sources_api_session` in test_sources.py uses requests.Session
+      which is NOT thread-safe. For parallel execution, change to function scope
+      or implement thread-local storage.
+    
+    - Artifact filenames use test names which may collide for parametrized tests.
+      Add UUID suffix for parallel safety if needed.
+    
+    - The `ensure_no_sources` fixture deletes sources by prefix to avoid conflicts
+      with other tests, but parallel test runs may still interfere with each other.
 """
 
 import os
