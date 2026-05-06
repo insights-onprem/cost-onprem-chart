@@ -649,9 +649,19 @@ kafka:
   # This is auto-configured by the install script based on the Kafka cluster it creates
   bootstrapServers: "cost-onprem-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
 
-  # Security protocol — only PLAINTEXT is currently supported.
-  # SASL/TLS support requires upstream application changes (see docs/operations/configuration.md).
+  # Security protocol for Kafka connections.
+  # Supported values: PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL
   securityProtocol: "PLAINTEXT"
+
+  # SASL authentication (optional — leave mechanism empty to disable)
+  sasl:
+    mechanism: ""              # PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
+    existingSecret: ""         # K8s Secret with keys: username, password
+
+  # TLS configuration (optional)
+  tls:
+    enabled: false
+    caCertSecret: ""           # K8s Secret with key: ca.crt
 
 # -----------------------------------------------------------------------------
 # Shared Infrastructure - Cache (Valkey)

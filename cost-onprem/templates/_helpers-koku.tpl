@@ -324,6 +324,7 @@ Common environment variables for Koku API and Celery
   value: {{ include "cost-onprem.koku.kafka.host" . | quote }}
 - name: INSIGHTS_KAFKA_PORT
   value: {{ include "cost-onprem.koku.kafka.port" . | quote }}
+{{- include "cost-onprem.kafka.saslEnv" . }}
 - name: S3_ENDPOINT
   value: {{ include "cost-onprem.storage.endpointWithProtocol" . | quote }}
 - name: REQUESTED_BUCKET
@@ -405,6 +406,7 @@ Includes tmp mount and combined CA bundle
 - name: combined-ca-bundle
   mountPath: /etc/pki/ca-trust/combined
   readOnly: true
+{{- include "cost-onprem.kafka.tlsVolumeMount" . }}
 {{- end -}}
 
 {{/*
@@ -429,6 +431,7 @@ Includes tmp volume and CA bundle volumes
     name: {{ include "cost-onprem.fullname" . }}-service-ca
 - name: combined-ca-bundle
   emptyDir: {}
+{{- include "cost-onprem.kafka.tlsVolume" . }}
 {{- end -}}
 
 {{/*

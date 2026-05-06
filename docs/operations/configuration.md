@@ -827,15 +827,13 @@ Or set it in your values file directly.
 
 Use an existing Kafka cluster instead of the bundled AMQ Streams deployment.
 
-> **Known Limitation:** Only **PLAINTEXT** Kafka connections are currently supported. Both Koku and ROS backends do not read SASL/TLS configuration from environment variables in on-prem (non-Clowder) mode. Upstream application changes are required before chart-level SASL/TLS support can be added.
-
 **Prerequisites:**
 
-1. Apache Kafka 3.x or later accessible from the OpenShift cluster with a **PLAINTEXT** listener
+1. Apache Kafka 3.x or later accessible from the OpenShift cluster
 2. All five topics listed above must exist (or `auto.create.topics.enable` must be set to `true`)
 3. Bootstrap servers reachable from the `cost-onprem` namespace over the network
 
-**Configuration:**
+**Configuration (PLAINTEXT):**
 
 ```yaml
 # values.yaml
@@ -844,10 +842,51 @@ kafka:
   securityProtocol: "PLAINTEXT"
 ```
 
+**Configuration (SASL/TLS):**
+
+For authenticated connections (SASL_SSL, SASL_PLAINTEXT), provide credentials via a
+Kubernetes Secret and optionally a CA certificate Secret:
+
+```bash
+# Create the SASL credentials Secret
+kubectl create secret generic kafka-sasl-credentials \
+  --from-literal=username=my-kafka-user \
+  --from-literal=password=my-kafka-password \
+  -n cost-onprem
+
+# (Optional) Create the TLS CA certificate Secret
+kubectl create secret generic kafka-ca-cert \
+  --from-file=ca.crt=/path/to/ca-certificate.pem \
+  -n cost-onprem
+```
+
+```yaml
+# values.yaml
+kafka:
+  bootstrapServers: "my-kafka-broker1:9093,my-kafka-broker2:9093"
+  securityProtocol: "SASL_SSL"
+
+  sasl:
+    mechanism: "SCRAM-SHA-512"       # PLAIN, SCRAM-SHA-256, or SCRAM-SHA-512
+    existingSecret: "kafka-sasl-credentials"  # Secret with keys: username, password
+
+  tls:
+    enabled: true
+    caCertSecret: "kafka-ca-cert"    # Secret with key: ca.crt
+```
+
+| Value | Description | Required |
+|-------|-------------|----------|
+| `kafka.securityProtocol` | `PLAINTEXT`, `SSL`, `SASL_PLAINTEXT`, or `SASL_SSL` | Yes |
+| `kafka.sasl.mechanism` | SASL mechanism (`PLAIN`, `SCRAM-SHA-256`, `SCRAM-SHA-512`) | Only for SASL |
+| `kafka.sasl.existingSecret` | Name of a Secret containing `username` and `password` keys | Only for SASL |
+| `kafka.tls.enabled` | Mount the CA certificate into pods | Only for TLS |
+| `kafka.tls.caCertSecret` | Name of a Secret containing a `ca.crt` key | Only for TLS |
+
 **Install script behavior:** Setting `KAFKA_BOOTSTRAP_SERVERS` tells the install script to skip AMQ Streams operator verification:
 
 ```bash
-KAFKA_BOOTSTRAP_SERVERS="my-kafka-broker1:9092" ./scripts/install-helm-chart.sh --namespace cost-onprem
+KAFKA_BOOTSTRAP_SERVERS="my-kafka-broker1:9093" ./scripts/install-helm-chart.sh --namespace cost-onprem
 ```
 
 **Components that use Kafka:**

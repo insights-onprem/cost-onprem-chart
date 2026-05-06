@@ -100,6 +100,76 @@ class TestChartTemplate:
         assert success, f"Helm template with JWT auth failed:\n{output}"
 
 
+SASL_SSL_MOCK_VALUES = {
+    **OFFLINE_MOCK_VALUES,
+    "kafka.securityProtocol": "SASL_SSL",
+    "kafka.sasl.mechanism": "SCRAM-SHA-512",
+    "kafka.sasl.existingSecret": "kafka-sasl-credentials",
+    "kafka.tls.enabled": "true",
+    "kafka.tls.caCertSecret": "kafka-ca-cert",
+}
+
+
+@pytest.mark.helm
+@pytest.mark.component
+class TestKafkaSASLTLS:
+    """Tests for Kafka SASL/TLS template rendering."""
+
+    def test_lint_with_sasl_ssl_values(self, chart_path: str):
+        """Verify chart passes helm lint with SASL_SSL configuration."""
+        from utils import run_helm_command
+
+        set_args = []
+        for k, v in SASL_SSL_MOCK_VALUES.items():
+            set_args.extend(["--set", f"{k}={v}"])
+        result = run_helm_command(
+            ["lint", chart_path] + set_args, check=False,
+        )
+        assert result.returncode == 0, f"Helm lint with SASL_SSL failed:\n{result.stderr}"
+
+    def test_template_renders_with_sasl_ssl(self, chart_path: str):
+        """Verify chart templates render with SASL_SSL configuration."""
+        success, output = helm_template(chart_path, set_values=SASL_SSL_MOCK_VALUES)
+        assert success, f"Helm template with SASL_SSL failed:\n{output}"
+
+    def test_sasl_env_vars_present_when_configured(self, chart_path: str):
+        """Verify SASL environment variables are rendered when kafka.sasl.mechanism is set."""
+        success, output = helm_template(chart_path, set_values=SASL_SSL_MOCK_VALUES)
+        assert success, f"Template rendering failed:\n{output}"
+
+        assert "KAFKA_SASL_MECHANISM" in output, "Missing KAFKA_SASL_MECHANISM env var"
+        assert "KAFKA_SASL_USERNAME" in output, "Missing KAFKA_SASL_USERNAME env var"
+        assert "KAFKA_SASL_PASSWORD" in output, "Missing KAFKA_SASL_PASSWORD env var"
+        assert "KAFKA_SSL_CA_LOCATION" in output, "Missing KAFKA_SSL_CA_LOCATION env var"
+        assert "kafka-sasl-credentials" in output, "Missing secretKeyRef for SASL credentials"
+
+    def test_ingress_sasl_env_vars_present(self, chart_path: str):
+        """Verify Ingress-specific SASL env vars use INGRESS_ prefix."""
+        success, output = helm_template(chart_path, set_values=SASL_SSL_MOCK_VALUES)
+        assert success, f"Template rendering failed:\n{output}"
+
+        assert "INGRESS_SASLMECHANISM" in output, "Missing INGRESS_SASLMECHANISM env var"
+        assert "INGRESS_KAFKAUSERNAME" in output, "Missing INGRESS_KAFKAUSERNAME env var"
+        assert "INGRESS_KAFKAPASSWORD" in output, "Missing INGRESS_KAFKAPASSWORD env var"
+
+    def test_tls_volume_mount_present(self, chart_path: str):
+        """Verify TLS CA certificate volume and mount are rendered when tls.enabled."""
+        success, output = helm_template(chart_path, set_values=SASL_SSL_MOCK_VALUES)
+        assert success, f"Template rendering failed:\n{output}"
+
+        assert "kafka-ca-cert" in output, "Missing kafka-ca-cert volume/mount"
+        assert "/etc/kafka/certs" in output, "Missing /etc/kafka/certs mount path"
+
+    def test_sasl_absent_when_not_configured(self, chart_path: str):
+        """Verify SASL env vars are NOT rendered with default (PLAINTEXT) config."""
+        success, output = helm_template(chart_path, set_values=OFFLINE_MOCK_VALUES)
+        assert success, f"Template rendering failed:\n{output}"
+
+        assert "KAFKA_SASL_MECHANISM" not in output, "KAFKA_SASL_MECHANISM should not be present"
+        assert "INGRESS_SASLMECHANISM" not in output, "INGRESS_SASLMECHANISM should not be present"
+        assert "kafka-ca-cert" not in output, "kafka-ca-cert volume should not be present"
+
+
 @pytest.mark.helm
 @pytest.mark.component
 class TestChartMetadata:

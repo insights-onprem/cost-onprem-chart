@@ -20,6 +20,17 @@ data:
           {
             "hostname": "{{ include "cost-onprem.kafka.host" . }}",
             "port": {{ include "cost-onprem.kafka.port" . }}
+            {{- if .Values.kafka.sasl.mechanism -}}
+            ,
+            "authtype": "sasl",
+            "sasl": {
+              "saslMechanism": "{{ .Values.kafka.sasl.mechanism }}",
+              "securityProtocol": "{{ include "cost-onprem.kafka.securityProtocol" . }}",
+              "username": "",
+              "password": ""
+            },
+            "securityProtocol": "{{ include "cost-onprem.kafka.securityProtocol" . }}"
+            {{- end }}
           }
         ],
         "topics": [

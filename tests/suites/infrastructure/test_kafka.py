@@ -440,3 +440,128 @@ class TestKafkaConsumerGroups:
             )
         except subprocess.TimeoutExpired:
             pytest.fail("Timeout listing Kafka consumer groups")
+
+
+def _get_helm_values(namespace: str, release_name: str) -> dict:
+    """Get effective Helm values for the release."""
+    try:
+        result = subprocess.run(
+            ["helm", "get", "values", release_name, "-n", namespace, "-o", "json"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            return json.loads(result.stdout)
+    except Exception:
+        pass
+    return {}
+
+
+@pytest.mark.infrastructure
+@pytest.mark.extended
+class TestKafkaSASLTLS:
+    """Tests for Kafka SASL/TLS authentication.
+
+    These tests verify that SASL/TLS-configured deployments have correct
+    environment variables and can connect to an authenticated Kafka broker.
+    Requires a Kafka cluster with a SASL_SSL listener (e.g., Strimzi TLS).
+    Marked 'extended' because CI uses PLAINTEXT Kafka by default.
+    """
+
+    def _is_sasl_configured(self, cluster_config) -> bool:
+        """Check if the Helm release was installed with SASL config."""
+        values = _get_helm_values(cluster_config.namespace, cluster_config.helm_release_name)
+        kafka = values.get("kafka", {})
+        return bool(kafka.get("sasl", {}).get("mechanism"))
+
+    def test_sasl_env_vars_in_listener(self, cluster_config):
+        """Verify KAFKA_SASL_* env vars are set on the listener pod."""
+        if not self._is_sasl_configured(cluster_config):
+            pytest.skip("Kafka SASL not configured in Helm values")
+
+        listener_pod = get_pod_by_label(
+            cluster_config.namespace, "app.kubernetes.io/component=listener"
+        )
+        if not listener_pod:
+            pytest.skip("Listener pod not found")
+
+        for env_var in ["KAFKA_SASL_MECHANISM", "KAFKA_SASL_USERNAME", "KAFKA_SASL_PASSWORD"]:
+            result = subprocess.run(
+                [
+                    "kubectl", "exec", "-n", cluster_config.namespace,
+                    listener_pod, "--", "printenv", env_var,
+                ],
+                capture_output=True, text=True, timeout=15,
+            )
+            assert result.returncode == 0 and result.stdout.strip(), (
+                f"{env_var} not set on listener pod"
+            )
+
+    def test_sasl_env_vars_in_ingress(self, cluster_config):
+        """Verify INGRESS_* SASL env vars are set on the ingress pod."""
+        if not self._is_sasl_configured(cluster_config):
+            pytest.skip("Kafka SASL not configured in Helm values")
+
+        ingress_pod = get_pod_by_label(
+            cluster_config.namespace, "app.kubernetes.io/component=ingress"
+        )
+        if not ingress_pod:
+            pytest.skip("Ingress pod not found")
+
+        for env_var in ["INGRESS_SASLMECHANISM", "INGRESS_KAFKAUSERNAME", "INGRESS_KAFKAPASSWORD"]:
+            result = subprocess.run(
+                [
+                    "kubectl", "exec", "-n", cluster_config.namespace,
+                    ingress_pod, "--", "printenv", env_var,
+                ],
+                capture_output=True, text=True, timeout=15,
+            )
+            assert result.returncode == 0 and result.stdout.strip(), (
+                f"{env_var} not set on ingress pod"
+            )
+
+    def test_tls_ca_cert_mounted(self, cluster_config):
+        """Verify CA certificate is mounted at /etc/kafka/certs/ca.crt."""
+        values = _get_helm_values(cluster_config.namespace, cluster_config.helm_release_name)
+        tls = values.get("kafka", {}).get("tls", {})
+        if not tls.get("enabled"):
+            pytest.skip("Kafka TLS not configured in Helm values")
+
+        listener_pod = get_pod_by_label(
+            cluster_config.namespace, "app.kubernetes.io/component=listener"
+        )
+        if not listener_pod:
+            pytest.skip("Listener pod not found")
+
+        result = subprocess.run(
+            [
+                "kubectl", "exec", "-n", cluster_config.namespace,
+                listener_pod, "--", "test", "-f", "/etc/kafka/certs/ca.crt",
+            ],
+            capture_output=True, text=True, timeout=15,
+        )
+        assert result.returncode == 0, (
+            "CA cert not mounted at /etc/kafka/certs/ca.crt on listener pod"
+        )
+
+    def test_listener_connects_with_sasl(self, cluster_config):
+        """Verify listener successfully connects to SASL-authenticated Kafka."""
+        if not self._is_sasl_configured(cluster_config):
+            pytest.skip("Kafka SASL not configured in Helm values")
+
+        listener_pod = get_pod_by_label(
+            cluster_config.namespace, "app.kubernetes.io/component=listener"
+        )
+        if not listener_pod:
+            pytest.skip("Listener pod not found")
+
+        status = check_listener_kafka_connection(
+            cluster_config.namespace, listener_pod
+        )
+
+        if "error" in status:
+            pytest.skip(f"Could not check listener logs: {status['error']}")
+
+        assert not status.get("has_errors"), (
+            "Kafka connection errors found in listener logs with SASL config. "
+            f"Check: kubectl logs -n {cluster_config.namespace} {listener_pod} --tail=100"
+        )
