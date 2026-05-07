@@ -443,29 +443,34 @@ def sources_api_session(keycloak_config, gateway_url) -> requests.Session:
     return session
 
 
-# Test source name prefixes - only these are deleted by ensure_no_sources
+# Test source name prefixes - used for identifying test-created sources
 TEST_SOURCE_PREFIXES = ("e2e-", "api-source-", "lifecycle-", "should-not-exist")
 
 
 @pytest.fixture(scope="function")
 def ensure_no_sources(keycloak_config, gateway_url):
-    """Delete test-created sources before running tests that require empty state.
-    
-    Only deletes sources with names starting with known test prefixes to avoid
-    interfering with other tests or manually created sources during parallel execution.
+    """Delete ALL sources before running tests that require empty state.
+
+    This ensures tests that depend on empty state work correctly even when
+    other tests have created sources beforehand.
+
+    Note: This deletes ALL sources, not just test-prefixed ones, because:
+    - IQE tests create sources with UUID names that don't match test prefixes
+    - Empty state tests require truly empty state to pass
+    - In CI, sources are ephemeral and can be recreated
     """
     token = obtain_jwt_token(keycloak_config)
     session = requests.Session()
     session.headers["Authorization"] = f"Bearer {token.access_token}"
     session.headers["Content-Type"] = "application/json"
     session.verify = False
-    
+
     response = session.get(f"{gateway_url}/cost-management/v1/sources")
     if response.ok:
         for source in response.json().get("data", []):
-            name = source.get("name", "")
-            if name.startswith(TEST_SOURCE_PREFIXES):
-                session.delete(f"{gateway_url}/cost-management/v1/sources/{source['id']}")
+            source_id = source.get("id")
+            if source_id:
+                session.delete(f"{gateway_url}/cost-management/v1/sources/{source_id}")
     yield
 
 
