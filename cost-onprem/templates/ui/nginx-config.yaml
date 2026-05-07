@@ -56,6 +56,14 @@ data:
       add_header Referrer-Policy "strict-origin-when-cross-origin";
     }
 
+    location /sources/ {
+      alias /opt/app-root/src/sources/;
+      try_files $uri $uri/ /index.html;
+      add_header X-Frame-Options "SAMEORIGIN";
+      add_header X-Content-Type-Options "nosniff";
+      add_header Referrer-Policy "strict-origin-when-cross-origin";
+    }
+
     location = /logout {
       absolute_redirect off;
       return 302 /oauth2/sign_out?rd=/oauth2/start;
