@@ -10,10 +10,10 @@ Rich Reporting Configuration:
     PLAYWRIGHT_VIDEO: "off", "on", "retain-on-failure" (default)
         Video recording - only failures are kept by default (videos are large)
     
-    PLAYWRIGHT_TRACE: "off", "on" (default), "retain-on-failure"
+    PLAYWRIGHT_TRACE: "off", "on", "retain-on-failure" (default)
         Rich trace with DOM snapshots, network requests, action log
         (produces .zip files viewable at trace.playwright.dev)
-        Always captured by default - traces are small (~3-5MB) and very useful
+        Only failures are kept by default to reduce storage costs
     
     PLAYWRIGHT_SCREENSHOT: "off", "on" (default), "only-on-failure"
         Screenshot capture - always captured by default (~50-100KB)
@@ -25,6 +25,18 @@ Rich Reporting Configuration:
     
     For CI, set ARTIFACT_DIR to copy reports to the artifact collection location.
     Orphaned video files (from passing tests) are cleaned up before copying.
+
+Artifact Storage Considerations:
+    Expected artifact sizes per test:
+    - Screenshots: ~50-100KB each
+    - Traces: ~3-5MB each  
+    - Videos: ~5-15MB each (30 seconds at 720p)
+    
+    With default settings (retain-on-failure for video/trace, on for screenshots):
+    - Passing tests: ~100KB each (screenshot only)
+    - Failing tests: ~10-20MB each (screenshot + trace + video)
+    
+    For CI environments, consider setting artifact retention policies (e.g., 30-day TTL).
 
 Parallel Execution Limitations:
     These fixtures are designed for single-threaded execution. If using pytest-xdist
@@ -42,6 +54,15 @@ Parallel Execution Limitations:
     
     - The `ensure_no_sources` fixture deletes sources by prefix to avoid conflicts
       with other tests, but parallel test runs may still interfere with each other.
+
+CMMO Source Creation:
+    By default, CMMO creates a source when CostManagementMetricsConfig has 
+    create_source=true. This interferes with empty-state UI tests.
+    
+    When running deploy-test-cost-onprem.sh with --include-ui, CMMO_CREATE_SOURCE
+    is automatically set to false. For manual deployments, set:
+        export CMMO_CREATE_SOURCE=false
+    before running setup-cost-mgmt-tls.sh.
 """
 
 import os
@@ -65,8 +86,9 @@ VIDEO_MODE = os.environ.get("PLAYWRIGHT_VIDEO", "retain-on-failure")
 
 # Trace recording mode: "off", "on", "retain-on-failure"
 # Traces provide the richest debugging: DOM snapshots, network, action log
-# Default to "on" - traces are small (~3-5MB) and very useful for debugging
-TRACE_MODE = os.environ.get("PLAYWRIGHT_TRACE", "on")
+# Default to "retain-on-failure" to reduce CI artifact storage
+# (traces are ~3-5MB each; with many tests this adds up)
+TRACE_MODE = os.environ.get("PLAYWRIGHT_TRACE", "retain-on-failure")
 
 # Screenshot mode: "off", "on", "only-on-failure"
 # Default to "on" - screenshots are small (~50-100KB) and useful for all tests
@@ -190,12 +212,26 @@ def authenticated_context(
     """Create a browser context with authenticated session.
     
     Performs Keycloak login and stores the session for the test.
-    Uses test/test credentials by default (configurable via env vars).
+    
+    Credentials:
+        Default credentials are test/test, configurable via environment variables:
+        - TEST_USERNAME: Keycloak username (default: "test")
+        - TEST_PASSWORD: Keycloak password (default: "test")
+        
+        SECURITY NOTE: These credentials are ONLY valid in ephemeral CI test
+        environments. The test Keycloak user is provisioned by the test harness
+        bootstrap (see scripts/deploy-rhbk.sh). These credentials must never
+        match any staging or production credentials.
     
     Artifact recording is controlled by environment variables:
-    - PLAYWRIGHT_VIDEO: "off" (default), "on", "retain-on-failure"
-    - PLAYWRIGHT_TRACE: "off" (default), "on", "retain-on-failure"
-    - PLAYWRIGHT_SCREENSHOT: "off", "on", "only-on-failure" (default)
+    - PLAYWRIGHT_VIDEO: "off", "on", "retain-on-failure" (default)
+    - PLAYWRIGHT_TRACE: "off", "on", "retain-on-failure" (default)
+    - PLAYWRIGHT_SCREENSHOT: "off", "on" (default), "only-on-failure"
+    
+    Lifecycle:
+        This fixture owns the browser context lifecycle. It creates, yields, and
+        closes the context. The authenticated_page fixture creates pages within
+        this context but delegates context cleanup back here.
     """
     # Ensure output directories exist
     videos_dir = _get_videos_dir()
@@ -228,9 +264,9 @@ def authenticated_context(
     # Wait for Keycloak login page
     page.wait_for_url(f"**/{keycloak_config.realm}/**", timeout=10000)
     
-    # Fill login form
-    username = os.environ.get("TEST_UI_USERNAME", "admin")
-    password = os.environ.get("TEST_UI_PASSWORD", "admin")
+    # Fill login form (see docstring for security notes on these defaults)
+    username = os.environ.get("TEST_USERNAME", "test")
+    password = os.environ.get("TEST_PASSWORD", "test")
     
     page.fill('input[name="username"]', username)
     page.fill('input[name="password"]', password)
@@ -250,9 +286,10 @@ def authenticated_context(
     
     yield context
     
-    # Note: Context cleanup is handled in authenticated_page fixture
-    # which has access to test results for retain-on-failure logic.
-    # Do NOT close context here - it will be closed after trace/video handling.
+    # Context cleanup is handled by authenticated_page fixture's finally block.
+    # This ensures cleanup happens even if artifact capture fails.
+    # If authenticated_context is used directly (without authenticated_page),
+    # the context must be closed explicitly by the test or another fixture.
 
 
 # =============================================================================
@@ -265,9 +302,9 @@ def authenticated_page(authenticated_context: BrowserContext, request) -> Genera
     """Create a page with authenticated session.
     
     Automatically captures artifacts based on configuration:
-    - Screenshots: PLAYWRIGHT_SCREENSHOT (default: only-on-failure)
-    - Videos: PLAYWRIGHT_VIDEO (default: off)
-    - Traces: PLAYWRIGHT_TRACE (default: off)
+    - Screenshots: PLAYWRIGHT_SCREENSHOT (default: on)
+    - Videos: PLAYWRIGHT_VIDEO (default: retain-on-failure)
+    - Traces: PLAYWRIGHT_TRACE (default: retain-on-failure)
     
     Traces provide the richest debugging experience with:
     - Step-by-step action log
@@ -276,85 +313,99 @@ def authenticated_page(authenticated_context: BrowserContext, request) -> Genera
     - Console logs
     
     View traces at: https://trace.playwright.dev
+    
+    Lifecycle:
+        This fixture creates pages within the authenticated_context and handles
+        artifact capture during teardown. Context cleanup is guaranteed via
+        try/finally to prevent browser context leaks even if artifact capture fails.
     """
     page = authenticated_context.new_page()
     yield page
     
-    test_name = request.node.name.replace("/", "_").replace("::", "_").replace("[", "_").replace("]", "_")
-    test_failed = hasattr(request.node, "rep_call") and request.node.rep_call.failed
-    
-    # Determine if we should save artifacts
-    should_save_screenshot = (
-        SCREENSHOT_MODE == "on" or 
-        (SCREENSHOT_MODE == "only-on-failure" and test_failed)
-    )
-    should_save_video = (
-        VIDEO_MODE == "on" or 
-        (VIDEO_MODE == "retain-on-failure" and test_failed)
-    )
-    should_save_trace = (
-        TRACE_MODE == "on" or 
-        (TRACE_MODE == "retain-on-failure" and test_failed)
-    )
-    
-    # Capture screenshot
-    if should_save_screenshot:
-        screenshots_dir = _get_screenshots_dir()
-        os.makedirs(screenshots_dir, exist_ok=True)
-        screenshot_path = os.path.join(screenshots_dir, f"{test_name}.png")
-        try:
-            page.screenshot(path=screenshot_path, full_page=True)
-            status = "FAILED" if test_failed else "passed"
-            print(f"\n📸 Screenshot saved ({status}): {screenshot_path}")
-        except Exception as e:
-            print(f"\n⚠️ Failed to capture screenshot: {e}")
-    
-    # Get video path before closing page (must be done before context closes)
+    # Teardown wrapped in try/finally to guarantee context cleanup
     video_path = None
-    if VIDEO_MODE != "off" and page.video:
-        try:
-            video_path = page.video.path()
-        except Exception:
-            pass
-    
-    page.close()
-    
-    # Save trace if enabled
-    if TRACE_MODE != "off":
-        traces_dir = _get_traces_dir()
-        trace_path = os.path.join(traces_dir, f"{test_name}.zip")
-        try:
-            if should_save_trace:
-                authenticated_context.tracing.stop(path=trace_path)
-                status = "FAILED" if test_failed else "passed"
-                print(f"\n🔍 Trace saved ({status}): {trace_path}")
-                print(f"   View at: https://trace.playwright.dev (upload {test_name}.zip)")
-            else:
-                # Stop tracing without saving
-                authenticated_context.tracing.stop()
-        except Exception as e:
-            print(f"\n⚠️ Failed to save trace: {e}")
-    
-    # Handle video retention
-    if video_path and os.path.exists(video_path):
-        videos_dir = _get_videos_dir()
-        if should_save_video:
-            new_video_path = os.path.join(videos_dir, f"{test_name}.webm")
+    try:
+        test_name = request.node.name.replace("/", "_").replace("::", "_").replace("[", "_").replace("]", "_")
+        test_failed = hasattr(request.node, "rep_call") and request.node.rep_call.failed
+        
+        # Determine if we should save artifacts
+        should_save_screenshot = (
+            SCREENSHOT_MODE == "on" or 
+            (SCREENSHOT_MODE == "only-on-failure" and test_failed)
+        )
+        should_save_video = (
+            VIDEO_MODE == "on" or 
+            (VIDEO_MODE == "retain-on-failure" and test_failed)
+        )
+        should_save_trace = (
+            TRACE_MODE == "on" or 
+            (TRACE_MODE == "retain-on-failure" and test_failed)
+        )
+        
+        # Capture screenshot
+        if should_save_screenshot:
+            screenshots_dir = _get_screenshots_dir()
+            os.makedirs(screenshots_dir, exist_ok=True)
+            screenshot_path = os.path.join(screenshots_dir, f"{test_name}.png")
             try:
-                shutil.move(video_path, new_video_path)
+                page.screenshot(path=screenshot_path, full_page=True)
                 status = "FAILED" if test_failed else "passed"
-                print(f"\n🎬 Video saved ({status}): {new_video_path}")
+                print(f"\n📸 Screenshot saved ({status}): {screenshot_path}")
             except Exception as e:
-                print(f"\n⚠️ Failed to rename video: {e}")
-        else:
-            # Delete video for passing tests in retain-on-failure mode
+                print(f"\n⚠️ Failed to capture screenshot: {e}")
+        
+        # Use Playwright's recommended save_as() API for video (avoids race with async finalization)
+        if VIDEO_MODE != "off" and page.video:
+            try:
+                if should_save_video:
+                    videos_dir = _get_videos_dir()
+                    video_path = os.path.join(videos_dir, f"{test_name}.webm")
+                    page.video.save_as(video_path)
+                    status = "FAILED" if test_failed else "passed"
+                    print(f"\n🎬 Video saved ({status}): {video_path}")
+                else:
+                    # Mark for deletion after page close
+                    video_path = page.video.path()
+            except Exception as e:
+                print(f"\n⚠️ Failed to save video: {e}")
+        
+        page.close()
+        
+        # Delete video for passing tests in retain-on-failure mode (after page close)
+        if video_path and not should_save_video and os.path.exists(video_path):
             try:
                 os.remove(video_path)
             except Exception:
                 pass
+        
+        # Save trace if enabled (stop tracing before context teardown)
+        if TRACE_MODE != "off":
+            traces_dir = _get_traces_dir()
+            trace_path = os.path.join(traces_dir, f"{test_name}.zip")
+            try:
+                if should_save_trace:
+                    authenticated_context.tracing.stop(path=trace_path)
+                    status = "FAILED" if test_failed else "passed"
+                    print(f"\n🔍 Trace saved ({status}): {trace_path}")
+                    print(f"   View at: https://trace.playwright.dev (upload {test_name}.zip)")
+                else:
+                    # Stop tracing without saving
+                    authenticated_context.tracing.stop()
+            except Exception as e:
+                print(f"\n⚠️ Failed to save trace: {e}")
     
-    # Close context (must happen after trace/video handling)
-    authenticated_context.close()
+    finally:
+        # Guaranteed context cleanup - prevents browser context leaks
+        try:
+            if not page.is_closed():
+                page.close()
+        except Exception:
+            pass
+        
+        try:
+            authenticated_context.close()
+        except Exception:
+            pass
 
 
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)
@@ -401,18 +452,22 @@ def pytest_runtest_teardown(item, nextitem):
                 f'</div></details>'
             ))
         
-        # Add video if exists (only for failed tests - passing tests shouldn't have videos)
+        # Add video link if exists (only for failed tests - passing tests shouldn't have videos)
+        # Note: Videos are linked rather than embedded to avoid bloating HTML report
+        # (a 30-second WebM can be 5-15MB; base64 adds ~33% overhead)
         video_path = os.path.join(_get_videos_dir(), f"{test_name}.webm")
         if os.path.exists(video_path):
-            with open(video_path, "rb") as f:
-                video_data = base64.b64encode(f.read()).decode()
+            video_size = os.path.getsize(video_path)
+            size_str = f"{video_size / 1024 / 1024:.1f} MB" if video_size > 1024*1024 else f"{video_size / 1024:.0f} KB"
             extras.append(html_extras.html(
-                f'<details><summary>🎬 Video Recording (click to expand)</summary>'
+                f'<details><summary>🎬 Video Recording ({size_str})</summary>'
                 f'<div class="video" style="margin-top:8px;">'
                 f'<video controls style="max-width:100%; border:1px solid #ccc;">'
-                f'<source src="data:video/webm;base64,{video_data}" type="video/webm">'
+                f'<source src="videos/{test_name}.webm" type="video/webm">'
                 f'Your browser does not support the video tag.'
-                f'</video></div></details>'
+                f'</video>'
+                f'<p style="margin-top:4px;"><a href="videos/{test_name}.webm" download>📥 Download video</a></p>'
+                f'</div></details>'
             ))
         
         # Add trace link if exists

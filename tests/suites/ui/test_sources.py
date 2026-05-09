@@ -19,7 +19,7 @@ import pytest
 import requests
 from playwright.sync_api import Page, expect
 
-from conftest import obtain_jwt_token
+from conftest import create_authenticated_session
 
 
 # =============================================================================
@@ -40,20 +40,18 @@ class SourceData:
 # =============================================================================
 
 
-def wait_for_integrations_load(page: Page, timeout_ms: int = 15000) -> None:
+def wait_for_integrations_load(page: Page, timeout_ms: int = 30000) -> None:
     """Wait for the Integrations page to finish loading.
     
     The page is considered loaded when either:
     - A table with sources is visible
     - The empty state card is visible
-    - The loading spinner disappears
-    """
-    # Wait for loading spinner to disappear (if present)
-    spinner = page.locator(".pf-v6-c-spinner, .pf-c-spinner")
-    if spinner.count() > 0:
-        spinner.first.wait_for(state="hidden", timeout=timeout_ms)
+    - The Add integration button is visible
     
-    # Wait for content to appear (table OR empty state)
+    This uses explicit element waits instead of networkidle for reliability.
+    Default timeout is 30s to handle slower environments.
+    """
+    # Wait for content to appear (table OR empty state OR add button)
     content = page.locator(
         ".pf-v6-c-table tbody tr, "
         "[data-ouia-component-id='sources-empty-add-openshift-card'], "
@@ -62,50 +60,25 @@ def wait_for_integrations_load(page: Page, timeout_ms: int = 15000) -> None:
     content.first.wait_for(state="visible", timeout=timeout_ms)
 
 
-def dismiss_any_modal(page: Page) -> None:
-    """Dismiss any open modal/backdrop by trying multiple close methods."""
-    backdrop = page.locator(".pf-v6-c-backdrop")
-    modal = page.locator(".pf-v6-c-modal-box, [role='dialog']")
-    
-    attempts = 0
-    max_attempts = 3
-    
-    while (backdrop.count() > 0 or modal.count() > 0) and attempts < max_attempts:
-        attempts += 1
-        
-        close_buttons = page.locator(
-            ".pf-v6-c-modal-box button:has-text('Close'), "
-            ".pf-v6-c-modal-box button:has-text('Cancel'), "
-            ".pf-v6-c-modal-box button[aria-label='Close'], "
-            ".pf-v6-c-wizard button:has-text('Close'), "
-            "button.pf-v6-c-wizard__close"
-        )
-        
-        if close_buttons.count() > 0:
-            try:
-                close_buttons.first.click()
-                # Wait for modal to close
-                modal.first.wait_for(state="hidden", timeout=3000)
-            except Exception:
-                pass
-        else:
-            page.keyboard.press("Escape")
-            try:
-                modal.first.wait_for(state="hidden", timeout=3000)
-            except Exception:
-                pass
-        
-        backdrop = page.locator(".pf-v6-c-backdrop")
-        modal = page.locator(".pf-v6-c-modal-box, [role='dialog']")
-
-
 def navigate_to_integrations(page: Page, ui_url: str) -> None:
     """Navigate to the Integrations tab in Settings page."""
-    dismiss_any_modal(page)
-    
     page.goto(f"{ui_url}/openshift/cost-management/settings")
-    page.wait_for_load_state("networkidle")
     
+    # Wait for page DOM to be ready first
+    page.wait_for_load_state("domcontentloaded")
+    
+    # Wait for Settings page to load by waiting for a known element
+    # The settings page has tabs - wait for them to appear
+    settings_tabs = page.locator(
+        "button:has-text('Sources'), "
+        "button:has-text('Integrations'), "
+        "[data-ouia-component-id='Sources'], "
+        "[data-ouia-component-id='Integrations'], "
+        "button:has-text('Cost models')"  # Fallback - this tab is always present
+    )
+    settings_tabs.first.wait_for(state="visible", timeout=30000)
+    
+    # Click the Sources/Integrations tab
     sources_tab = page.locator(
         "button:has-text('Sources'), "
         "a:has-text('Sources'), "
@@ -117,7 +90,8 @@ def navigate_to_integrations(page: Page, ui_url: str) -> None:
     
     if sources_tab.count() > 0:
         sources_tab.first.click()
-        page.wait_for_load_state("networkidle")
+        # Wait for integrations content to load
+        wait_for_integrations_load(page)
 
 
 def verify_empty_state(page: Page) -> None:
@@ -225,11 +199,18 @@ def verify_wizard_submit_button(page: Page) -> None:
 
 
 def click_wizard_submit(page: Page) -> None:
-    """Click the Submit button to create the integration."""
+    """Click the Submit button to create the integration.
+    
+    Waits for wizard to close after submission. If wizard stays open,
+    it indicates a submission failure which should cause test failure.
+    """
     submit_button = page.locator("button:has-text('Submit')")
     expect(submit_button.first).to_be_visible(timeout=5000)
     submit_button.first.click()
-    page.wait_for_load_state("networkidle")
+    
+    # Wait for wizard to close - this is the success indicator
+    wizard = page.locator(".pf-v6-c-wizard, .pf-v6-c-modal-box, [role='dialog']")
+    wizard.first.wait_for(state="hidden", timeout=15000)
     # Wait for wizard to close or success indicator
     wizard = page.locator(".pf-v6-c-wizard, .pf-v6-c-modal-box")
     try:
@@ -435,12 +416,7 @@ def cleanup_source_by_name(session: requests.Session, gateway_url: str, name: st
 @pytest.fixture(scope="module")
 def sources_api_session(keycloak_config, gateway_url) -> requests.Session:
     """Authenticated requests session for API operations in UI tests."""
-    token = obtain_jwt_token(keycloak_config)
-    session = requests.Session()
-    session.headers["Authorization"] = f"Bearer {token.access_token}"
-    session.headers["Content-Type"] = "application/json"
-    session.verify = False
-    return session
+    return create_authenticated_session(keycloak_config, content_type="application/json")
 
 
 # Test source name prefixes - used for identifying test-created sources
@@ -459,11 +435,7 @@ def ensure_no_sources(keycloak_config, gateway_url):
     - Empty state tests require truly empty state to pass
     - In CI, sources are ephemeral and can be recreated
     """
-    token = obtain_jwt_token(keycloak_config)
-    session = requests.Session()
-    session.headers["Authorization"] = f"Bearer {token.access_token}"
-    session.headers["Content-Type"] = "application/json"
-    session.verify = False
+    session = create_authenticated_session(keycloak_config, content_type="application/json")
 
     response = session.get(f"{gateway_url}/cost-management/v1/sources")
     if response.ok:
@@ -618,7 +590,6 @@ class TestIntegrationWorkflows:
             # Step 3: Verify submit button and submit
             verify_wizard_submit_button(authenticated_page)
             click_wizard_submit(authenticated_page)
-            dismiss_any_modal(authenticated_page)
             
             # Reload and verify source in table
             navigate_to_integrations(authenticated_page, ui_url)
@@ -669,7 +640,6 @@ class TestIntegrationWorkflows:
             fill_wizard_cluster_id(authenticated_page, new_cluster_id)
             click_wizard_next(authenticated_page)
             click_wizard_submit(authenticated_page)
-            dismiss_any_modal(authenticated_page)
             
             # Verify both sources in table
             navigate_to_integrations(authenticated_page, ui_url)
@@ -786,7 +756,6 @@ class TestIntegrationWorkflows:
             fill_wizard_cluster_id(authenticated_page, cluster_id)
             click_wizard_next(authenticated_page)
             click_wizard_submit(authenticated_page)
-            dismiss_any_modal(authenticated_page)
             
             # Verify in table
             navigate_to_integrations(authenticated_page, ui_url)

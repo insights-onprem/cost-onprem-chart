@@ -46,6 +46,13 @@ COST_MGMT_NAMESPACE=${COST_MGMT_NAMESPACE:-cost-onprem}
 COST_MGMT_RELEASE_NAME=${COST_MGMT_RELEASE_NAME:-cost-onprem}
 KEYCLOAK_INSTANCES=${KEYCLOAK_INSTANCES:-1}
 
+# Test user credentials for UI/API testing
+# SECURITY NOTE: These credentials are ONLY valid in ephemeral CI test environments.
+# They must NEVER match any staging or production credentials.
+# The test user is provisioned by this script's create_test_user() function.
+TEST_USERNAME=${TEST_USERNAME:-test}
+TEST_PASSWORD=${TEST_PASSWORD:-test}
+
 # OpenShift cluster-specific configuration (auto-detected)
 CLUSTER_DOMAIN=""
 OAUTH_CALLBACK=""
@@ -1339,13 +1346,13 @@ create_test_user() {
     #   - org_id: Tenant identifier (maps to database schema)
     #   - account_number: Customer account identifier
 
-    echo_info "Creating user 'admin' with org_id and account_number attributes..."
+    echo_info "Creating user '$TEST_USERNAME' with org_id and account_number attributes..."
     local USER_HTTP_CODE=$(curl -sk -o /tmp/user_response.txt -w "%{http_code}" -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users" \
         -H "Authorization: Bearer $ACCESS_TOKEN" \
         -H "Content-Type: application/json" \
         -d "{
-            \"username\": \"admin\",
-            \"email\": \"admin@test.com\",
+            \"username\": \"$TEST_USERNAME\",
+            \"email\": \"${TEST_USERNAME}@test.com\",
             \"emailVerified\": true,
             \"enabled\": true,
             \"firstName\": \"Admin\",
@@ -1360,66 +1367,66 @@ create_test_user() {
     rm -f /tmp/user_response.txt
 
     local USER_ID=""
-    if [ "$USER_HTTP_CODE" = "409" ] || { echo "$USER_RESPONSE" | jq empty >/dev/null 2>&1 && echo "$USER_RESPONSE" | jq -e '.errorMessage // empty | test("already exists|Conflict"; "i")' >/dev/null 2>&1; }; then
-        echo_warning "User 'admin' may already exist, attempting to find it..."
+    if [ "$USER_HTTP_CODE" = "409" ] || echo "$USER_RESPONSE" | grep -q "already exists\|Conflict"; then
+        echo_warning "User '$TEST_USERNAME' may already exist, attempting to find it..."
         # Get existing user
-        local USERS_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=admin&exact=true" \
+        local USERS_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=$TEST_USERNAME" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" 2>/dev/null)
         USER_ID=$(safe_jq '.[0].id // empty' "$USERS_RESPONSE")
 
         if [ -n "$USER_ID" ]; then
-            echo_info "Found existing user 'admin', updating with attributes..."
+            echo_info "Found existing user '$TEST_USERNAME', updating with attributes..."
             # Update user with attributes
             curl -sk -X PUT "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users/$USER_ID" \
                 -H "Authorization: Bearer $ACCESS_TOKEN" \
                 -H "Content-Type: application/json" \
-                -d '{
-                    "username": "admin",
-                    "email": "admin@test.com",
-                    "emailVerified": true,
-                    "enabled": true,
-                    "firstName": "Admin",
-                    "lastName": "User",
-                    "attributes": {
-                        "org_id": ["org1234567"],
-                        "account_number": ["7890123"]
+                -d "{
+                    \"username\": \"$TEST_USERNAME\",
+                    \"email\": \"${TEST_USERNAME}@test.com\",
+                    \"emailVerified\": true,
+                    \"enabled\": true,
+                    \"firstName\": \"Test\",
+                    \"lastName\": \"User\",
+                    \"attributes\": {
+                        \"org_id\": [\"org1234567\"],
+                        \"account_number\": [\"7890123\"]
                     }
-                }' >/dev/null 2>&1
-            echo_success "✓ User 'admin' updated"
+                }" >/dev/null 2>&1
+            echo_success "✓ User '$TEST_USERNAME' updated"
         fi
     elif [ "$USER_HTTP_CODE" = "201" ] || [ "$USER_HTTP_CODE" = "200" ]; then
         # User created successfully, get ID from users list
         sleep 2
-        local USERS_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=admin&exact=true" \
+        local USERS_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=$TEST_USERNAME" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" 2>/dev/null)
         USER_ID=$(safe_jq '.[0].id // empty' "$USERS_RESPONSE")
-        echo_success "✓ User 'admin' created"
+        echo_success "✓ User '$TEST_USERNAME' created"
     fi
 
     if [ -z "$USER_ID" ]; then
-        echo_warning "Could not determine user ID for 'admin'"
+        echo_warning "Could not determine user ID for '$TEST_USERNAME'"
         return 1
     fi
 
     echo_info "User ID: $USER_ID"
 
     # Set user password
-    echo_info "Setting password for user 'admin'..."
+    echo_info "Setting password for user '$TEST_USERNAME'..."
     local PASSWORD_RESPONSE=$(curl -sk -X PUT "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users/$USER_ID/reset-password" \
         -H "Authorization: Bearer $ACCESS_TOKEN" \
         -H "Content-Type: application/json" \
-        -d '{
-            "type": "password",
-            "value": "admin",
-            "temporary": false
-        }' 2>/dev/null)
+        -d "{
+            \"type\": \"password\",
+            \"value\": \"$TEST_PASSWORD\",
+            \"temporary\": false
+        }" 2>/dev/null)
 
     if [ $? -eq 0 ]; then
-        echo_success "✓ Password set for user 'admin'"
+        echo_success "✓ Password set for user '$TEST_USERNAME'"
     else
-        echo_warning "Could not set password for user 'admin' (may already be set)"
+        echo_warning "Could not set password for user '$TEST_USERNAME' (may already be set)"
     fi
 
     echo_success "✓ Admin user creation complete"
@@ -1471,10 +1478,10 @@ display_summary() {
     echo_info "  Secret stored in: keycloak-client-secret-cost-management-ui"
     echo ""
 
-    echo_info "Admin User Information:"
-    echo_info "  User: admin"
-    echo_info "    Password: admin"
-    echo_info "    Email: admin@test.com (verified)"
+    echo_info "Test User Information:"
+    echo_info "  User: $TEST_USERNAME"
+    echo_info "    Password: $TEST_PASSWORD"
+    echo_info "    Email: ${TEST_USERNAME}@test.com (verified)"
     echo_info "    Attributes:"
     echo_info "      org_id: org1234567 (includes 'org' prefix as workaround for Koku bug)"
     echo_info "      account_number: 7890123"
@@ -1485,11 +1492,13 @@ display_summary() {
     echo_info ""
     echo_info "      rbac.bootstrapAdmin.enabled=true"
     echo_info ""
-    echo_info "    The defaults (username=admin, orgId=org1234567, accountNumber=7890123)"
+    echo_info "    The defaults (username=$TEST_USERNAME, orgId=org1234567, accountNumber=7890123)"
     echo_info "    match this user. See docs/operations/rbac-setup.md for details."
     echo_info ""
     echo_info "    Alternatively, run after chart install:"
     echo_info "      NAMESPACE=${COST_MGMT_NAMESPACE} ./scripts/sync-rbac-admin.sh"
+    echo_info ""
+    echo_info "  SECURITY NOTE: These credentials are ONLY for ephemeral CI test environments."
     echo ""
 
     # Display admin credential retrieval
