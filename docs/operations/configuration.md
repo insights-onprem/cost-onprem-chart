@@ -886,7 +886,7 @@ kafka:
 **Install script behavior:** Setting `KAFKA_BOOTSTRAP_SERVERS` tells the install script to skip AMQ Streams operator verification:
 
 ```bash
-KAFKA_BOOTSTRAP_SERVERS="my-kafka-broker1:9093" ./scripts/install-helm-chart.sh --namespace cost-onprem
+KAFKA_BOOTSTRAP_SERVERS="my-kafka-broker1:9092" ./scripts/install-helm-chart.sh --namespace cost-onprem
 ```
 
 **Components that use Kafka:**
