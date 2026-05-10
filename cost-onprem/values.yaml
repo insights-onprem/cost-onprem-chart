@@ -50,7 +50,7 @@ ros:
   image:
     repository: quay.io/redhat-services-prod/insights-management-tenant/insights-ocp-resource-optimization/ros-ocp-backend
     tag: "45e36af"
-    pullPolicy: Always
+    pullPolicy: IfNotPresent
 
   # Service Account
   serviceAccount:
@@ -147,7 +147,7 @@ costManagement:
     image:
       repository: quay.io/redhat-services-prod/cost-mgmt-dev-tenant/koku
       tag: "72bbc6a"
-      pullPolicy: Always
+      pullPolicy: IfNotPresent
 
     replicas: 1
     resources:
@@ -498,8 +498,8 @@ kruize:
 ingress:
   image:
     repository: quay.io/redhat-user-workloads/hcc-integrations-tenant/ingress
-    tag: "3a7a2cf"
-    pullPolicy: Always
+    tag: "c979ae6"
+    pullPolicy: IfNotPresent
 
   # Server configuration
   server:
