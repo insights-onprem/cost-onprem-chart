@@ -100,9 +100,10 @@ data:
                   # ROUTING PRIORITY ORDER (Envoy uses first-match)
                   # =========================================================================
                   # 1. ROS recommendations (most specific path, must match before /api/cost-management/)
-                  # 2. Cost Management API (all methods - unified deployment)
+                  # 2. RBAC Admin API (role, group, policy management — IAM)
+                  # 3. Cost Management API (all methods - unified deployment)
                   #    Note: Sources API is now part of Cost Management API at /api/cost-management/v1/sources/
-                  # 3. Ingress (file upload)
+                  # 4. Ingress (file upload)
                   # =========================================================================
 
                   # 1. ROS Recommendations - Route to ROS API service
@@ -117,7 +118,18 @@ data:
                         num_retries: 2
                         per_try_timeout: 15s
 
-                  # 2. Cost Management API - All operations route to unified koku-api service
+                  # 2. RBAC Admin API - Role, group, policy management (IAM)
+                  - match:
+                      prefix: "/api/rbac/"
+                    route:
+                      cluster: rbac-api-backend
+                      timeout: 30s
+                      retry_policy:
+                        retry_on: 5xx,reset,connect-failure,refused-stream
+                        num_retries: 2
+                        per_try_timeout: 15s
+
+                  # 3. Cost Management API - All operations route to unified koku-api service
                   #    Includes Sources API at /api/cost-management/v1/sources/
                   - match:
                       prefix: "/api/cost-management/"
@@ -129,7 +141,7 @@ data:
                         num_retries: 2
                         per_try_timeout: 30s
 
-                  # 4. Ingress - Health check endpoint (specific path before general prefix)
+                  # 4a. Ingress - Health check endpoint (specific path before general prefix)
                   - match:
                       path: "/api/ingress/ready"
                     route:
@@ -141,7 +153,7 @@ data:
                         num_retries: 1
                         per_try_timeout: 5s
 
-                  # 5. Ingress - General file upload and API endpoints
+                  # 4b. Ingress - General file upload and API endpoints
                   - match:
                       prefix: "/api/ingress/"
                     route:
@@ -208,47 +220,46 @@ data:
                       -- =============================================================================
                       -- Build X-Rh-Identity JSON structure for Koku authentication
                       -- =============================================================================
-                      -- This function constructs the X-Rh-Identity header required by Koku.
+                      -- Constructs the X-Rh-Identity header required by Koku and insights-rbac.
                       --
-                      -- Authentication Mode: ENHANCED_ORG_ADMIN
-                      -- -----------------------------------------
-                      -- Koku is configured with DEVELOPMENT=false and ENHANCED_ORG_ADMIN=true.
-                      -- When is_org_admin=true in the identity header, Koku bypasses RBAC service
-                      -- calls and grants full access to all resources within the user's org.
+                      -- is_org_admin: In SaaS, this flag comes from the BOP (Back Office Proxy).
+                      -- When true, insights-rbac's admin_default mechanism grants the user all
+                      -- permissions from the "Cost Admin Default" group (seeded by the migration
+                      -- job with "Cost Administrator" role = cost-management:*:*).
                       --
-                      -- Required fields:
-                      --   org_id: Tenant/schema lookup. Koku prepends "org" to create schema name.
-                      --           NOTE: Included at BOTH top-level AND inside identity{} as a
-                      --           workaround for Koku middleware compatibility.
-                      --   account_number: Customer account identifier (required by identity schema)
-                      --   type: Identity type, always "User" for interactive users
-                      --   user.username: For logging/audit purposes
-                      --   user.is_org_admin: TRUE - Required for ENHANCED_ORG_ADMIN mode to bypass
-                      --           RBAC service calls. All users are treated as org admins.
+                      -- In on-prem there is no BOP. The org_admin_usernames table below is
+                      -- rendered from jwtAuth.orgAdminUsernames in values.yaml. Only listed
+                      -- usernames get is_org_admin=true. When the list is empty (default),
+                      -- is_org_admin is false for everyone and admin access must be granted
+                      -- through explicit RBAC group membership.
                       --
-                      -- Hardcoded fields:
-                      --   entitlements.cost_management.is_entitled: REQUIRED - Koku checks this in
-                      --           middleware and returns 403 if not "True". No bypass exists.
+                      -- Both Koku and ROS route through this gateway and receive the same
+                      -- X-Rh-Identity header. Both services enforce RBAC permissions by
+                      -- calling insights-rbac with the forwarded identity.
                       --
-                      -- Limitations of ENHANCED_ORG_ADMIN mode:
-                      --   - All authenticated users have full admin access within their org
-                      --   - No granular RBAC (e.g., "user A sees only cluster X") within same org
-                      --   - Multi-tenancy IS preserved: users only see their own org's data
-                      --   - Suitable for single-tenant or trusted-user deployments
+                      -- entitlements.cost_management.is_entitled is always true because Koku's
+                      -- middleware returns 403 without it and there is no bypass.
                       -- =============================================================================
-                      local function build_xrhid_json(org_id, account_number, user_type, username, email)
-                        -- Properly escape JSON special characters
+
+                      -- Org admin lookup table (rendered from jwtAuth.orgAdminUsernames)
+                      local org_admin_usernames = {
+                        {{- range .Values.jwtAuth.orgAdminUsernames }}
+                        [{{ . | quote }}] = true,
+                        {{- end }}
+                      }
+
+                      local function build_xrhid_json(org_id, account_number, user_type, username, email, is_org_admin)
                         local function escape_json(str)
                           if type(str) ~= "string" then
                             str = tostring(str)
                           end
-                          str = string.gsub(str, "\\", "\\\\")  -- Backslash first
-                          str = string.gsub(str, '"', '\\"')    -- Double quote
-                          str = string.gsub(str, "\n", "\\n")   -- Newline
-                          str = string.gsub(str, "\r", "\\r")   -- Carriage return
-                          str = string.gsub(str, "\t", "\\t")   -- Tab
-                          str = string.gsub(str, "\b", "\\b")   -- Backspace
-                          str = string.gsub(str, "\f", "\\f")   -- Form feed
+                          str = string.gsub(str, "\\", "\\\\")
+                          str = string.gsub(str, '"', '\\"')
+                          str = string.gsub(str, "\n", "\\n")
+                          str = string.gsub(str, "\r", "\\r")
+                          str = string.gsub(str, "\t", "\\t")
+                          str = string.gsub(str, "\b", "\\b")
+                          str = string.gsub(str, "\f", "\\f")
                           return str
                         end
 
@@ -258,12 +269,11 @@ data:
                         username = escape_json(username or "user")
                         email = escape_json(email or (username .. "@noreply.local"))
 
-                        -- is_org_admin=true triggers ENHANCED_ORG_ADMIN bypass in Koku
-                        -- This grants full access without calling external RBAC service
-                        -- Note: email is REQUIRED by Koku's middleware for user creation
+                        local admin_str = is_org_admin and "true" or "false"
+
                         return string.format(
-                          '{"org_id":"%s","identity":{"org_id":"%s","account_number":"%s","type":"%s","user":{"username":"%s","email":"%s","is_org_admin":true}},"entitlements":{"cost_management":{"is_entitled":true}}}',
-                          org_id, org_id, account_number, user_type, username, email
+                          '{"org_id":"%s","identity":{"org_id":"%s","account_number":"%s","type":"%s","user":{"username":"%s","email":"%s","is_org_admin":%s}},"entitlements":{"cost_management":{"is_entitled":true}}}',
+                          org_id, org_id, account_number, user_type, username, email, admin_str
                         )
                       end
 
@@ -349,14 +359,12 @@ data:
                           if email then
                             email = tostring(email)
                           end
-                          -- If email not in JWT, generate from username
                           if not email or email == "" then
                             email = username .. "@example.com"
                           end
 
-                          -- Build and encode X-Rh-Identity header
-                          -- Note: is_org_admin=true is hardcoded for ENHANCED_ORG_ADMIN mode
-                          local xrhid_json = build_xrhid_json(org_id, account_number, "User", username, email)
+                          local is_org_admin = org_admin_usernames[username] or false
+                          local xrhid_json = build_xrhid_json(org_id, account_number, "User", username, email, is_org_admin)
                           local xrhid_b64 = request_handle:base64Escape(xrhid_json)
 
                           -- Inject X-Rh-Identity header (for standard identity-based systems)
@@ -378,9 +386,8 @@ data:
                             end
                           end
 
-                          -- Log for debugging (redact sensitive data)
                           local masked_org = string.sub(org_id, 1, 4) .. "***"
-                          request_handle:logInfo(string.format("JWT Authentication successful - org_id: %s", masked_org))
+                          request_handle:logInfo(string.format("JWT auth ok - org: %s, user: %s", masked_org, username))
                         end)
 
                         -- Handle any errors that occurred
@@ -456,6 +463,28 @@ data:
                   socket_address:
                     address: {{ include "cost-onprem.fullname" . }}-ingress.{{ .Release.Namespace }}.svc.cluster.local
                     port_value: {{ .Values.ingress.server.port }}
+        circuit_breakers:
+          thresholds:
+          - priority: DEFAULT
+            max_connections: 1024
+            max_pending_requests: 1024
+            max_requests: 1024
+            max_retries: 3
+
+      # RBAC API backend for role/group/policy management (IAM)
+      - name: rbac-api-backend
+        connect_timeout: 5s
+        type: STRICT_DNS
+        dns_refresh_rate: 30s
+        load_assignment:
+          cluster_name: rbac-api-backend
+          endpoints:
+          - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: {{ include "cost-onprem.rbac.serviceHost" . }}
+                    port_value: {{ include "cost-onprem.rbac.service.port" . }}
         circuit_breakers:
           thresholds:
           - priority: DEFAULT

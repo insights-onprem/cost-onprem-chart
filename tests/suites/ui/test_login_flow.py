@@ -38,8 +38,8 @@ class TestLoginFlow:
         page.wait_for_url(f"**/{keycloak_config.realm}/**", timeout=10000)
         
         # Fill login form
-        username = os.environ.get("TEST_UI_USERNAME", "test")
-        password = os.environ.get("TEST_UI_PASSWORD", "test")
+        username = os.environ.get("TEST_UI_USERNAME", "admin")
+        password = os.environ.get("TEST_UI_PASSWORD", "admin")
         
         page.fill('input[name="username"]', username)
         page.fill('input[name="password"]', password)
