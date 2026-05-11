@@ -2,8 +2,23 @@
 
 Role-Based Access Control (RBAC) configuration, user management, and troubleshooting for Cost Management On-Premise.
 
+## Breaking Changes
+
+> **Chart ≥ 0.2.20**: `jwtAuth.orgAdminUsernames` has been removed.
+> Admin status is now determined by the Keycloak **org-admin** realm role, which
+> is assigned automatically when `orgAdmin: true` is set on a user in
+> `jwtAuth.realmUsers`. If you previously set `orgAdminUsernames`, migrate those
+> usernames into `jwtAuth.realmUsers` entries with `orgAdmin: true` and re-run
+> `deploy-rhbk.sh -f <values.yaml>`.
+>
+> Similarly, `bootstrapAdmin.username`, `bootstrapAdmin.orgId`, and
+> `bootstrapAdmin.accountNumber` are now derived from the first `orgAdmin: true`
+> entry in `jwtAuth.realmUsers` — explicit values in `bootstrapAdmin` are no
+> longer required.
+
 ## Table of Contents
 
+- [Breaking Changes](#breaking-changes)
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
