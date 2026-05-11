@@ -23,7 +23,7 @@ Cost Management On-Premise uses [insights-rbac](https://github.com/RedHatInsight
 
 Key properties:
 - Authorization is **role-based**, not attribute-based
-- `is_org_admin` is **false by default** in the identity header — admin privileges come from RBAC roles only. Specific usernames can be granted `is_org_admin: true` via `jwtAuth.orgAdminUsernames` in `values.yaml`, which triggers the `admin_default` group mechanism (see [Identity Header](#identity-header))
+- `is_org_admin` defaults to **true for the `admin` user** via `jwtAuth.realmUsers` (where `orgAdmin: true`). This triggers the `admin_default` group mechanism, granting Cost Administrator permissions automatically. Additional users can be added to `realmUsers`, or `orgAdmin` can be set to `false` for the most restrictive posture where all access requires explicit RBAC group membership (see [Identity Header](#identity-header))
 - Permissions are scoped by `resourceDefinitions` (e.g., specific clusters, namespaces)
 - The system seeds 5 built-in roles covering common access patterns
 - RBAC is **always enabled** for both Koku and ROS — there is no toggle to disable it
@@ -162,7 +162,22 @@ The `x-rh-identity` header is constructed by the Envoy gateway and contains:
 }
 ```
 
-**Important**: `is_org_admin` is `false` by default. Specific usernames listed in `jwtAuth.orgAdminUsernames` (in `values.yaml`) receive `is_org_admin: true`, which triggers insights-rbac's `admin_default` group mechanism — granting Cost Administrator permissions automatically. When the list is empty (default), all admin access must come through explicit RBAC group membership. See the [PoC Analysis](https://gist.github.com/jordigilh/c81c73ba411637e24a30acd6a743e5fb) for security rationale.
+**Important**: `is_org_admin` is derived from the Keycloak **`org-admin` realm role**. The Envoy gateway reads `realm_access.roles` from the JWT and sets `is_org_admin: true` when the `org-admin` role is present. Keycloak is the single source of truth for admin status.
+
+For initial provisioning, `deploy-rhbk.sh -f values.yaml` reads `jwtAuth.realmUsers` and assigns the `org-admin` role to users with `orgAdmin: true`:
+
+```yaml
+jwtAuth:
+  realmUsers:
+    - username: admin
+      password: admin
+      orgAdmin: true      # assigned "org-admin" realm role → is_org_admin=true
+    - username: viewer
+      password: viewer
+      orgAdmin: false     # no org-admin role → standard user
+```
+
+After deployment, admin status can be managed directly in the Keycloak admin console by assigning or removing the `org-admin` realm role -- no `helm upgrade` required. See the [PoC Analysis](https://gist.github.com/jordigilh/c81c73ba411637e24a30acd6a743e5fb) for security rationale.
 
 ---
 

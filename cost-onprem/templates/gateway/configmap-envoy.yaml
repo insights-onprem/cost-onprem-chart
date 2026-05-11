@@ -227,11 +227,10 @@ data:
                       -- permissions from the "Cost Admin Default" group (seeded by the migration
                       -- job with "Cost Administrator" role = cost-management:*:*).
                       --
-                      -- In on-prem there is no BOP. The org_admin_usernames table below is
-                      -- rendered from jwtAuth.orgAdminUsernames in values.yaml. Only listed
-                      -- usernames get is_org_admin=true. When the list is empty (default),
-                      -- is_org_admin is false for everyone and admin access must be granted
-                      -- through explicit RBAC group membership.
+                      -- In on-prem, is_org_admin is derived from the Keycloak "org-admin"
+                      -- realm role. If the JWT contains "org-admin" in realm_access.roles,
+                      -- the user gets is_org_admin=true. Keycloak is the single source of
+                      -- truth — assign/remove the role in the Keycloak admin console.
                       --
                       -- Both Koku and ROS route through this gateway and receive the same
                       -- X-Rh-Identity header. Both services enforce RBAC permissions by
@@ -241,12 +240,17 @@ data:
                       -- middleware returns 403 without it and there is no bypass.
                       -- =============================================================================
 
-                      -- Org admin lookup table (rendered from jwtAuth.orgAdminUsernames)
-                      local org_admin_usernames = {
-                        {{- range .Values.jwtAuth.orgAdminUsernames }}
-                        [{{ . | quote }}] = true,
-                        {{- end }}
-                      }
+                      -- Check if JWT realm_access.roles contains a specific role
+                      local function has_realm_role(jwt_data, role_name)
+                        local realm_access = jwt_data["realm_access"]
+                        if realm_access == nil then return false end
+                        local roles = realm_access["roles"]
+                        if roles == nil then return false end
+                        for _, role in ipairs(roles) do
+                          if role == role_name then return true end
+                        end
+                        return false
+                      end
 
                       local function build_xrhid_json(org_id, account_number, user_type, username, email, is_org_admin)
                         local function escape_json(str)
@@ -363,7 +367,7 @@ data:
                             email = username .. "@example.com"
                           end
 
-                          local is_org_admin = org_admin_usernames[username] or false
+                          local is_org_admin = has_realm_role(jwt_data, "org-admin")
                           local xrhid_json = build_xrhid_json(org_id, account_number, "User", username, email, is_org_admin)
                           local xrhid_b64 = request_handle:base64Escape(xrhid_json)
 

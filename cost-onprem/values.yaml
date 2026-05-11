@@ -842,15 +842,34 @@ jwtAuth:
         cpu: 100m
         memory: 128Mi
 
-  # Org admin usernames: Keycloak usernames that receive is_org_admin=true in
-  # the X-Rh-Identity header. This triggers insights-rbac's admin_default role
-  # assignment (e.g. "Cost Administrator" via the admin_default group).
-  # Leave empty to keep is_org_admin=false for all users (default, most secure).
-  orgAdminUsernames: []
-  # Example:
-  #   orgAdminUsernames:
-  #     - admin
-  #     - cost-mgmt-operator
+  # Keycloak realm users provisioned by deploy-rhbk.sh -f <this-file>.
+  # Each entry defines a user in the Keycloak realm with Cost Management attributes.
+  #
+  # orgAdmin: true assigns the Keycloak "org-admin" realm role to the user.
+  # The Envoy gateway reads this role from the JWT (realm_access.roles) and sets
+  # is_org_admin=true in X-Rh-Identity, triggering insights-rbac's admin_default
+  # group (Cost Administrator = cost-management:*:*).
+  #
+  # Keycloak is the single source of truth — after initial provisioning, admin
+  # status can also be managed directly in the Keycloak admin console by
+  # assigning/removing the "org-admin" realm role.
+  realmUsers:
+    - username: admin
+      password: admin
+      email: admin@test.com
+      firstName: Admin
+      lastName: User
+      orgId: "org1234567"
+      accountNumber: "7890123"
+      orgAdmin: true
+    - username: viewer
+      password: viewer
+      email: viewer@test.com
+      firstName: Viewer
+      lastName: User
+      orgId: "org1234567"
+      accountNumber: "7890123"
+      orgAdmin: false
 
   # Keycloak configuration for JWT validation
   # Supported operator: Red Hat Build of Keycloak (RHBK) v22+ - k8s.keycloak.org/v2alpha1
