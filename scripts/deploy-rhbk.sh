@@ -818,6 +818,7 @@ spec:
         directAccessGrantsEnabled: false
         implicitFlowEnabled: false
         publicClient: false
+        fullScopeAllowed: true
         protocol: openid-connect
         defaultClientScopes:
           - openid
@@ -888,6 +889,7 @@ spec:
         directAccessGrantsEnabled: true
         implicitFlowEnabled: false
         publicClient: false
+        fullScopeAllowed: true
         protocol: openid-connect
         redirectUris:
           - "${UI_BASE_URL}/oauth2/callback"
