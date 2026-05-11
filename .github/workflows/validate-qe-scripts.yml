@@ -98,14 +98,14 @@ jobs:
         run: |
           # Create invalid impact map (missing components section)
           mkdir -p /tmp/test-maps
-          cat > /tmp/test-maps/invalid.yaml <<EOF
-paths:
-  test-rule:
-    pattern: "test"
-    profile: smoke
-    impact: low
-    description: "Test"
-EOF
+          printf '%s\n' \
+            'paths:' \
+            '  test-rule:' \
+            '    pattern: "test"' \
+            '    profile: smoke' \
+            '    impact: low' \
+            '    description: "Test"' \
+            > /tmp/test-maps/invalid.yaml
           
           set +e
           IMPACT_MAP=/tmp/test-maps/invalid.yaml ./scripts/qe/recommend-tests.sh 2>&1 | tee output.txt
