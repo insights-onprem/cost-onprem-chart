@@ -343,3 +343,34 @@ class TestSettingsPage:
         # Should have some main content area
         main_content = authenticated_page.locator("main, [role='main'], .pf-v6-c-page__main")
         expect(main_content).to_be_visible()
+
+    def test_admin_settings_page_shows_settings_content(
+        self, authenticated_page: Page, ui_url: str,
+    ):
+        """Admin (org-admin role) must see actual settings, not access-denied."""
+        authenticated_page.goto(f"{ui_url}/openshift/cost-management/settings")
+        authenticated_page.wait_for_load_state("networkidle")
+
+        access_denied = authenticated_page.locator(
+            "text=You do not have access to Settings in cost management"
+        )
+        expect(access_denied).not_to_be_visible()
+
+        main_content = authenticated_page.locator(
+            "main, [role='main'], .pf-v6-c-page__main"
+        )
+        expect(main_content).to_be_visible()
+
+    def test_non_admin_settings_page_shows_access_denied(
+        self, non_admin_authenticated_page: Page, ui_url: str,
+    ):
+        """Non-admin (viewer, no org-admin role) must see the access-denied state."""
+        non_admin_authenticated_page.goto(
+            f"{ui_url}/openshift/cost-management/settings"
+        )
+        non_admin_authenticated_page.wait_for_load_state("networkidle")
+
+        access_denied = non_admin_authenticated_page.locator(
+            "text=You do not have access to Settings in cost management"
+        )
+        expect(access_denied).to_be_visible(timeout=10000)

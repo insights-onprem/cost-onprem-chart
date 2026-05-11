@@ -229,8 +229,13 @@ def jwt_token(keycloak_config: KeycloakConfig) -> JWTToken:
     return obtain_jwt_token(keycloak_config)
 
 
-def obtain_user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JWTToken:
-    """Obtain a JWT token via password grant for the admin user.
+def obtain_user_jwt_token_for(
+    keycloak_config: KeycloakConfig,
+    cluster_config,
+    username: str = "admin",
+    password: str = "admin",
+) -> JWTToken:
+    """Obtain a JWT token via password grant for the given user.
 
     The cost-management-operator SA token has a ``service-account-*`` username
     that RBAC rejects with 400 ("Invalid format for a Service Account username").
@@ -251,8 +256,8 @@ def obtain_user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JW
             "grant_type": "password",
             "client_id": ui_client_id,
             "client_secret": ui_client_secret,
-            "username": "admin",
-            "password": "admin",
+            "username": username,
+            "password": password,
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         verify=False,
@@ -261,7 +266,7 @@ def obtain_user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JW
 
     if response.status_code != 200:
         pytest.fail(
-            f"Failed to obtain user JWT token via password grant: "
+            f"Failed to obtain JWT token for {username!r} via password grant: "
             f"{response.status_code} - {response.text}"
         )
 
@@ -272,6 +277,11 @@ def obtain_user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JW
         access_token=token_data["access_token"],
         expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in),
     )
+
+
+def obtain_user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JWTToken:
+    """Obtain a JWT token via password grant for the admin user."""
+    return obtain_user_jwt_token_for(keycloak_config, cluster_config)
 
 
 @pytest.fixture(scope="function")

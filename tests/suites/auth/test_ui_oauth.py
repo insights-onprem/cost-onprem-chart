@@ -14,6 +14,40 @@ import requests
 from utils import run_oc_command, get_route_url
 
 
+def _decode_jwt_payload(access_token: str) -> dict:
+    """Decode the payload section of a JWT without signature verification."""
+    payload_b64 = access_token.split(".")[1]
+    padding = 4 - len(payload_b64) % 4
+    if padding != 4:
+        payload_b64 += "=" * padding
+    return json.loads(base64.urlsafe_b64decode(payload_b64))
+
+
+def _obtain_token(http_session, keycloak_config, ui_client_config, credentials):
+    """Obtain an access token via password grant, returning the raw JWT string."""
+    data = {
+        "username": credentials["username"],
+        "password": credentials["password"],
+        "grant_type": "password",
+        "client_id": ui_client_config["client_id"],
+        "scope": "openid profile email",
+    }
+    if ui_client_config.get("client_secret"):
+        data["client_secret"] = ui_client_config["client_secret"]
+
+    token_url = (
+        f"{keycloak_config.url}/realms/{keycloak_config.realm}/"
+        "protocol/openid-connect/token"
+    )
+    response = http_session.post(token_url, data=data, timeout=30)
+    if response.status_code != 200:
+        pytest.skip(
+            f"Password grant failed for {credentials['username']!r}: "
+            f"{response.status_code}"
+        )
+    return response.json()["access_token"]
+
+
 @pytest.mark.auth
 @pytest.mark.integration
 class TestUIOAuthFlow:
@@ -153,3 +187,54 @@ class TestUIOAuthFlow:
             pytest.skip("JWT missing org_id claim (may need Keycloak mapper)")
         if "account_number" not in payload:
             pytest.skip("JWT missing account_number claim (may need Keycloak mapper)")
+
+
+@pytest.mark.auth
+@pytest.mark.integration
+class TestOrgAdminRealmRole:
+    """Verify that Keycloak assigns the org-admin realm role correctly.
+
+    The org-admin role controls is_org_admin in the X-Rh-Identity header.
+    Admin users (orgAdmin: true in values.yaml) must have it; non-admin
+    users (orgAdmin: false) must not.
+    """
+
+    def test_admin_jwt_contains_org_admin_realm_role(
+        self,
+        keycloak_config,
+        ui_client_config,
+        test_user_credentials,
+        http_session: requests.Session,
+    ):
+        """Admin user's JWT must contain the org-admin realm role."""
+        token = _obtain_token(
+            http_session, keycloak_config, ui_client_config, test_user_credentials,
+        )
+        payload = _decode_jwt_payload(token)
+
+        realm_access = payload.get("realm_access", {})
+        roles = realm_access.get("roles", [])
+        assert "org-admin" in roles, (
+            f"Expected 'org-admin' in realm_access.roles for admin user, "
+            f"got: {roles}"
+        )
+
+    def test_non_admin_jwt_lacks_org_admin_realm_role(
+        self,
+        keycloak_config,
+        ui_client_config,
+        non_admin_user_credentials,
+        http_session: requests.Session,
+    ):
+        """Non-admin (viewer) user's JWT must NOT contain the org-admin realm role."""
+        token = _obtain_token(
+            http_session, keycloak_config, ui_client_config, non_admin_user_credentials,
+        )
+        payload = _decode_jwt_payload(token)
+
+        realm_access = payload.get("realm_access", {})
+        roles = realm_access.get("roles", [])
+        assert "org-admin" not in roles, (
+            f"Viewer user should not have 'org-admin' role, "
+            f"got: {roles}"
+        )

@@ -35,3 +35,20 @@ def test_user_credentials():
         "username": "admin",
         "password": "admin",
     }
+
+
+@pytest.fixture
+def non_admin_user_credentials():
+    """Credentials for the non-admin viewer user (no org-admin realm role)."""
+    return {
+        "username": "viewer",
+        "password": "viewer",
+    }
+
+
+@pytest.fixture
+def http_session() -> requests.Session:
+    """Shared requests session with SSL verification disabled."""
+    session = requests.Session()
+    session.verify = False
+    return session

@@ -99,51 +99,76 @@ def keycloak_login_url(keycloak_config: KeycloakConfig) -> str:
 # =============================================================================
 
 
+def _login_context(
+    browser: Browser,
+    ui_url: str,
+    keycloak_config: KeycloakConfig,
+    username: str,
+    password: str,
+) -> BrowserContext:
+    """Create a browser context authenticated via Keycloak password grant."""
+    context = browser.new_context(
+        viewport={"width": 1920, "height": 1080},
+        ignore_https_errors=True,
+    )
+
+    page = context.new_page()
+    page.goto(ui_url)
+    page.wait_for_url(f"**/{keycloak_config.realm}/**", timeout=10000)
+
+    page.fill('input[name="username"]', username)
+    page.fill('input[name="password"]', password)
+    page.click('input[type="submit"], button[type="submit"]')
+
+    page.wait_for_url(f"{ui_url}**", timeout=15000)
+    page.close()
+    return context
+
+
 @pytest.fixture(scope="function")
 def authenticated_context(
     browser: Browser,
     ui_url: str,
     keycloak_config: KeycloakConfig,
 ) -> Generator[BrowserContext, None, None]:
-    """Create a browser context with authenticated session.
-    
-    Performs Keycloak login and stores the session for the test.
-    Uses test/test credentials by default (configurable via env vars).
+    """Browser context authenticated as admin (org-admin role).
+
+    Credentials default to admin/admin; override with TEST_UI_USERNAME /
+    TEST_UI_PASSWORD env vars.
     """
-    context = browser.new_context(
-        viewport={"width": 1920, "height": 1080},
-        ignore_https_errors=True,
-    )
-    
-    page = context.new_page()
-    
-    # Navigate to UI (will redirect to Keycloak)
-    page.goto(ui_url)
-    
-    # Wait for Keycloak login page
-    page.wait_for_url(f"**/{keycloak_config.realm}/**", timeout=10000)
-    
-    # Fill login form
     username = os.environ.get("TEST_UI_USERNAME", "admin")
     password = os.environ.get("TEST_UI_PASSWORD", "admin")
-    
-    page.fill('input[name="username"]', username)
-    page.fill('input[name="password"]', password)
-    page.click('input[type="submit"], button[type="submit"]')
-    
-    # Wait for redirect back to UI
-    page.wait_for_url(f"{ui_url}**", timeout=15000)
-    
-    page.close()
-    
+    context = _login_context(browser, ui_url, keycloak_config, username, password)
     yield context
     context.close()
 
 
 @pytest.fixture(scope="function")
 def authenticated_page(authenticated_context: BrowserContext) -> Generator[Page, None, None]:
-    """Create a page with authenticated session."""
+    """Create a page with authenticated (admin) session."""
     page = authenticated_context.new_page()
+    yield page
+    page.close()
+
+
+@pytest.fixture(scope="function")
+def non_admin_authenticated_context(
+    browser: Browser,
+    ui_url: str,
+    keycloak_config: KeycloakConfig,
+) -> Generator[BrowserContext, None, None]:
+    """Browser context authenticated as viewer (no org-admin role)."""
+    context = _login_context(browser, ui_url, keycloak_config, "viewer", "viewer")
+    yield context
+    context.close()
+
+
+@pytest.fixture(scope="function")
+def non_admin_authenticated_page(
+    non_admin_authenticated_context: BrowserContext,
+) -> Generator[Page, None, None]:
+    """Create a page with non-admin (viewer) session."""
+    page = non_admin_authenticated_context.new_page()
     yield page
     page.close()
 
