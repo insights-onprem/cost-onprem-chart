@@ -1,0 +1,216 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "cost-onprem.rbac.migration.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-onprem.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac-migration
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        {{- include "cost-onprem.labels" . | nindent 8 }}
+        app.kubernetes.io/component: rbac-migration
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+
+      securityContext:
+        {{- include "cost-onprem.securityContext.pod" . | nindent 8 }}
+
+      containers:
+      - name: migrate
+        image: "{{ include "cost-onprem.rbac.image" . }}"
+        imagePullPolicy: {{ .Values.rbac.image.pullPolicy }}
+        workingDir: /opt/rbac/rbac
+
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -e
+
+            DB_HOST="{{ include "cost-onprem.rbac.database.host" . }}"
+            DB_PORT="{{ .Values.database.server.port | default "5432" }}"
+            MAX_WAIT=300
+            ELAPSED=0
+
+            echo "=== insights-rbac migration job ==="
+
+            echo "Waiting for PostgreSQL at ${DB_HOST}:${DB_PORT}..."
+            while ! timeout 5 bash -c "cat < /dev/null > /dev/tcp/${DB_HOST}/${DB_PORT}" 2>/dev/null; do
+              if [ $ELAPSED -ge $MAX_WAIT ]; then
+                echo "ERROR: PostgreSQL not ready after ${MAX_WAIT} seconds"
+                exit 1
+              fi
+              echo "PostgreSQL not ready (${ELAPSED}s elapsed), waiting..."
+              sleep 5
+              ELAPSED=$((ELAPSED + 5))
+            done
+            echo "✓ PostgreSQL is ready (waited ${ELAPSED}s)"
+
+            echo "Running Django migrations..."
+            python manage.py migrate --noinput
+            echo "✓ Migrations complete"
+
+            echo "Seeding permissions, roles, and groups..."
+            python manage.py seeds --skip-notifications
+            echo "✓ Built-in seeding complete"
+
+            echo "Seeding cost-management permissions and roles (from RedHatInsights/rbac-config)..."
+            python manage.py shell <<'SEED_SCRIPT'
+            import json
+            from api.models import Tenant
+            from management.models import Permission, Role, Access
+
+            public_tenant = Tenant.objects.get(tenant_name='public')
+
+            cm_perms = [
+                ("aws.account", "*"), ("aws.account", "read"),
+                ("aws.organizational_unit", "*"), ("aws.organizational_unit", "read"),
+                ("azure.subscription_guid", "*"), ("azure.subscription_guid", "read"),
+                ("gcp.account", "*"), ("gcp.account", "read"),
+                ("gcp.project", "*"), ("gcp.project", "read"),
+                ("openshift.cluster", "*"), ("openshift.cluster", "read"),
+                ("openshift.node", "*"), ("openshift.node", "read"),
+                ("openshift.project", "*"), ("openshift.project", "read"),
+                ("cost_model", "*"), ("cost_model", "read"), ("cost_model", "write"),
+                ("settings", "*"), ("settings", "read"), ("settings", "write"),
+                ("*", "*"),
+            ]
+
+            perm_count = 0
+            for res, verb in cm_perms:
+                _, created = Permission.objects.get_or_create(
+                    application="cost-management", resource_type=res, verb=verb,
+                    defaults={"permission": f"cost-management:{res}:{verb}", "tenant": public_tenant}
+                )
+                if created:
+                    perm_count += 1
+
+            # Sources permission (from RedHatInsights/rbac-config configs/prod/roles/sources.json)
+            _, created = Permission.objects.get_or_create(
+                application="sources", resource_type="*", verb="*",
+                defaults={"permission": "sources:*:*", "tenant": public_tenant}
+            )
+            if created:
+                perm_count += 1
+            print(f"Seeded {perm_count} permissions")
+
+            # cost-management roles (application, admin_default, platform_default, access as app:res:verb)
+            roles = [
+                ("Cost Administrator", "Perform any available operation on cost management resources.", True, False, [("cost-management", "*", "*")]),
+                ("Cost Price List Administrator", "Perform read and write operations on cost models.", False, False, [("cost-management", "cost_model", "*"), ("cost-management", "settings", "*")]),
+                ("Cost Price List Viewer", "Perform read operations on cost models.", False, False, [("cost-management", "cost_model", "read"), ("cost-management", "settings", "read")]),
+                ("Cost Cloud Viewer", "Perform read operations on cost reports related to cloud sources.", False, False, [("cost-management", "aws.account", "*"), ("cost-management", "aws.organizational_unit", "*"), ("cost-management", "azure.subscription_guid", "*"), ("cost-management", "gcp.account", "*"), ("cost-management", "gcp.project", "*")]),
+                ("Cost OpenShift Viewer", "Perform read operations on cost reports related to OpenShift sources.", False, False, [("cost-management", "openshift.cluster", "*")]),
+                ("Sources administrator", "Perform any available operation on any source.", True, False, [("sources", "*", "*")]),
+            ]
+
+            role_count = 0
+            for name, desc, admin_default, platform_default, access_list in roles:
+                role, created = Role.objects.get_or_create(
+                    name=name, tenant=public_tenant,
+                    defaults={"description": desc, "system": True, "platform_default": platform_default, "admin_default": admin_default, "version": 2}
+                )
+                if created:
+                    role_count += 1
+                for app, res, verb in access_list:
+                    perm = Permission.objects.get(application=app, resource_type=res, verb=verb, tenant=public_tenant)
+                    Access.objects.get_or_create(role=role, permission=perm, defaults={"tenant": public_tenant})
+
+            print(f"Seeded {role_count} roles (total: {Role.objects.count()})")
+            print("RBAC seeding complete.")
+            SEED_SCRIPT
+            echo "✓ Cost-management seeding complete"
+
+            echo "Creating admin_default group for org tenants..."
+            python manage.py shell <<'ADMIN_DEFAULT_SCRIPT'
+            from api.models import Tenant
+            from management.models import Group, Policy, Role
+
+            public_tenant = Tenant.objects.get(tenant_name='public')
+            admin_default_roles = Role.objects.filter(
+                admin_default=True, tenant=public_tenant
+            )
+            if not admin_default_roles.exists():
+                print("WARNING: No admin_default roles found, skipping admin_default group")
+            else:
+                user_tenants = Tenant.objects.exclude(tenant_name='public').filter(org_id__isnull=False)
+                count = 0
+                for tenant in user_tenants:
+                    grp, _ = Group.objects.get_or_create(
+                        name='Cost Admin Default', tenant=tenant,
+                        defaults={'admin_default': True, 'system': True,
+                                  'description': 'Admin default: grants admin_default roles to is_org_admin users'}
+                    )
+                    grp.admin_default = True
+                    grp.save()
+                    policy, _ = Policy.objects.get_or_create(
+                        name='Cost Admin Default Policy', tenant=tenant, group=grp
+                    )
+                    for role in admin_default_roles:
+                        policy.roles.add(role)
+                    count += 1
+                role_names = list(admin_default_roles.values_list('name', flat=True))
+                print(f"Created/updated admin_default group for {count} tenant(s) with roles: {role_names}")
+            ADMIN_DEFAULT_SCRIPT
+            echo "✓ Admin default group seeding complete"
+
+            echo "Bootstrapping tenant mappings for all existing tenants..."
+            set +e
+            python manage.py bootstrap_tenants --all -v 2
+            bootstrap_rc=$?
+            set -e
+            if [ $bootstrap_rc -ne 0 ]; then
+              echo "WARNING: bootstrap_tenants exited with code $bootstrap_rc (non-fatal, continuing to cleanup)"
+            fi
+            echo "✓ Tenant bootstrap complete"
+
+            echo "Removing cost-management access from platform_default groups..."
+            python manage.py shell <<'CLEANUP_DEFAULTS'
+            from management.models import Group, Policy, Role, Access
+            from api.models import Tenant
+            from django.db.models import Q
+
+            removed = 0
+            for group in Group.objects.filter(platform_default=True):
+                for policy in Policy.objects.filter(group=group):
+                    for role in policy.roles.all():
+                        has_cm_access = Access.objects.filter(
+                            role=role,
+                            permission__application='cost-management',
+                        ).exists()
+                        if has_cm_access:
+                            policy.roles.remove(role)
+                            removed += 1
+            print(f"Removed {removed} role(s) with cost-management or wildcard access from platform_default groups")
+            CLEANUP_DEFAULTS
+            echo "✓ Platform default cleanup complete"
+
+            echo "=== insights-rbac migration job completed ==="
+
+        env:
+        {{- include "cost-onprem.rbac.commonEnv" . | nindent 8 }}
+        - name: PERMISSION_SEEDING_ENABLED
+          value: "True"
+        - name: ROLE_SEEDING_ENABLED
+          value: "True"
+        - name: GROUP_SEEDING_ENABLED
+          value: "True"
+
+        securityContext:
+          {{- include "cost-onprem.securityContext.container" . | nindent 10 }}
+
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi

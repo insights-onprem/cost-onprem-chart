@@ -320,7 +320,7 @@ KEYCLOAK_CLIENT_SECRET=$(kubectl get secret "$KEYCLOAK_SECRET_NAME" -n "$KEYCLOA
 KEYCLOAK_HOST=$(kubectl get route keycloak -n keycloak -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
 OAUTH_URL="https://${KEYCLOAK_HOST}/realms/kubernetes/protocol/openid-connect"
 
-# Get org_id from Keycloak test user (or use default)
+# Get org_id from Keycloak admin user (or use default)
 ORG_ID="org1234567"  # Default value
 if [ -n "$KEYCLOAK_HOST" ]; then
     # Get admin credentials
@@ -336,14 +336,102 @@ if [ -n "$KEYCLOAK_HOST" ]; then
             -d "password=${KEYCLOAK_ADMIN_PASS}" 2>/dev/null | jq -r '.access_token // empty')
         
         if [ -n "$ADMIN_TOKEN" ]; then
-            # Get test user's org_id
-            USER_ORG_ID=$(curl -sk "https://${KEYCLOAK_HOST}/admin/realms/kubernetes/users?username=test&exact=true" \
+            # Query the "admin" user created by deploy-rhbk.sh (not "test")
+            USER_ORG_ID=$(curl -sk "https://${KEYCLOAK_HOST}/admin/realms/kubernetes/users?username=admin&exact=true" \
                 -H "Authorization: Bearer ${ADMIN_TOKEN}" 2>/dev/null | jq -r '.[0].attributes.org_id[0] // empty')
             if [ -n "$USER_ORG_ID" ]; then
                 ORG_ID="$USER_ORG_ID"
             fi
         fi
     fi
+fi
+
+# Ensure the IQE public Keycloak client exists (created via admin API, not realm import).
+# IQE's iqe_jwt OIDCAuth.from_basic() does not send client_secret, so password-grant
+# requires a public client.
+ensure_iqe_keycloak_client() {
+    local kc_host="$1"
+    local token="$2"
+    local realm="${REALM_NAME:-kubernetes}"
+    local client_id="cost-management-iqe"
+    local ui_client_id="${COST_MGMT_UI_CLIENT_ID:-cost-management-ui}"
+
+    # Check if client already exists
+    local existing
+    existing=$(curl -sk "https://${kc_host}/admin/realms/${realm}/clients?clientId=${client_id}" \
+        -H "Authorization: Bearer ${token}" 2>/dev/null | jq -r '.[0].id // empty')
+    if [ -n "$existing" ]; then
+        echo "✓ IQE Keycloak client '${client_id}' already exists (id: ${existing})"
+        return 0
+    fi
+
+    echo "Creating IQE public Keycloak client '${client_id}'..."
+    local http_code
+    http_code=$(curl -sk -o /dev/null -w "%{http_code}" -X POST \
+        "https://${kc_host}/admin/realms/${realm}/clients" \
+        -H "Authorization: Bearer ${token}" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "clientId": "'"${client_id}"'",
+            "name": "Cost Management IQE Test Client",
+            "description": "Public client for IQE password-grant authentication",
+            "enabled": true,
+            "serviceAccountsEnabled": false,
+            "standardFlowEnabled": false,
+            "directAccessGrantsEnabled": true,
+            "implicitFlowEnabled": false,
+            "publicClient": true,
+            "protocol": "openid-connect",
+            "defaultClientScopes": ["openid", "api.console", "profile", "email"],
+            "protocolMappers": [
+                {
+                    "name": "aud-mapper-cost-management-ui",
+                    "protocol": "openid-connect",
+                    "protocolMapper": "oidc-audience-mapper",
+                    "config": {
+                        "included.client.audience": "'"${ui_client_id}"'",
+                        "id.token.claim": "true",
+                        "access.token.claim": "true"
+                    }
+                },
+                {
+                    "name": "org-id-mapper",
+                    "protocol": "openid-connect",
+                    "protocolMapper": "oidc-usermodel-attribute-mapper",
+                    "config": {
+                        "user.attribute": "org_id",
+                        "claim.name": "org_id",
+                        "access.token.claim": "true",
+                        "id.token.claim": "true",
+                        "jsonType.label": "String",
+                        "userinfo.token.claim": "false"
+                    }
+                },
+                {
+                    "name": "account-number-mapper",
+                    "protocol": "openid-connect",
+                    "protocolMapper": "oidc-usermodel-attribute-mapper",
+                    "config": {
+                        "user.attribute": "account_number",
+                        "claim.name": "account_number",
+                        "access.token.claim": "true",
+                        "id.token.claim": "true",
+                        "jsonType.label": "String",
+                        "userinfo.token.claim": "false"
+                    }
+                }
+            ]
+        }' 2>/dev/null)
+
+    if [ "$http_code" = "201" ]; then
+        echo "✓ IQE Keycloak client '${client_id}' created"
+    else
+        echo "WARNING: Failed to create IQE client (HTTP ${http_code}). IQE password-grant tests may fail."
+    fi
+}
+
+if [ -n "${ADMIN_TOKEN:-}" ] && [ -n "${KEYCLOAK_HOST:-}" ]; then
+    ensure_iqe_keycloak_client "$KEYCLOAK_HOST" "$ADMIN_TOKEN"
 fi
 
 # Get Koku API route hostname (external access)
@@ -372,7 +460,7 @@ if [ -z "$KOKU_HOSTNAME" ]; then
 fi
 
 if [ -z "$KEYCLOAK_CLIENT_SECRET" ]; then
-    echo "WARNING: Could not extract Keycloak client secret. Authentication may fail."
+    echo "WARNING: Could not extract Keycloak operator client secret. Authentication may fail."
 fi
 
 # Check if cluster has pull secret for the IQE image registry
@@ -724,9 +812,9 @@ spec:
     - name: DYNACONF_DEFAULT_USER
       value: "cost_onprem_user"
     - name: DYNACONF_users__cost_onprem_user__auth__username
-      value: "test"
+      value: "admin"
     - name: DYNACONF_users__cost_onprem_user__auth__password
-      value: "test"
+      value: "admin"
     - name: DYNACONF_users__cost_onprem_user__auth__jwt_grant_type
       value: "client_credentials"
     - name: DYNACONF_users__cost_onprem_user__auth__client_id
