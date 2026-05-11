@@ -38,7 +38,7 @@ jobs:
         run: |
           set +e
           IMPACT_MAP=/nonexistent ./scripts/qe/recommend-tests.sh 2>&1 | tee output.txt
-          EXIT_CODE=$?
+          EXIT_CODE=${PIPESTATUS[0]}
           set -e
           
           if [ $EXIT_CODE -eq 0 ]; then
@@ -109,7 +109,7 @@ jobs:
           
           set +e
           IMPACT_MAP=/tmp/test-maps/invalid.yaml ./scripts/qe/recommend-tests.sh 2>&1 | tee output.txt
-          EXIT_CODE=$?
+          EXIT_CODE=${PIPESTATUS[0]}
           set -e
           
           if [ $EXIT_CODE -eq 0 ]; then
@@ -165,7 +165,7 @@ jobs:
         run: |
           set +e
           MODE=invalid-mode ./scripts/qe/check-components.sh 2>&1 | tee output.txt
-          EXIT_CODE=$?
+          EXIT_CODE=${PIPESTATUS[0]}
           set -e
           
           if [ $EXIT_CODE -eq 0 ]; then
@@ -185,7 +185,7 @@ jobs:
         run: |
           set +e
           VALUES_FILE=/nonexistent MODE=list-versions ./scripts/qe/check-components.sh 2>&1 | tee output.txt
-          EXIT_CODE=$?
+          EXIT_CODE=${PIPESTATUS[0]}
           set -e
           
           if [ $EXIT_CODE -eq 0 ]; then
@@ -232,7 +232,7 @@ jobs:
           # Test missing PR_NUMBER
           set +e
           ./scripts/qe/post-test-advisor-comment.sh 2>&1 | tee output.txt
-          EXIT_CODE=$?
+          EXIT_CODE=${PIPESTATUS[0]}
           set -e
           
           if [ $EXIT_CODE -eq 0 ]; then
@@ -252,7 +252,7 @@ jobs:
         run: |
           set +e
           PR_NUMBER=123 ./scripts/qe/post-test-advisor-comment.sh 2>&1 | tee output.txt
-          EXIT_CODE=$?
+          EXIT_CODE=${PIPESTATUS[0]}
           set -e
           
           if [ $EXIT_CODE -eq 0 ]; then
