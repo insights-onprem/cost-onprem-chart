@@ -148,6 +148,51 @@ RBAC service port (always 8000 — internal only, not user-configurable).
 {{- end -}}
 
 {{/*
+Resolve the bootstrap admin identity from jwtAuth.realmUsers.
+Finds the first entry with orgAdmin=true and returns username, orgId,
+accountNumber. Falls back to rbac.bootstrapAdmin values if realmUsers
+is empty or has no orgAdmin entry.
+*/}}
+{{- define "cost-onprem.rbac.bootstrapAdmin.username" -}}
+{{- $found := false -}}
+{{- range .Values.jwtAuth.realmUsers -}}
+  {{- if and (not $found) .orgAdmin -}}
+    {{- $found = true -}}
+    {{- .username -}}
+  {{- end -}}
+{{- end -}}
+{{- if not $found -}}
+  {{- .Values.rbac.bootstrapAdmin.username | default "admin" -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "cost-onprem.rbac.bootstrapAdmin.orgId" -}}
+{{- $found := false -}}
+{{- range .Values.jwtAuth.realmUsers -}}
+  {{- if and (not $found) .orgAdmin -}}
+    {{- $found = true -}}
+    {{- .orgId -}}
+  {{- end -}}
+{{- end -}}
+{{- if not $found -}}
+  {{- .Values.rbac.bootstrapAdmin.orgId | default "org1234567" -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "cost-onprem.rbac.bootstrapAdmin.accountNumber" -}}
+{{- $found := false -}}
+{{- range .Values.jwtAuth.realmUsers -}}
+  {{- if and (not $found) .orgAdmin -}}
+    {{- $found = true -}}
+    {{- .accountNumber -}}
+  {{- end -}}
+{{- end -}}
+{{- if not $found -}}
+  {{- .Values.rbac.bootstrapAdmin.accountNumber | default "7890123" -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 RBAC database secret name. Reuses the main DB credentials secret
 with RBAC-specific keys, or a dedicated secret.
 */}}

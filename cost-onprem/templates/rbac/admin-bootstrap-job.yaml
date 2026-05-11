@@ -41,9 +41,9 @@ spec:
             MAX_WAIT=300
             ELAPSED=0
 
-            BOOTSTRAP_USERNAME="{{ .Values.rbac.bootstrapAdmin.username }}"
-            BOOTSTRAP_ORG_ID="{{ .Values.rbac.bootstrapAdmin.orgId }}"
-            BOOTSTRAP_ACCOUNT_NUMBER="{{ .Values.rbac.bootstrapAdmin.accountNumber }}"
+            BOOTSTRAP_USERNAME="{{ include "cost-onprem.rbac.bootstrapAdmin.username" . }}"
+            BOOTSTRAP_ORG_ID="{{ include "cost-onprem.rbac.bootstrapAdmin.orgId" . }}"
+            BOOTSTRAP_ACCOUNT_NUMBER="{{ include "cost-onprem.rbac.bootstrapAdmin.accountNumber" . }}"
 
             echo "=== insights-rbac admin bootstrap job ==="
             echo "Username: ${BOOTSTRAP_USERNAME}"

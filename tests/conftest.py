@@ -43,6 +43,11 @@ pytest_plugins = ["suites.cost_management.conftest", "suites.sources.conftest"]
 # Disable SSL warnings for self-signed certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# Fallback identity values when Keycloak is unreachable.
+# Canonical source: jwtAuth.realmUsers in cost-onprem/values.yaml.
+_DEFAULT_ORG_ID = "org1234567"
+_DEFAULT_ACCOUNT_NUMBER = "7890123"
+
 
 # =============================================================================
 # Data Classes
@@ -719,7 +724,7 @@ def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> st
         ], check=False)
         
         if not admin_pass_result.stdout.strip():
-            return "org1234567"
+            return _DEFAULT_ORG_ID
         
         admin_password = base64.b64decode(admin_pass_result.stdout.strip()).decode("utf-8")
         
@@ -737,7 +742,7 @@ def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> st
         )
         
         if token_response.status_code != 200:
-            return "org1234567"
+            return _DEFAULT_ORG_ID
         
         admin_token = token_response.json().get("access_token")
         
@@ -757,9 +762,9 @@ def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> st
                 if org_id_value:
                     return org_id_value
         
-        return "org1234567"
+        return _DEFAULT_ORG_ID
     except Exception:
-        return "org1234567"
+        return _DEFAULT_ORG_ID
 
 
 # =============================================================================
@@ -832,8 +837,8 @@ def _rbac_bootstrap(cluster_config: ClusterConfig, keycloak_config: KeycloakConf
         return
 
     # Resolve org_id from the token claims or fall back to default
-    org_id_value = claims.get("org_id") or "org1234567"
-    acct_number = claims.get("account_number") or "1234567"
+    org_id_value = claims.get("org_id") or _DEFAULT_ORG_ID
+    acct_number = claims.get("account_number") or _DEFAULT_ACCOUNT_NUMBER
 
     bootstrap_script = render_bootstrap_script(sa_usernames, org_id_value, acct_number)
 

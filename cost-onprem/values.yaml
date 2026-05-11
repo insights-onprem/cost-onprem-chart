@@ -681,16 +681,15 @@ rbac:
         memory: 2Gi
 
   # Bootstrap an initial admin user with Cost Administrator permissions.
-  # Enable after creating the corresponding user in Keycloak with matching
-  # org_id and account_number attributes (e.g. via deploy-rhbk.sh).
   # A post-install/post-upgrade hook Job creates the RBAC Tenant, Principal,
   # Group, and Policy so the user can access the API immediately.
   # All operations are idempotent (safe to leave enabled across upgrades).
+  #
+  # The bootstrap user identity (username, orgId, accountNumber) is derived
+  # from the first orgAdmin:true entry in jwtAuth.realmUsers — no need to
+  # duplicate credentials here. Enable this toggle after running deploy-rhbk.sh.
   bootstrapAdmin:
     enabled: false
-    username: "admin"
-    orgId: "org1234567"
-    accountNumber: "7890123"
 
 # -----------------------------------------------------------------------------
 # Shared Infrastructure - Kafka

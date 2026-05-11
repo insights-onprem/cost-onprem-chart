@@ -16,25 +16,61 @@
 set -euo pipefail
 
 NAMESPACE="${NAMESPACE:-cost-onprem}"
-USERNAME="admin"
-ORG_ID="org1234567"
-ACCOUNT_NUMBER="7890123"
+VALUES_FILE=""
+USERNAME=""
+ORG_ID=""
+ACCOUNT_NUMBER=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
+    -f|--values) VALUES_FILE="$2"; shift 2 ;;
     --username) USERNAME="$2"; shift 2 ;;
     --org-id) ORG_ID="$2"; shift 2 ;;
     --account-number) ACCOUNT_NUMBER="$2"; shift 2 ;;
     --namespace) NAMESPACE="$2"; shift 2 ;;
     -h|--help)
-      echo "Usage: $0 [--username USER] [--org-id ORG] [--account-number ACCT] [--namespace NS]"
+      echo "Usage: $0 [-f <values.yaml>] [--username USER] [--org-id ORG] [--account-number ACCT] [--namespace NS]"
       echo ""
-      echo "Defaults: username=admin, org-id=org1234567, account-number=7890123, namespace=cost-onprem"
+      echo "When -f is provided, the admin identity is read from the first orgAdmin:true"
+      echo "entry in jwtAuth.realmUsers. CLI flags override values-file fields."
+      echo ""
+      echo "Without -f, defaults to: username=admin, org-id=org1234567, account-number=7890123"
       exit 0
       ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
+
+# Read admin identity from values file if provided
+if [ -n "$VALUES_FILE" ] && [ -f "$VALUES_FILE" ]; then
+  admin_json=$(python3 -c "
+import sys, json
+try:
+    import yaml
+except ImportError:
+    print('ERROR: pip3 install pyyaml is required when using -f', file=sys.stderr)
+    sys.exit(1)
+with open(sys.argv[1]) as f:
+    vals = yaml.safe_load(f)
+users = vals.get('jwtAuth', {}).get('realmUsers', [])
+admin = next((u for u in users if u.get('orgAdmin')), None)
+if admin:
+    json.dump(admin, sys.stdout)
+else:
+    sys.exit(1)
+" "$VALUES_FILE" 2>/dev/null) && {
+    USERNAME="${USERNAME:-$(echo "$admin_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('username','admin'))")}"
+    ORG_ID="${ORG_ID:-$(echo "$admin_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('orgId','org1234567'))")}"
+    ACCOUNT_NUMBER="${ACCOUNT_NUMBER:-$(echo "$admin_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('accountNumber','7890123'))")}"
+  } || echo "WARNING: Could not parse admin from $VALUES_FILE, using defaults"
+elif [ -n "$VALUES_FILE" ]; then
+  echo "ERROR: Values file not found: $VALUES_FILE"
+  exit 1
+fi
+
+USERNAME="${USERNAME:-admin}"
+ORG_ID="${ORG_ID:-org1234567}"
+ACCOUNT_NUMBER="${ACCOUNT_NUMBER:-7890123}"
 
 echo "=== RBAC Admin User Sync ==="
 echo "Namespace:      ${NAMESPACE}"
