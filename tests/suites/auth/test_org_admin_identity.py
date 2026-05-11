@@ -62,8 +62,8 @@ class TestOrgAdminIdentityPropagation:
         is_org_admin=true.
         """
         permissions = self._get_permissions(rbac_access_url, admin_jwt)
-        assert any("cost-management" in p for p in permissions), (
-            f"Admin should have cost-management permissions, got: {permissions}"
+        assert "cost-management:*:*" in permissions, (
+            f"Admin should have cost-management:*:* via admin_default, got: {permissions}"
         )
 
     def test_non_admin_lacks_cost_management_access(
