@@ -10,6 +10,11 @@
 #   LOG_LEVEL - Control output verbosity (ERROR|WARN|INFO|DEBUG, default: WARN)
 #   RHBK_NAMESPACE - Target namespace for operator, Keycloak, and DB (default: keycloak)
 #
+# TLS Note: This script uses curl -sk (skip TLS verification) because test/dev
+# environments typically use self-signed certificates. For FedRAMP or production
+# environments requiring SC-8 compliance, configure a trusted CA bundle and
+# replace -sk with --cacert /path/to/ca-bundle.crt.
+#
 # Keycloak database image (embedded in deploy_postgresql):
 #   registry.redhat.io/rhel10/postgresql-16:10.1
 #
@@ -1302,6 +1307,7 @@ import sys, json
 try:
     import yaml
 except ImportError:
+    print('ERROR: PyYAML is required to parse values files. Install with: pip3 install pyyaml', file=sys.stderr)
     sys.exit(1)
 with open(sys.argv[1]) as f:
     vals = yaml.safe_load(f)
@@ -1309,11 +1315,16 @@ users = vals.get('jwtAuth', {}).get('realmUsers', [])
 json.dump(users, sys.stdout)
 " "$VALUES_FILE" 2>/dev/null)
 
-        if [ $? -eq 0 ] && [ -n "$users_json" ] && [ "$users_json" != "[]" ]; then
+        local parse_rc=$?
+        if [ $parse_rc -ne 0 ]; then
+            echo_error "Failed to parse $VALUES_FILE (exit code $parse_rc). Ensure python3 and PyYAML are installed."
+            return 1
+        fi
+        if [ -n "$users_json" ] && [ "$users_json" != "[]" ]; then
             echo "$users_json"
             return 0
         fi
-        echo_warning "Could not parse realmUsers from $VALUES_FILE, using defaults"
+        echo_warning "No realmUsers found in $VALUES_FILE, using defaults"
     fi
 
     # Default: single admin user matching historical behavior
@@ -1397,23 +1408,36 @@ create_or_update_user() {
         echo_warning "Could not set password for user '$username'"
     fi
 
-    # Assign org-admin realm role if orgAdmin=true
+    # Manage org-admin realm role assignment based on orgAdmin flag.
+    # This ensures the declared state in realmUsers is enforced on every run.
     local is_org_admin=$(echo "$user_json" | jq -r '.orgAdmin // false')
-    if [ "$is_org_admin" = "true" ]; then
-        # Look up the org-admin role ID
-        local role_json=$(curl -sk -X GET "$keycloak_url/admin/realms/$REALM_NAME/roles/org-admin" \
-            -H "Authorization: Bearer $access_token" 2>/dev/null)
-        local role_id=$(echo "$role_json" | jq -r '.id // empty')
+    local role_json=$(curl -sk -X GET "$keycloak_url/admin/realms/$REALM_NAME/roles/org-admin" \
+        -H "Authorization: Bearer $access_token" 2>/dev/null)
+    local role_id=$(echo "$role_json" | jq -r '.id // empty')
 
-        if [ -n "$role_id" ]; then
-            curl -sk -X POST "$keycloak_url/admin/realms/$REALM_NAME/users/$USER_ID/role-mappings/realm" \
-                -H "Authorization: Bearer $access_token" \
-                -H "Content-Type: application/json" \
-                -d "[$(echo "$role_json" | jq '{id:.id, name:.name}')]" 2>/dev/null
-            echo_success "✓ Assigned 'org-admin' realm role to '$username'"
-        else
-            echo_warning "Could not find 'org-admin' realm role — ensure realm import includes it"
-        fi
+    if [ -z "$role_id" ]; then
+        echo_warning "Could not find 'org-admin' realm role — ensure realm import includes it"
+        return 0
+    fi
+
+    local role_payload="[$(echo "$role_json" | jq '{id:.id, name:.name}')]"
+    local audit_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    if [ "$is_org_admin" = "true" ]; then
+        curl -sk -X POST "$keycloak_url/admin/realms/$REALM_NAME/users/$USER_ID/role-mappings/realm" \
+            -H "Authorization: Bearer $access_token" \
+            -H "Content-Type: application/json" \
+            -d "$role_payload" 2>/dev/null
+        echo_success "✓ Assigned 'org-admin' realm role to '$username'"
+        echo "[AUDIT] $audit_ts action=assign_role user=$username role=org-admin realm=$REALM_NAME actor=deploy-rhbk.sh"
+    else
+        # Remove org-admin role if previously assigned (Day 2: orgAdmin changed to false)
+        curl -sk -X DELETE "$keycloak_url/admin/realms/$REALM_NAME/users/$USER_ID/role-mappings/realm" \
+            -H "Authorization: Bearer $access_token" \
+            -H "Content-Type: application/json" \
+            -d "$role_payload" 2>/dev/null
+        echo_info "Ensured '$username' does not have 'org-admin' realm role"
+        echo "[AUDIT] $audit_ts action=remove_role user=$username role=org-admin realm=$REALM_NAME actor=deploy-rhbk.sh"
     fi
 
     return 0
@@ -1439,15 +1463,20 @@ create_realm_users() {
         return 1
     fi
 
-    echo_info "Obtaining admin access token..."
-    local TOKEN_RESPONSE=$(curl -sk -X POST "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
-        -H "Content-Type: application/x-www-form-urlencoded" \
-        -d "username=$ADMIN_USERNAME" \
-        -d "password=$ADMIN_PASSWORD" \
-        -d "grant_type=password" \
-        -d "client_id=admin-cli" 2>/dev/null)
+    # Acquire a short-lived admin token. Keycloak master-realm tokens default
+    # to 60s, so we re-acquire before each user to avoid mid-loop expiry.
+    _obtain_admin_token() {
+        curl -sk -X POST "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "username=$ADMIN_USERNAME" \
+            -d "password=$ADMIN_PASSWORD" \
+            -d "grant_type=password" \
+            -d "client_id=admin-cli" 2>/dev/null | jq -r '.access_token // empty'
+    }
 
-    local ACCESS_TOKEN=$(safe_jq '.access_token // empty' "$TOKEN_RESPONSE")
+    echo_info "Obtaining admin access token..."
+    local ACCESS_TOKEN
+    ACCESS_TOKEN=$(_obtain_admin_token)
 
     if [ -z "$ACCESS_TOKEN" ]; then
         echo_warning "Could not obtain admin token, skipping realm user creation"
@@ -1457,6 +1486,9 @@ create_realm_users() {
 
     local USERS_JSON
     USERS_JSON=$(get_realm_users_json)
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
     local user_count=$(echo "$USERS_JSON" | jq 'length')
 
     echo_info "Provisioning $user_count realm user(s)..."
@@ -1468,6 +1500,12 @@ create_realm_users() {
 
     local i=0
     while [ $i -lt "$user_count" ]; do
+        # Re-acquire token before each user to guard against TTL expiry
+        ACCESS_TOKEN=$(_obtain_admin_token)
+        if [ -z "$ACCESS_TOKEN" ]; then
+            echo_error "Admin token expired and could not be renewed"
+            return 1
+        fi
         local user_obj=$(echo "$USERS_JSON" | jq ".[$i]")
         create_or_update_user "$KEYCLOAK_URL" "$ACCESS_TOKEN" "$user_obj"
         i=$((i + 1))

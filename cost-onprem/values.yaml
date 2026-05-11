@@ -844,6 +844,10 @@ jwtAuth:
   # Keycloak realm users provisioned by deploy-rhbk.sh -f <this-file>.
   # Each entry defines a user in the Keycloak realm with Cost Management attributes.
   #
+  # WARNING: Change default passwords before deploying to production.
+  # These are initial development/test defaults only. FedRAMP and production
+  # environments require passwords that meet organizational complexity policy.
+  #
   # orgAdmin: true assigns the Keycloak "org-admin" realm role to the user.
   # The Envoy gateway reads this role from the JWT (realm_access.roles) and sets
   # is_org_admin=true in X-Rh-Identity, triggering insights-rbac's admin_default
