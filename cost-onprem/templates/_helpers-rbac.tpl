@@ -115,6 +115,9 @@ Provides DB, Redis, and application configuration for non-Clowder mode.
   value: "00000000-0000-4000-a000-000000000004"
 - name: CLOWDER_ENABLED
   value: "false"
+  {{/* On-prem has no Back Office Proxy (BOP/mbop); bypass its identity
+       verification so RBAC accepts the X-Rh-Identity header directly from
+       Envoy. Required for on-prem; SaaS uses BOP for this check. */}}
 - name: BYPASS_BOP_VERIFICATION
   value: "True"
 - name: KAFKA_ENABLED
