@@ -7,6 +7,7 @@ Migrated from scripts/test-ui-oauth-flow.sh
 
 import base64
 import json
+import re
 
 import pytest
 import requests
@@ -94,10 +95,10 @@ class TestUIOAuthFlow:
             pytest.skip("Could not get oauth-proxy logs")
         
         logs = result.stdout.lower()
-        tls_errors = ["tls.*error", "certificate.*error", "x509"]
+        tls_errors = [r"tls.*error", r"certificate.*error", r"x509"]
         
         for pattern in tls_errors:
-            if pattern in logs:
+            if re.search(pattern, logs):
                 pytest.fail(f"TLS error found in oauth-proxy logs: {pattern}")
 
     def test_password_grant_token_acquisition(
