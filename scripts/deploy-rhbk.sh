@@ -93,7 +93,6 @@ log_header() {
         echo ""
     }
     return 0
-    return 0
 }
 
 # Backward compatibility aliases
@@ -1358,14 +1357,16 @@ create_or_update_user() {
           firstName:$fn, lastName:$ln,
           attributes:{org_id:[$org], account_number:[$acct]}}')
 
-    local USER_HTTP_CODE=$(curl -sk -o /tmp/user_response.txt -w "%{http_code}" \
+    local tmp_response
+    tmp_response=$(mktemp "${TMPDIR:-/tmp}/rhbk-user-XXXXXX")
+    local USER_HTTP_CODE=$(curl -sk -o "$tmp_response" -w "%{http_code}" \
         -X POST "$keycloak_url/admin/realms/$REALM_NAME/users" \
         -H "Authorization: Bearer $access_token" \
         -H "Content-Type: application/json" \
         -d "$create_payload" 2>/dev/null)
 
-    local USER_RESPONSE=$(cat /tmp/user_response.txt 2>/dev/null || echo "")
-    rm -f /tmp/user_response.txt
+    local USER_RESPONSE=$(cat "$tmp_response" 2>/dev/null || echo "")
+    rm -f "$tmp_response"
 
     local USER_ID=""
     if [ "$USER_HTTP_CODE" = "409" ] || { echo "$USER_RESPONSE" | jq empty >/dev/null 2>&1 && echo "$USER_RESPONSE" | jq -e '.errorMessage // empty | test("already exists|Conflict"; "i")' >/dev/null 2>&1; }; then
@@ -1396,16 +1397,18 @@ create_or_update_user() {
         return 1
     fi
 
-    # Set password
-    curl -sk -X PUT "$keycloak_url/admin/realms/$REALM_NAME/users/$USER_ID/reset-password" \
+    # Set password (check HTTP status, not just curl exit code)
+    local pw_http_code
+    pw_http_code=$(curl -sk -o /dev/null -w "%{http_code}" \
+        -X PUT "$keycloak_url/admin/realms/$REALM_NAME/users/$USER_ID/reset-password" \
         -H "Authorization: Bearer $access_token" \
         -H "Content-Type: application/json" \
-        -d "$(jq -n --arg p "$password" '{type:"password",value:$p,temporary:false}')" 2>/dev/null
+        -d "$(jq -n --arg p "$password" '{type:"password",value:$p,temporary:false}')" 2>/dev/null)
 
-    if [ $? -eq 0 ]; then
+    if [ "$pw_http_code" = "204" ] || [ "$pw_http_code" = "200" ]; then
         echo_success "✓ Password set for user '$username'"
     else
-        echo_warning "Could not set password for user '$username'"
+        echo_warning "Could not set password for user '$username' (HTTP $pw_http_code)"
     fi
 
     # Manage org-admin realm role assignment based on orgAdmin flag.

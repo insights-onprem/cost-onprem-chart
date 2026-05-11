@@ -89,14 +89,16 @@ echo "RBAC pod: ${RBAC_POD}"
 
 echo "Creating Tenant, Principal, Group, and Policy..."
 kubectl exec -n "${NAMESPACE}" "${RBAC_POD}" -- \
+  env SYNC_USERNAME="${USERNAME}" SYNC_ORG_ID="${ORG_ID}" SYNC_ACCOUNT_NUMBER="${ACCOUNT_NUMBER}" \
   python /opt/rbac/rbac/manage.py shell -c "
+import os
 from api.models import Tenant
 from management.models import Group, Policy, Role, Principal
 from django.core.cache import cache
 
-username = \"${USERNAME}\"
-org_id = \"${ORG_ID}\"
-acct_number = \"${ACCOUNT_NUMBER}\"
+username = os.environ['SYNC_USERNAME']
+org_id = os.environ['SYNC_ORG_ID']
+acct_number = os.environ['SYNC_ACCOUNT_NUMBER']
 
 public_tenant = Tenant.objects.get(tenant_name='public')
 admin_default_roles = Role.objects.filter(admin_default=True, tenant=public_tenant)
