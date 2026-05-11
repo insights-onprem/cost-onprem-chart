@@ -97,6 +97,24 @@ echo_warning() { log_warning "$1"; }
 echo_error() { log_error "$1"; }
 echo_header() { log_header "$1"; }
 
+# Helper function to safely parse JSON with jq
+# Usage: safe_jq [jq_args...] 'filter' "$json_string"
+# The json_string should be the last argument
+safe_jq() {
+    # Get the last argument (JSON input)
+    local input="${@: -1}"
+    # Get all arguments except the last one (jq arguments and filter)
+    local jq_args=("${@:1:$(($#-1))}")
+
+    # Check if input is valid JSON first
+    if echo "$input" | jq empty >/dev/null 2>&1; then
+        echo "$input" | jq -r "${jq_args[@]}" 2>/dev/null
+    else
+        # Return empty for invalid JSON
+        echo ""
+    fi
+}
+
 # Read admin username and password from the keycloak-initial-admin secret.
 # RHBK operator may set the username to "temp-admin" instead of "admin".
 # Sets ADMIN_USERNAME and ADMIN_PASSWORD for the caller.
@@ -945,7 +963,7 @@ EOF
             -d "grant_type=password" \
             -d "client_id=admin-cli" 2>/dev/null)
 
-        local access_token=$(echo "$token_response" | jq -r '.access_token // empty')
+        local access_token=$(safe_jq '.access_token // empty' "$token_response")
 
         if [ -n "$access_token" ]; then
             # Try to get the clients we just created
@@ -956,14 +974,17 @@ EOF
             local operator_client_found=false
             local ui_client_found=false
 
-            if echo "$client_data" | jq -e --arg cid "$COST_MGMT_OPERATOR_CLIENT_ID" '.[] | select(.clientId == $cid)' >/dev/null 2>&1; then
-                echo_success "✓ Client '$COST_MGMT_OPERATOR_CLIENT_ID' is available via admin API"
-                operator_client_found=true
-            fi
+            # Check if client_data is valid JSON before parsing
+            if echo "$client_data" | jq empty >/dev/null 2>&1; then
+                if echo "$client_data" | jq -e --arg cid "$COST_MGMT_OPERATOR_CLIENT_ID" '.[] | select(.clientId == $cid)' >/dev/null 2>&1; then
+                    echo_success "✓ Client '$COST_MGMT_OPERATOR_CLIENT_ID' is available via admin API"
+                    operator_client_found=true
+                fi
 
-            if echo "$client_data" | jq -e --arg cid "$COST_MGMT_UI_CLIENT_ID" '.[] | select(.clientId == $cid)' >/dev/null 2>&1; then
-                echo_success "✓ Client '$COST_MGMT_UI_CLIENT_ID' is available via admin API"
-                ui_client_found=true
+                if echo "$client_data" | jq -e --arg cid "$COST_MGMT_UI_CLIENT_ID" '.[] | select(.clientId == $cid)' >/dev/null 2>&1; then
+                    echo_success "✓ Client '$COST_MGMT_UI_CLIENT_ID' is available via admin API"
+                    ui_client_found=true
+                fi
             fi
 
             if [ "$operator_client_found" = true ] && [ "$ui_client_found" = true ]; then
@@ -1097,7 +1118,7 @@ configure_admin_console() {
             -d "grant_type=password" \
             -d "client_id=admin-cli" 2>/dev/null)
 
-        local access_token=$(echo "$token_response" | jq -r '.access_token // empty')
+        local access_token=$(safe_jq '.access_token // empty' "$token_response")
 
         if [ -n "$access_token" ]; then
             echo_success "✓ Admin API is available"
@@ -1118,7 +1139,7 @@ configure_admin_console() {
     local clients_response=$(curl -sk "https://$KEYCLOAK_URL/admin/realms/master/clients" \
         -H "Authorization: Bearer $access_token" 2>/dev/null)
 
-    local client_uuid=$(echo "$clients_response" | jq -r '.[] | select(.clientId == "security-admin-console") | .id // empty')
+    local client_uuid=$(safe_jq '.[] | select(.clientId == "security-admin-console") | .id // empty' "$clients_response")
 
     if [ -z "$client_uuid" ]; then
         echo_error "Could not find security-admin-console client"
@@ -1191,7 +1212,7 @@ extract_client_secret() {
         -d "grant_type=password" \
         -d "client_id=admin-cli" 2>/dev/null)
 
-    local ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token // empty')
+    local ACCESS_TOKEN=$(safe_jq '.access_token // empty' "$TOKEN_RESPONSE")
 
     if [ -z "$ACCESS_TOKEN" ]; then
         echo_warning "Could not obtain admin token, skipping client secret extraction"
@@ -1212,7 +1233,7 @@ extract_client_secret() {
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" 2>/dev/null)
 
-        local CLIENT_UUID=$(echo "$CLIENT_DATA" | jq -r --arg cid "$client_id" '.[] | select(.clientId == $cid) | .id // empty')
+        local CLIENT_UUID=$(safe_jq --arg cid "$client_id" '.[] | select(.clientId == $cid) | .id // empty' "$CLIENT_DATA")
 
         if [ -z "$CLIENT_UUID" ]; then
             echo_warning "Could not find client '$client_id' in realm '$REALM_NAME'"
@@ -1227,7 +1248,7 @@ extract_client_secret() {
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" 2>/dev/null)
 
-        local CLIENT_SECRET=$(echo "$CLIENT_SECRET_RESPONSE" | jq -r '.value // empty')
+        local CLIENT_SECRET=$(safe_jq '.value // empty' "$CLIENT_SECRET_RESPONSE")
 
         if [ -z "$CLIENT_SECRET" ]; then
             echo_warning "Could not retrieve client secret for '$client_id'"
@@ -1293,7 +1314,7 @@ create_test_user() {
         -d "grant_type=password" \
         -d "client_id=admin-cli" 2>/dev/null)
 
-    local ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token // empty')
+    local ACCESS_TOKEN=$(safe_jq '.access_token // empty' "$TOKEN_RESPONSE")
 
     if [ -z "$ACCESS_TOKEN" ]; then
         echo_warning "Could not obtain admin token, skipping test user creation"
@@ -1339,13 +1360,13 @@ create_test_user() {
     rm -f /tmp/user_response.txt
 
     local USER_ID=""
-    if [ "$USER_HTTP_CODE" = "409" ] || echo "$USER_RESPONSE" | jq -e '.errorMessage // empty | test("already exists|Conflict"; "i")' >/dev/null 2>&1; then
+    if [ "$USER_HTTP_CODE" = "409" ] || { echo "$USER_RESPONSE" | jq empty >/dev/null 2>&1 && echo "$USER_RESPONSE" | jq -e '.errorMessage // empty | test("already exists|Conflict"; "i")' >/dev/null 2>&1; }; then
         echo_warning "User 'admin' may already exist, attempting to find it..."
         # Get existing user
         local USERS_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=admin&exact=true" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" 2>/dev/null)
-        USER_ID=$(echo "$USERS_RESPONSE" | jq -r '.[0].id // empty')
+        USER_ID=$(safe_jq '.[0].id // empty' "$USERS_RESPONSE")
 
         if [ -n "$USER_ID" ]; then
             echo_info "Found existing user 'admin', updating with attributes..."
@@ -1373,7 +1394,7 @@ create_test_user() {
         local USERS_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=admin&exact=true" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" 2>/dev/null)
-        USER_ID=$(echo "$USERS_RESPONSE" | jq -r '.[0].id // empty')
+        USER_ID=$(safe_jq '.[0].id // empty' "$USERS_RESPONSE")
         echo_success "✓ User 'admin' created"
     fi
 
