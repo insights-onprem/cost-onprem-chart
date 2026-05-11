@@ -215,8 +215,8 @@ def authenticated_context(
     
     Credentials:
         Default credentials are test/test, configurable via environment variables:
-        - TEST_USERNAME: Keycloak username (default: "test")
-        - TEST_PASSWORD: Keycloak password (default: "test")
+        - TEST_USERNAME: Keycloak username (default: "admin")
+        - TEST_PASSWORD: Keycloak password (default: "admin")
         
         SECURITY NOTE: These credentials are ONLY valid in ephemeral CI test
         environments. The test Keycloak user is provisioned by the test harness
@@ -265,8 +265,8 @@ def authenticated_context(
     page.wait_for_url(f"**/{keycloak_config.realm}/**", timeout=10000)
     
     # Fill login form (see docstring for security notes on these defaults)
-    username = os.environ.get("TEST_USERNAME", "test")
-    password = os.environ.get("TEST_PASSWORD", "test")
+    username = os.environ.get("TEST_USERNAME", "admin")
+    password = os.environ.get("TEST_PASSWORD", "admin")
     
     page.fill('input[name="username"]', username)
     page.fill('input[name="password"]', password)

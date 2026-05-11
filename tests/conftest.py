@@ -785,10 +785,13 @@ if failed:
 
 @pytest.fixture(scope="session")
 def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> str:
-    """Get org_id from Keycloak test user or use default.
+    """Get org_id from Keycloak admin test user or use default.
     
-    Looks up the test user (configurable via TEST_USERNAME env var, default: "test")
-    in Keycloak to retrieve the org_id attribute.
+    Looks up the admin user (configurable via TEST_USERNAME env var,
+    default: "admin") in Keycloak to retrieve the org_id attribute.
+    
+    Note: Currently uses "admin" user. More involved RBAC testing may require
+    different users with specific role assignments in the future.
     
     SECURITY NOTE: These credentials are ONLY valid in ephemeral CI test
     environments. The test Keycloak user is provisioned by the test harness
@@ -825,11 +828,13 @@ def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> st
         
         admin_token = token_response.json().get("access_token")
         
-        # Get test user's org_id (username configurable via TEST_USERNAME)
-        test_username = os.environ.get("TEST_USERNAME", "test")
+        # Get admin user's org_id (username configurable via TEST_USERNAME)
+        # Note: Currently uses "admin" user. More involved RBAC testing may
+        # require different users with specific role assignments in the future.
+        admin_username = os.environ.get("TEST_USERNAME", "admin")
         users_response = requests.get(
             f"{keycloak_config.url}/admin/realms/kubernetes/users",
-            params={"username": test_username, "exact": "true"},
+            params={"username": admin_username, "exact": "true"},
             headers={"Authorization": f"Bearer {admin_token}"},
             verify=False,
             timeout=30,
