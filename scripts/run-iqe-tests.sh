@@ -326,11 +326,9 @@ if [ -n "$KEYCLOAK_HOST" ]; then
         
         if [ -n "$ADMIN_TOKEN" ]; then
             # Find the first user with the org-admin realm role
-            local admin_username="admin"
-            local role_members
+            admin_username="admin"
             role_members=$(curl -sk "https://${KEYCLOAK_HOST}/admin/realms/kubernetes/roles/org-admin/users" \
                 -H "Authorization: Bearer ${ADMIN_TOKEN}" 2>/dev/null)
-            local detected_admin
             detected_admin=$(echo "$role_members" | jq -r '.[0].username // empty')
             [ -n "$detected_admin" ] && admin_username="$detected_admin"
 
