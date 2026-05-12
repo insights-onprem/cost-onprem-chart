@@ -1448,6 +1448,18 @@ create_or_update_user() {
     return 0
 }
 
+# Acquire a short-lived Keycloak admin token via password grant.
+# Args: $1=keycloak_url $2=admin_username $3=admin_password
+_obtain_admin_token() {
+    local url="$1" user="$2" pass="$3"
+    curl -sk -X POST "${url}/realms/master/protocol/openid-connect/token" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -d "username=${user}" \
+        -d "password=${pass}" \
+        -d "grant_type=password" \
+        -d "client_id=admin-cli" 2>/dev/null | jq -r '.access_token // empty'
+}
+
 # Create realm users from jwtAuth.realmUsers (values file) or defaults
 create_realm_users() {
     echo_header "CREATING REALM USERS"
@@ -1468,20 +1480,9 @@ create_realm_users() {
         return 1
     fi
 
-    # Acquire a short-lived admin token. Keycloak master-realm tokens default
-    # to 60s, so we re-acquire before each user to avoid mid-loop expiry.
-    _obtain_admin_token() {
-        curl -sk -X POST "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "username=$ADMIN_USERNAME" \
-            -d "password=$ADMIN_PASSWORD" \
-            -d "grant_type=password" \
-            -d "client_id=admin-cli" 2>/dev/null | jq -r '.access_token // empty'
-    }
-
     echo_info "Obtaining admin access token..."
     local ACCESS_TOKEN
-    ACCESS_TOKEN=$(_obtain_admin_token)
+    ACCESS_TOKEN=$(_obtain_admin_token "$KEYCLOAK_URL" "$ADMIN_USERNAME" "$ADMIN_PASSWORD")
 
     if [ -z "$ACCESS_TOKEN" ]; then
         echo_warning "Could not obtain admin token, skipping realm user creation"
@@ -1507,7 +1508,7 @@ create_realm_users() {
     local fail_count=0
     while [ $i -lt "$user_count" ]; do
         # Re-acquire token before each user to guard against TTL expiry
-        ACCESS_TOKEN=$(_obtain_admin_token)
+        ACCESS_TOKEN=$(_obtain_admin_token "$KEYCLOAK_URL" "$ADMIN_USERNAME" "$ADMIN_PASSWORD")
         if [ -z "$ACCESS_TOKEN" ]; then
             echo_error "Admin token expired and could not be renewed"
             return 1
@@ -1572,24 +1573,29 @@ display_summary() {
     echo_info "  Secret stored in: keycloak-client-secret-cost-management-ui"
     echo ""
 
-    echo_info "Admin User Information:"
-    echo_info "  User: admin"
-    echo_info "    Password: admin"
-    echo_info "    Email: admin@test.com (verified)"
-    echo_info "    Attributes:"
-    echo_info "      org_id: org1234567 (includes 'org' prefix as workaround for Koku bug)"
-    echo_info "      account_number: 7890123"
+    echo_info "Provisioned Realm Users:"
+    local USERS_JSON
+    USERS_JSON=$(get_realm_users_json 2>/dev/null) || USERS_JSON='[]'
+    local u_count
+    u_count=$(echo "$USERS_JSON" | jq 'length')
+    local u=0
+    while [ $u -lt "$u_count" ]; do
+        local u_name u_org u_acct u_admin
+        u_name=$(echo "$USERS_JSON" | jq -r ".[$u].username")
+        u_org=$(echo "$USERS_JSON" | jq -r ".[$u].orgId // \"org1234567\"")
+        u_acct=$(echo "$USERS_JSON" | jq -r ".[$u].accountNumber // \"7890123\"")
+        u_admin=$(echo "$USERS_JSON" | jq -r ".[$u].orgAdmin // false")
+        local role_info=""
+        [ "$u_admin" = "true" ] && role_info=" (org-admin)"
+        echo_info "  ${u_name}${role_info}  org_id=${u_org}  account_number=${u_acct}"
+        u=$((u + 1))
+    done
     echo_info ""
     echo_info "  RBAC Permissions:"
-    echo_info "    To grant this user Cost Administrator automatically on helm install/upgrade,"
-    echo_info "    set the following in your values.yaml or --set flags:"
-    echo_info ""
+    echo_info "    To grant the admin user Cost Administrator on helm install/upgrade:"
     echo_info "      rbac.bootstrapAdmin.enabled=true"
     echo_info ""
-    echo_info "    The defaults (username=admin, orgId=org1234567, accountNumber=7890123)"
-    echo_info "    match this user. See docs/operations/rbac-setup.md for details."
-    echo_info ""
-    echo_info "    Alternatively, run after chart install:"
+    echo_info "    Or run after chart install:"
     echo_info "      NAMESPACE=${COST_MGMT_NAMESPACE} ./scripts/sync-rbac-admin.sh"
     echo ""
 
@@ -1685,7 +1691,8 @@ main() {
     fi
 }
 
-# Parse flags (extract -f/--values before command dispatch)
+# Parse all flags and collect the command in a single pass
+COMMAND=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -f|--values)
@@ -1696,14 +1703,20 @@ while [[ $# -gt 0 ]]; do
             fi
             shift 2
             ;;
+        -*)
+            echo_error "Unknown flag: $1"
+            echo_info "Use '$0 help' for usage information"
+            exit 1
+            ;;
         *)
-            break
+            COMMAND="$1"
+            shift
             ;;
     esac
 done
 
 # Handle script arguments
-case "${1:-}" in
+case "${COMMAND}" in
     "cleanup"|"clean")
         cleanup_deployment
         exit 0
