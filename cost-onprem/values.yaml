@@ -742,6 +742,16 @@ valkey:
     # Required when auth.enabled is true.
     secretName: ""
 
+  # TLS configuration for external Redis/Valkey (only used when deploy is false)
+  # For TLS-encrypted Redis connections (e.g., ElastiCache in-transit encryption,
+  # Redis Enterprise TLS, Azure Cache for Redis)
+  tls:
+    enabled: false
+    # Name of the Secret containing key 'ca.crt' with the CA certificate.
+    # When set, certificate verification is enforced (ssl.CERT_REQUIRED).
+    # When empty, TLS is used but certificates are not verified (ssl.CERT_NONE).
+    caCertSecretName: ""
+
   # Persistence configuration for Celery chord callback reliability
   # Persistent storage is always enabled when deploying bundled Valkey.
   persistence:

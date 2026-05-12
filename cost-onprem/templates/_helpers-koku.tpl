@@ -318,6 +318,14 @@ Common environment variables for Koku API and Celery
       name: {{ .Values.valkey.auth.secretName }}
       key: redis-password
 {{- end }}
+{{- if .Values.valkey.tls.enabled }}
+- name: REDIS_SSL
+  value: "True"
+{{- if .Values.valkey.tls.caCertSecretName }}
+- name: REDIS_SSL_CA_CERTS
+  value: "/etc/redis-tls/ca.crt"
+{{- end }}
+{{- end }}
 - name: CELERY_RESULT_EXPIRES
   value: {{ .Values.costManagement.celery.resultExpires | default "28800" | quote }}
 - name: INSIGHTS_KAFKA_HOST
@@ -414,6 +422,11 @@ Includes tmp mount and combined CA bundle
 - name: combined-ca-bundle
   mountPath: /etc/pki/ca-trust/combined
   readOnly: true
+{{- if and .Values.valkey.tls.enabled .Values.valkey.tls.caCertSecretName }}
+- name: redis-tls-ca
+  mountPath: /etc/redis-tls
+  readOnly: true
+{{- end }}
 {{- end -}}
 
 {{/*
@@ -438,6 +451,14 @@ Includes tmp volume and CA bundle volumes
     name: {{ include "cost-onprem.fullname" . }}-service-ca
 - name: combined-ca-bundle
   emptyDir: {}
+{{- if and .Values.valkey.tls.enabled .Values.valkey.tls.caCertSecretName }}
+- name: redis-tls-ca
+  secret:
+    secretName: {{ .Values.valkey.tls.caCertSecretName }}
+    items:
+      - key: ca.crt
+        path: ca.crt
+{{- end }}
 {{- end -}}
 
 {{/*

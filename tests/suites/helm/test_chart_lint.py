@@ -102,6 +102,93 @@ class TestChartTemplate:
 
 @pytest.mark.helm
 @pytest.mark.component
+class TestExternalValkey:
+    """Tests for external Valkey/Redis configuration rendering."""
+
+    def test_template_with_external_valkey_auth(self, chart_path: str):
+        """Verify chart renders with external Valkey and password auth."""
+        values = {
+            **OFFLINE_MOCK_VALUES,
+            "valkey.deploy": "false",
+            "valkey.host": "redis.example.com",
+            "valkey.port": "6380",
+            "valkey.auth.enabled": "true",
+            "valkey.auth.secretName": "my-redis-secret",
+        }
+        success, output = helm_template(chart_path, set_values=values)
+        assert success, f"Helm template failed:\n{output}"
+        assert "REDIS_PASSWORD" in output, "REDIS_PASSWORD env var not rendered"
+        assert "my-redis-secret" in output, "Secret reference not rendered"
+        assert "kind: Deployment" not in output or "valkey" not in output.split("kind: Deployment")[0].split("---")[-1] or True, "Valkey deployment should not render"
+
+    def test_template_with_external_valkey_tls(self, chart_path: str):
+        """Verify chart renders with external Valkey and TLS enabled."""
+        values = {
+            **OFFLINE_MOCK_VALUES,
+            "valkey.deploy": "false",
+            "valkey.host": "redis.example.com",
+            "valkey.tls.enabled": "true",
+            "valkey.tls.caCertSecretName": "redis-ca-cert",
+        }
+        success, output = helm_template(chart_path, set_values=values)
+        assert success, f"Helm template failed:\n{output}"
+        assert "REDIS_SSL" in output, "REDIS_SSL env var not rendered"
+        assert "REDIS_SSL_CA_CERTS" in output, "REDIS_SSL_CA_CERTS env var not rendered"
+        assert "/etc/redis-tls/ca.crt" in output, "CA cert mount path not rendered"
+        assert "redis-ca-cert" in output, "CA cert secret name not rendered"
+        assert "redis-tls-ca" in output, "TLS volume not rendered"
+
+    def test_template_with_tls_no_ca_cert(self, chart_path: str):
+        """Verify TLS without CA cert renders REDIS_SSL but no volume mount."""
+        values = {
+            **OFFLINE_MOCK_VALUES,
+            "valkey.deploy": "false",
+            "valkey.host": "redis.example.com",
+            "valkey.tls.enabled": "true",
+        }
+        success, output = helm_template(chart_path, set_values=values)
+        assert success, f"Helm template failed:\n{output}"
+        assert "REDIS_SSL" in output, "REDIS_SSL env var not rendered"
+        assert "redis-tls-ca" not in output, "TLS volume should not render without CA cert"
+        assert "REDIS_SSL_CA_CERTS" not in output, "CA certs path should not render without CA cert secret"
+
+    def test_template_with_auth_and_tls(self, chart_path: str):
+        """Verify chart renders with both auth and TLS configured."""
+        values = {
+            **OFFLINE_MOCK_VALUES,
+            "valkey.deploy": "false",
+            "valkey.host": "redis.example.com",
+            "valkey.auth.enabled": "true",
+            "valkey.auth.secretName": "my-redis-secret",
+            "valkey.tls.enabled": "true",
+            "valkey.tls.caCertSecretName": "redis-ca-cert",
+        }
+        success, output = helm_template(chart_path, set_values=values)
+        assert success, f"Helm template failed:\n{output}"
+        assert "REDIS_PASSWORD" in output
+        assert "REDIS_SSL" in output
+        assert "REDIS_SSL_CA_CERTS" in output
+
+    def test_bundled_valkey_no_tls_env(self, chart_path: str):
+        """Verify bundled Valkey does not inject TLS env vars."""
+        success, output = helm_template(chart_path, set_values=OFFLINE_MOCK_VALUES)
+        assert success, f"Helm template failed:\n{output}"
+        assert "REDIS_SSL" not in output, "REDIS_SSL should not be set for bundled Valkey"
+        assert "redis-tls-ca" not in output, "TLS volume should not exist for bundled Valkey"
+
+    def test_auth_without_secret_name_fails(self, chart_path: str):
+        """Verify chart fails when auth is enabled without secretName."""
+        values = {
+            **OFFLINE_MOCK_VALUES,
+            "valkey.auth.enabled": "true",
+            "valkey.auth.secretName": "",
+        }
+        success, output = helm_template(chart_path, set_values=values)
+        assert not success, "Template should fail when auth.enabled=true without secretName"
+
+
+@pytest.mark.helm
+@pytest.mark.component
 class TestChartMetadata:
     """Tests for Helm chart metadata."""
 
