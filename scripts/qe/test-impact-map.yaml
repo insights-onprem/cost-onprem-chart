@@ -1,0 +1,107 @@
+# Test Impact Mapping
+#
+# Maps container images and file path patterns to IQE test profiles.
+# Used by scripts/qe/recommend-tests.sh to advise reviewers on which
+# test profiles to run for a given PR.
+#
+# Profiles (in ascending order of coverage):
+#   smoke     ~43 tests,  ~17 min  — source + cost model tests only
+#   extended  ~2100 tests, ~33 min — all except infrastructure tests
+#   stable    ~2350 tests, ~40 min — all validated tests
+#   full      ~3324 tests, ~3 hrs  — everything, no skip filters
+#
+# Impact levels: low, medium, high
+#   Shown in the PR comment table to help reviewers prioritize.
+
+# ---------------------------------------------------------------------------
+# Container image components
+# ---------------------------------------------------------------------------
+# Keyed by image basename (the last path segment of the repository URL).
+# profile: minimum IQE profile needed to adequately test this component.
+# impact:  blast radius if this component breaks.
+
+components:
+  koku:
+    profile: stable
+    impact: high
+    description: "Core backend — reports, sources, cost models, ingestion"
+
+  ros-ocp-backend:
+    profile: extended
+    impact: low
+    description: "ROS recommendations — tests excluded by smoke filter"
+
+  autotune:
+    profile: extended
+    impact: low
+    description: "ROS recommendation engine (Kruize) — tests excluded by smoke filter"
+
+  insights-ingress-go:
+    profile: extended
+    impact: medium
+    description: "Ingestion pipeline — data upload/processing"
+
+  koku-ui-onprem:
+    profile: extended
+    impact: low
+    description: "UI tests excluded by smoke filter"
+
+  postgresql:
+    profile: stable
+    impact: high
+    description: "Database — affects everything"
+
+  valkey-8:
+    profile: extended
+    impact: high
+    description: "Celery broker + Django cache — critical infrastructure"
+
+  ubi-minimal:
+    profile: smoke
+    impact: low
+    description: "Init containers only"
+
+  proxyv2-rhel9:
+    profile: smoke
+    impact: low
+    description: "Gateway/routing (Envoy) — smoke catches breakage"
+
+  oauth2-proxy-rhel9:
+    profile: smoke
+    impact: low
+    description: "Auth proxy — smoke catches breakage"
+
+# ---------------------------------------------------------------------------
+# Path-based rules
+# ---------------------------------------------------------------------------
+# Evaluated against `git diff --name-only` output.
+# pattern: regex matched against each changed file path.
+# profile: minimum IQE profile recommended when this pattern matches.
+
+paths:
+  helm-templates:
+    pattern: "^cost-onprem/templates/"
+    profile: stable
+    impact: high
+    description: "Helm templates — affects all deployed resources"
+
+  deploy-scripts:
+    pattern: "^scripts/(deploy|run-iqe)"
+    profile: extended
+    impact: medium
+    description: "Deployment/test scripts"
+
+  values-structural:
+    # Triggered by values.yaml changes to resource limits, replicas, or toggles
+    # (image tag changes are handled separately via the components section)
+    pattern: "^cost-onprem/values\\.yaml$"
+    diff_pattern: "^\\+.*(resources:|limits:|requests:|replicas:|enabled:)"
+    profile: extended
+    impact: medium
+    description: "Resource limits, replicas, or feature toggles"
+
+  test-infra:
+    pattern: "^(tests/|scripts/qe/)"
+    profile: smoke
+    impact: low
+    description: "Test infrastructure / QE scripts"
