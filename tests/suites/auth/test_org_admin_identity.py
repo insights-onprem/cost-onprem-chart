@@ -13,7 +13,7 @@ while non-admin users with no RBAC group membership receive empty permissions.
 import pytest
 import requests
 
-from conftest import KeycloakConfig, ClusterConfig, obtain_user_jwt_token_for
+from conftest import KeycloakConfig, ClusterConfig, decode_jwt_payload, obtain_user_jwt_token_for
 
 
 @pytest.mark.auth
@@ -78,4 +78,49 @@ class TestOrgAdminIdentityPropagation:
         wildcard_perms = [p for p in permissions if p == "cost-management:*:*"]
         assert not wildcard_perms, (
             f"Viewer should not have cost-management:*:* but got: {permissions}"
+        )
+
+    @pytest.mark.parametrize(
+        "creds,expect_admin",
+        [
+            ({"username": "admin", "password": "admin"}, True),
+            ({"username": "viewer", "password": "viewer"}, False),
+        ],
+        ids=["admin-is-org-admin", "viewer-is-not-org-admin"],
+    )
+    def test_org_admin_role_determines_access(
+        self,
+        keycloak_config: KeycloakConfig,
+        cluster_config: ClusterConfig,
+        rbac_access_url: str,
+        creds: dict,
+        expect_admin: bool,
+    ):
+        """Architectural invariant: is_org_admin in the JWT controls RBAC access.
+
+        Any user with the org-admin realm role must receive
+        cost-management:*:*, and any user without it must not. This
+        parametrized test validates the invariant for every provisioned
+        user, ensuring the architecture works for N admins (not just the
+        bootstrapped one).
+        """
+        token = obtain_user_jwt_token_for(
+            keycloak_config, cluster_config,
+            username=creds["username"], password=creds["password"],
+        )
+        payload = decode_jwt_payload(token.access_token)
+        roles = payload.get("realm_access", {}).get("roles", [])
+        has_role = "org-admin" in roles
+
+        assert has_role == expect_admin, (
+            f"User {creds['username']}: expected org-admin={expect_admin}, "
+            f"JWT has roles={roles}"
+        )
+
+        permissions = self._get_permissions(rbac_access_url, token)
+        has_wildcard = "cost-management:*:*" in permissions
+
+        assert has_wildcard == expect_admin, (
+            f"User {creds['username']}: expected wildcard={expect_admin}, "
+            f"got permissions={permissions}"
         )

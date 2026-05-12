@@ -5,23 +5,13 @@ Tests for the UI authentication flow with Keycloak (password grant).
 Migrated from scripts/test-ui-oauth-flow.sh
 """
 
-import base64
-import json
 import re
 
 import pytest
 import requests
 
+from conftest import decode_jwt_payload
 from utils import run_oc_command, get_route_url
-
-
-def _decode_jwt_payload(access_token: str) -> dict:
-    """Decode the payload section of a JWT without signature verification."""
-    payload_b64 = access_token.split(".")[1]
-    padding = 4 - len(payload_b64) % 4
-    if padding != 4:
-        payload_b64 += "=" * padding
-    return json.loads(base64.urlsafe_b64decode(payload_b64))
 
 
 def _obtain_token(http_session, keycloak_config, ui_client_config, credentials):
@@ -109,35 +99,29 @@ class TestUIOAuthFlow:
         http_session: requests.Session,
     ):
         """Verify JWT token can be obtained via password grant."""
-        if not ui_client_config.get("client_secret"):
-            # Try without client secret (public client)
-            data = {
-                "username": test_user_credentials["username"],
-                "password": test_user_credentials["password"],
-                "grant_type": "password",
-                "client_id": ui_client_config["client_id"],
-                "scope": "openid profile email roles",
-            }
-        else:
-            data = {
-                "username": test_user_credentials["username"],
-                "password": test_user_credentials["password"],
-                "grant_type": "password",
-                "client_id": ui_client_config["client_id"],
-                "client_secret": ui_client_config["client_secret"],
-                "scope": "openid profile email roles",
-            }
-        
+        data = {
+            "username": test_user_credentials["username"],
+            "password": test_user_credentials["password"],
+            "grant_type": "password",
+            "client_id": ui_client_config["client_id"],
+            "scope": "openid profile email roles",
+        }
+        if ui_client_config.get("client_secret"):
+            data["client_secret"] = ui_client_config["client_secret"]
+
         token_url = (
             f"{keycloak_config.url}/realms/{keycloak_config.realm}/"
             "protocol/openid-connect/token"
         )
-        
-        response = http_session.post(token_url, data=data, timeout=30)
-        
-        if response.status_code != 200:
-            pytest.skip(f"Password grant failed: {response.status_code}")
-        
+
+        try:
+            response = http_session.post(token_url, data=data, timeout=30)
+        except requests.exceptions.ConnectionError:
+            pytest.skip("Keycloak unreachable")
+
+        assert response.status_code == 200, (
+            f"Password grant failed: {response.status_code} — {response.text[:300]}"
+        )
         token_data = response.json()
         assert "access_token" in token_data, "No access_token in response"
 
@@ -149,7 +133,6 @@ class TestUIOAuthFlow:
         http_session: requests.Session,
     ):
         """Verify JWT contains required claims (preferred_username, org_id)."""
-        # Get token via password grant
         data = {
             "username": test_user_credentials["username"],
             "password": test_user_credentials["password"],
@@ -159,26 +142,24 @@ class TestUIOAuthFlow:
         }
         if ui_client_config.get("client_secret"):
             data["client_secret"] = ui_client_config["client_secret"]
-        
+
         token_url = (
             f"{keycloak_config.url}/realms/{keycloak_config.realm}/"
             "protocol/openid-connect/token"
         )
-        
-        response = http_session.post(token_url, data=data, timeout=30)
-        
-        if response.status_code != 200:
-            pytest.skip("Could not obtain token for claims validation")
-        
+
+        try:
+            response = http_session.post(token_url, data=data, timeout=30)
+        except requests.exceptions.ConnectionError:
+            pytest.skip("Keycloak unreachable")
+
+        assert response.status_code == 200, (
+            f"Could not obtain token for claims validation: "
+            f"{response.status_code} — {response.text[:300]}"
+        )
+
         access_token = response.json().get("access_token")
-        
-        # Decode JWT payload
-        payload_b64 = access_token.split(".")[1]
-        padding = 4 - len(payload_b64) % 4
-        if padding != 4:
-            payload_b64 += "=" * padding
-        
-        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        payload = decode_jwt_payload(access_token)
         
         # Check required claims
         assert "preferred_username" in payload, "JWT missing preferred_username"
@@ -211,7 +192,7 @@ class TestOrgAdminRealmRole:
         token = _obtain_token(
             http_session, keycloak_config, ui_client_config, test_user_credentials,
         )
-        payload = _decode_jwt_payload(token)
+        payload = decode_jwt_payload(token)
 
         realm_access = payload.get("realm_access", {})
         roles = realm_access.get("roles", [])
@@ -231,7 +212,7 @@ class TestOrgAdminRealmRole:
         token = _obtain_token(
             http_session, keycloak_config, ui_client_config, non_admin_user_credentials,
         )
-        payload = _decode_jwt_payload(token)
+        payload = decode_jwt_payload(token)
 
         realm_access = payload.get("realm_access", {})
         roles = realm_access.get("roles", [])

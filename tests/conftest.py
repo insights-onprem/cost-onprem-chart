@@ -49,6 +49,15 @@ _DEFAULT_ORG_ID = "org1234567"
 _DEFAULT_ACCOUNT_NUMBER = "7890123"
 
 
+def decode_jwt_payload(access_token: str) -> dict:
+    """Decode the payload section of a JWT without signature verification."""
+    payload_b64 = access_token.split(".")[1]
+    padding = 4 - len(payload_b64) % 4
+    if padding != 4:
+        payload_b64 += "=" * padding
+    return json.loads(base64.urlsafe_b64decode(payload_b64))
+
+
 # =============================================================================
 # Data Classes
 # =============================================================================
@@ -804,9 +813,7 @@ def _rbac_bootstrap(cluster_config: ClusterConfig, keycloak_config: KeycloakConf
     sa_default = f"service-account-{keycloak_config.client_id}"
     sa_mapper_override = "cost-mgmt-operator"
     try:
-        payload = token.access_token.split(".")[1]
-        payload += "=" * (4 - len(payload) % 4)
-        claims = json.loads(base64.urlsafe_b64decode(payload))
+        claims = decode_jwt_payload(token.access_token)
         sa_username = claims.get("preferred_username") or claims.get("sub", sa_default)
     except Exception:
         sa_username = sa_default
