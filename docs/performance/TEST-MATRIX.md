@@ -6,11 +6,11 @@ This document provides a high-level view of all performance test permutations.
 
 | Suite | Tests | Parametrizations | Total Permutations |
 |-------|-------|------------------|-------------------|
-| **Ingestion** | 6 | profiles, concurrency, burst days, file sizes | 14 |
-| **API Latency** | 6 | iterations, users, pages, groups, tags | 16 |
-| **Scale** | 5 | sources, queries, date ranges | 9 |
-| **ROS** | 4 | - | 4 |
-| **Soak** | 4 | - | 4 |
+| [**Ingestion**](#ingestion-tests-perf-ing) | 6 | profiles, concurrency, burst days, file sizes | 14 |
+| [**API Latency**](#api-latency-tests-perf-api) | 6 | iterations, users, pages, groups, tags | 16 |
+| [**Scale**](#scale-tests-perf-scale) | 5 | sources, queries, date ranges | 9 |
+| [**ROS**](#roskruize-tests-perf-ros) | 4 | Kruize/recommendation performance | 4 |
+| [**Soak**](#soakstability-tests-perf-soak) | 4 | Long-running stability (memory, disk, queues) | 4 |
 | **Total** | **25** | | **47** |
 
 ---
