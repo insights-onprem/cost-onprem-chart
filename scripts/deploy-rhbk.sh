@@ -825,6 +825,9 @@ spec:
           - email
           - api.console
           - roles
+        optionalClientScopes:
+          - offline_access
+          - roles
         protocolMappers:
           - name: audience-mapper
             protocol: openid-connect
@@ -903,6 +906,7 @@ spec:
           - roles
         optionalClientScopes:
           - offline_access
+          - roles
         protocolMappers:
           - name: aud-mapper-cost-management-ui
             protocol: openid-connect
