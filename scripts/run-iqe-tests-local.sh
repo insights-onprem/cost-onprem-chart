@@ -483,7 +483,16 @@ extract_cluster_config() {
             kc_token=$(curl -sk -X POST "https://${kc_host}/realms/master/protocol/openid-connect/token" \
                 -d "client_id=admin-cli&grant_type=password&username=${kc_admin_user}&password=${kc_admin_pass}" 2>/dev/null | jq -r '.access_token // empty')
             if [ -n "$kc_token" ]; then
-                kc_user_json=$(curl -sk "https://${kc_host}/admin/realms/kubernetes/users?username=admin&exact=true" \
+                # Find the first user with the org-admin realm role
+                local admin_username="admin"
+                local role_members
+                role_members=$(curl -sk "https://${kc_host}/admin/realms/kubernetes/roles/org-admin/users" \
+                    -H "Authorization: Bearer ${kc_token}" 2>/dev/null)
+                local detected_admin
+                detected_admin=$(echo "$role_members" | jq -r '.[0].username // empty')
+                [ -n "$detected_admin" ] && admin_username="$detected_admin"
+
+                kc_user_json=$(curl -sk "https://${kc_host}/admin/realms/kubernetes/users?username=${admin_username}&exact=true" \
                     -H "Authorization: Bearer ${kc_token}" 2>/dev/null)
                 local detected_org detected_acct
                 detected_org=$(echo "$kc_user_json" | jq -r '.[0].attributes.org_id[0] // empty')

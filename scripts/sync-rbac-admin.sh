@@ -57,12 +57,16 @@ admin = next((u for u in users if u.get('orgAdmin')), None)
 if admin:
     json.dump(admin, sys.stdout)
 else:
+    print('ERROR: no orgAdmin:true entry found in jwtAuth.realmUsers', file=sys.stderr)
     sys.exit(1)
-" "$VALUES_FILE" 2>/dev/null) && {
-    USERNAME="${USERNAME:-$(echo "$admin_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('username','admin'))")}"
-    ORG_ID="${ORG_ID:-$(echo "$admin_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('orgId','org1234567'))")}"
-    ACCOUNT_NUMBER="${ACCOUNT_NUMBER:-$(echo "$admin_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('accountNumber','7890123'))")}"
-  } || echo "WARNING: Could not parse admin from $VALUES_FILE, using defaults"
+" "$VALUES_FILE")
+  if [ $? -ne 0 ] || [ -z "$admin_json" ]; then
+    echo "ERROR: Failed to parse admin identity from $VALUES_FILE"
+    exit 1
+  fi
+  USERNAME="${USERNAME:-$(echo "$admin_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('username','admin'))")}"
+  ORG_ID="${ORG_ID:-$(echo "$admin_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('orgId','org1234567'))")}"
+  ACCOUNT_NUMBER="${ACCOUNT_NUMBER:-$(echo "$admin_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('accountNumber','7890123'))")}"
 elif [ -n "$VALUES_FILE" ]; then
   echo "ERROR: Values file not found: $VALUES_FILE"
   exit 1

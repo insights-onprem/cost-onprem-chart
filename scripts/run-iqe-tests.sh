@@ -325,7 +325,16 @@ if [ -n "$KEYCLOAK_HOST" ]; then
             -d "password=${KEYCLOAK_ADMIN_PASS}" 2>/dev/null | jq -r '.access_token // empty')
         
         if [ -n "$ADMIN_TOKEN" ]; then
-            USER_JSON=$(curl -sk "https://${KEYCLOAK_HOST}/admin/realms/kubernetes/users?username=admin&exact=true" \
+            # Find the first user with the org-admin realm role
+            local admin_username="admin"
+            local role_members
+            role_members=$(curl -sk "https://${KEYCLOAK_HOST}/admin/realms/kubernetes/roles/org-admin/users" \
+                -H "Authorization: Bearer ${ADMIN_TOKEN}" 2>/dev/null)
+            local detected_admin
+            detected_admin=$(echo "$role_members" | jq -r '.[0].username // empty')
+            [ -n "$detected_admin" ] && admin_username="$detected_admin"
+
+            USER_JSON=$(curl -sk "https://${KEYCLOAK_HOST}/admin/realms/kubernetes/users?username=${admin_username}&exact=true" \
                 -H "Authorization: Bearer ${ADMIN_TOKEN}" 2>/dev/null)
             USER_ORG_ID=$(echo "$USER_JSON" | jq -r '.[0].attributes.org_id[0] // empty')
             USER_ACCT=$(echo "$USER_JSON" | jq -r '.[0].attributes.account_number[0] // empty')
