@@ -375,8 +375,10 @@ data:
                           -- Use replace to avoid duplicate headers
                           request_handle:headers():replace("X-Rh-Identity", xrhid_b64)
 
-                          -- Forward the original Authorization header as X-Bearer-Token
-                          -- Try both capitalization variants for case-insensitive lookup
+                          -- Forward the raw JWT as X-Bearer-Token for backends that
+                          -- need it (e.g., oauth-proxy session refresh). Envoy has
+                          -- already validated the signature via jwt_authn; backends
+                          -- MUST NOT trust this header for authz — use X-Rh-Identity.
                           local auth_header = request_handle:headers():get("authorization")
                           if not auth_header then
                             auth_header = request_handle:headers():get("Authorization")
