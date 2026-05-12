@@ -1314,7 +1314,7 @@ with open(sys.argv[1]) as f:
     vals = yaml.safe_load(f)
 users = vals.get('jwtAuth', {}).get('realmUsers', [])
 json.dump(users, sys.stdout)
-" "$VALUES_FILE" 2>/dev/null)
+" "$VALUES_FILE")
 
         local parse_rc=$?
         if [ $parse_rc -ne 0 ]; then
@@ -1504,6 +1504,7 @@ create_realm_users() {
     fi
 
     local i=0
+    local fail_count=0
     while [ $i -lt "$user_count" ]; do
         # Re-acquire token before each user to guard against TTL expiry
         ACCESS_TOKEN=$(_obtain_admin_token)
@@ -1512,11 +1513,17 @@ create_realm_users() {
             return 1
         fi
         local user_obj=$(echo "$USERS_JSON" | jq ".[$i]")
-        create_or_update_user "$KEYCLOAK_URL" "$ACCESS_TOKEN" "$user_obj"
+        if ! create_or_update_user "$KEYCLOAK_URL" "$ACCESS_TOKEN" "$user_obj"; then
+            fail_count=$((fail_count + 1))
+        fi
         i=$((i + 1))
     done
 
-    echo_success "✓ Realm user provisioning complete"
+    if [ "$fail_count" -gt 0 ]; then
+        echo_error "$fail_count of $user_count user(s) failed to provision"
+        return 1
+    fi
+    echo_success "✓ All $user_count realm user(s) provisioned successfully"
     echo ""
 }
 

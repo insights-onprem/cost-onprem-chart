@@ -31,7 +31,7 @@ def _obtain_token(http_session, keycloak_config, ui_client_config, credentials):
         "password": credentials["password"],
         "grant_type": "password",
         "client_id": ui_client_config["client_id"],
-        "scope": "openid profile email",
+        "scope": "openid profile email roles",
     }
     if ui_client_config.get("client_secret"):
         data["client_secret"] = ui_client_config["client_secret"]
@@ -116,7 +116,7 @@ class TestUIOAuthFlow:
                 "password": test_user_credentials["password"],
                 "grant_type": "password",
                 "client_id": ui_client_config["client_id"],
-                "scope": "openid profile email",
+                "scope": "openid profile email roles",
             }
         else:
             data = {
@@ -125,7 +125,7 @@ class TestUIOAuthFlow:
                 "grant_type": "password",
                 "client_id": ui_client_config["client_id"],
                 "client_secret": ui_client_config["client_secret"],
-                "scope": "openid profile email",
+                "scope": "openid profile email roles",
             }
         
         token_url = (
@@ -155,7 +155,7 @@ class TestUIOAuthFlow:
             "password": test_user_credentials["password"],
             "grant_type": "password",
             "client_id": ui_client_config["client_id"],
-            "scope": "openid profile email",
+            "scope": "openid profile email roles",
         }
         if ui_client_config.get("client_secret"):
             data["client_secret"] = ui_client_config["client_secret"]
