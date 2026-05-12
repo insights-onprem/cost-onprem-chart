@@ -294,7 +294,26 @@ Both `test_complete_flow.py` and `cost_management/conftest.py` import from `e2e_
 
 ## Data Generation
 
-The E2E test suite supports two data generation methods:
+The test suite supports flexible data generation for different testing scenarios.
+
+### Quick Start: Scenario-Based Setup
+
+```bash
+# List available scenarios
+./scripts/setup-test-data.sh --list
+
+# Set up data for scenario
+./scripts/setup-test-data.sh --scenario baseline
+
+# Run tests against the data
+./scripts/run-pytest.sh --e2e
+```
+
+See **[Test Data Setup Guide](../docs/development/test-data-setup.md)** for complete documentation on:
+- Available scenarios (minimal, baseline, perf-small, perf-medium, ros)
+- On-demand data loading for manual testing
+- Pre-test environment preparation
+- Troubleshooting data issues
 
 ### NISE Data Generation (Default)
 Uses [koku-nise](https://github.com/project-koku/nise) to generate realistic OCP cost data:
