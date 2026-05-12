@@ -320,10 +320,6 @@ if [[ "$max_profile" != "smoke" ]]; then
     needs_deeper="true"
 fi
 
-# TODO: TEMPORARY - force deeper testing to validate workflow fix (remove after testing)
-needs_deeper="true"
-max_profile="${max_profile:-extended}"
-
 output_var "suggested_profile" "$max_profile"
 output_var "needs_deeper_testing" "$needs_deeper"
 
