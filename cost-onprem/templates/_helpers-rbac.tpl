@@ -153,19 +153,22 @@ RBAC service port (always 8000 — internal only, not user-configurable).
 {{/*
 Resolve the bootstrap admin identity from jwtAuth.realmUsers.
 Finds the first entry with orgAdmin=true and returns username, orgId,
-accountNumber. Falls back to rbac.bootstrapAdmin values if realmUsers
-is empty or has no orgAdmin entry.
+accountNumber. When bootstrapAdmin.enabled is true and no orgAdmin
+user exists, the template fails with an actionable error.
 */}}
 {{- define "cost-onprem.rbac.bootstrapAdmin.username" -}}
 {{- $found := false -}}
 {{- range .Values.jwtAuth.realmUsers -}}
   {{- if and (not $found) .orgAdmin -}}
     {{- $found = true -}}
-    {{- .username -}}
+    {{- .username | required "jwtAuth.realmUsers: orgAdmin entry must have a username" -}}
   {{- end -}}
 {{- end -}}
 {{- if not $found -}}
-  {{- .Values.rbac.bootstrapAdmin.username | default "admin" -}}
+  {{- if .Values.rbac.bootstrapAdmin.enabled -}}
+    {{- fail "rbac.bootstrapAdmin.enabled is true but no orgAdmin:true entry found in jwtAuth.realmUsers" -}}
+  {{- end -}}
+  {{- "admin" -}}
 {{- end -}}
 {{- end -}}
 
@@ -174,11 +177,11 @@ is empty or has no orgAdmin entry.
 {{- range .Values.jwtAuth.realmUsers -}}
   {{- if and (not $found) .orgAdmin -}}
     {{- $found = true -}}
-    {{- .orgId -}}
+    {{- .orgId | required "jwtAuth.realmUsers: orgAdmin entry must have an orgId" -}}
   {{- end -}}
 {{- end -}}
 {{- if not $found -}}
-  {{- .Values.rbac.bootstrapAdmin.orgId | default "org1234567" -}}
+  {{- "org1234567" -}}
 {{- end -}}
 {{- end -}}
 
@@ -187,11 +190,11 @@ is empty or has no orgAdmin entry.
 {{- range .Values.jwtAuth.realmUsers -}}
   {{- if and (not $found) .orgAdmin -}}
     {{- $found = true -}}
-    {{- .accountNumber -}}
+    {{- .accountNumber | required "jwtAuth.realmUsers: orgAdmin entry must have an accountNumber" -}}
   {{- end -}}
 {{- end -}}
 {{- if not $found -}}
-  {{- .Values.rbac.bootstrapAdmin.accountNumber | default "7890123" -}}
+  {{- "7890123" -}}
 {{- end -}}
 {{- end -}}
 
