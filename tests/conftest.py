@@ -14,7 +14,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import pytest
 import requests
@@ -226,6 +226,91 @@ def obtain_jwt_token(keycloak_config: KeycloakConfig) -> JWTToken:
         access_token=token_data["access_token"],
         expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in),
     )
+
+
+def get_fresh_auth_header(
+    keycloak_config: KeycloakConfig,
+    http_session: requests.Session,
+) -> Optional[Dict[str, str]]:
+    """Get a fresh JWT authorization header from Keycloak.
+    
+    This is a lightweight alternative to obtain_jwt_token() when you only need
+    the authorization header and don't need the full JWTToken object with
+    expiration tracking.
+    
+    Use this in tests that need to refresh tokens mid-execution or when you
+    already have an http_session available.
+    
+    Args:
+        keycloak_config: Keycloak configuration with URL and credentials
+        http_session: Existing requests session (used for the token request)
+        
+    Returns:
+        Dict with "Authorization" header, or None if token acquisition fails
+        
+    Example:
+        auth_header = get_fresh_auth_header(keycloak_config, http_session)
+        if not auth_header:
+            pytest.skip("Could not obtain fresh JWT token")
+        response = http_session.get(url, headers=auth_header)
+    """
+    try:
+        response = http_session.post(
+            keycloak_config.token_url,
+            data={
+                "grant_type": "client_credentials",
+                "client_id": keycloak_config.client_id,
+                "client_secret": keycloak_config.client_secret,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=30,
+        )
+        
+        if response.status_code != 200:
+            return None
+        
+        token = response.json().get("access_token")
+        return {"Authorization": f"Bearer {token}"} if token else None
+    except requests.RequestException:
+        return None
+
+
+def create_authenticated_session(
+    keycloak_config: KeycloakConfig,
+    content_type: Optional[str] = None,
+) -> requests.Session:
+    """Create a requests session pre-configured with JWT authentication.
+    
+    This is a factory function for creating authenticated sessions. Use this
+    when you need a fresh session with a new token, particularly for:
+    - Module-scoped fixtures that may outlive the token lifetime
+    - One-off API operations in test setup/teardown
+    - Tests that need isolated sessions
+    
+    Args:
+        keycloak_config: Keycloak configuration with URL and credentials
+        content_type: Optional Content-Type header (e.g., "application/json")
+        
+    Returns:
+        Configured requests.Session with:
+        - Authorization header with Bearer token
+        - SSL verification disabled (for self-signed certs)
+        - Optional Content-Type header
+        
+    Raises:
+        pytest.fail: If token acquisition fails
+        
+    Example:
+        session = create_authenticated_session(keycloak_config, content_type="application/json")
+        response = session.get(f"{gateway_url}/cost-management/v1/sources")
+    """
+    token = obtain_jwt_token(keycloak_config)
+    session = requests.Session()
+    session.headers["Authorization"] = f"Bearer {token.access_token}"
+    if content_type:
+        session.headers["Content-Type"] = content_type
+    session.verify = False
+    return session
 
 
 @pytest.fixture(scope="function")
@@ -724,7 +809,19 @@ if failed:
 
 @pytest.fixture(scope="session")
 def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> str:
-    """Get org_id from Keycloak test user or use default."""
+    """Get org_id from Keycloak admin test user or use default.
+    
+    Looks up the admin user (configurable via TEST_USERNAME env var,
+    default: "admin") in Keycloak to retrieve the org_id attribute.
+    
+    Note: Currently uses "admin" user. More involved RBAC testing may require
+    different users with specific role assignments in the future.
+    
+    SECURITY NOTE: These credentials are ONLY valid in ephemeral CI test
+    environments. The test Keycloak user is provisioned by the test harness
+    bootstrap (see scripts/deploy-rhbk.sh). These credentials must never
+    match any staging or production credentials.
+    """
     try:
         # Get admin credentials
         admin_pass_result = run_oc_command([
@@ -755,10 +852,13 @@ def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> st
         
         admin_token = token_response.json().get("access_token")
         
-        # Get admin user's org_id
+        # Get admin user's org_id (username configurable via TEST_USERNAME)
+        # Note: Currently uses "admin" user. More involved RBAC testing may
+        # require different users with specific role assignments in the future.
+        admin_username = os.environ.get("TEST_USERNAME", "admin")
         users_response = requests.get(
             f"{keycloak_config.url}/admin/realms/kubernetes/users",
-            params={"username": "admin", "exact": "true"},
+            params={"username": admin_username, "exact": "true"},
             headers={"Authorization": f"Bearer {admin_token}"},
             verify=False,
             timeout=30,

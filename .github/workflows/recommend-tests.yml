@@ -1,0 +1,49 @@
+# Analyzes PR changes and recommends which optional IQE test profiles
+# to run. Posts a comment with guidance when deeper testing is warranted.
+#
+# Only comments when changes map to extended/stable/full profiles.
+# Smoke-only changes (UI, init containers, auth proxy) are silent.
+# Uses [TEST-ADVISOR] prefix for idempotent comment updates.
+
+name: Recommend IQE Test Profile
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'cost-onprem/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'openshift-values.yaml'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  recommend:
+    name: Analyze changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Analyze diff
+        id: analyze
+        env:
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+        run: ./scripts/qe/recommend-tests.sh
+
+      - name: Comment recommendation
+        if: steps.analyze.outputs.needs_deeper_testing == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PROFILE: ${{ steps.analyze.outputs.suggested_profile }}
+          COMPONENT_TABLE: ${{ steps.analyze.outputs.component_table }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: ./scripts/qe/post-test-advisor-comment.sh

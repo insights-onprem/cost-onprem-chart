@@ -1,34 +1,42 @@
 # Check Components Workflow
 #
-# Monitors container images tagged as "latest" in values.yaml for updates.
-# Only tracks latest-tagged images - pinned versions are intentionally ignored.
+# Monitors container images in values.yaml for upstream updates.
+# When changes are detected:
+#   1. Updates values.yaml with new concrete tags
+#   2. Increments Chart.yaml RC version
+#   3. Creates a release-ready PR (one at a time; old ones are closed)
+#   4. Recommends an IQE test profile based on impacted components
 #
 # Modes:
-#   - check-updates (default): Compare digests against cache, create issue if changed
+#   - detect-updates (default): Check for changes, prepare release PR
 #   - list-versions: Report current digests and last modified dates
 #
-# Schedule: Every 30 minutes
+# Branch strategy:
+#   Prefixed branches: automated/component-update-YYYYMMDD-HHMMSS
+#   Only one automated PR exists at a time; old PRs/branches are closed/deleted.
+#
+# Schedule: Every 4 hours
 # Manual: Run via workflow_dispatch with mode selection
 
 name: Check Components
 
 on:
   schedule:
-    - cron: '0 */4 * * *'  # Every 4 hours
+    - cron: '0 */4 * * *'
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Mode: check-updates or list-versions'
+        description: 'Mode'
         required: false
-        default: 'check-updates'
+        default: 'detect-updates'
         type: choice
         options:
-          - check-updates
+          - detect-updates
           - list-versions
 
 permissions:
-  contents: read
-  issues: write
+  contents: write
+  pull-requests: write
 
 jobs:
   check-components:
@@ -51,7 +59,7 @@ jobs:
       - name: Check components
         id: check
         env:
-          MODE: ${{ inputs.mode || 'check-updates' }}
+          MODE: ${{ inputs.mode || 'detect-updates' }}
         run: ./scripts/qe/check-components.sh
 
       - name: Report versions
@@ -61,64 +69,114 @@ jobs:
           echo ""
           echo "${{ steps.check.outputs.versions }}"
 
-      - name: Create or update issue
-        if: steps.check.outputs.mode == 'check-updates' && steps.check.outputs.has_updates == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const title = 'Component Updates Detected';
-            const labels = ['component-update', 'automated'];
-            const updates = `${{ steps.check.outputs.updates }}`;
-            const date = new Date().toISOString().split('T')[0];
-            
-            const body = `## Component Updates Detected
+      # --- detect-updates mode: commit chart changes and create PR ---
 
-            The following container images have new versions available:
+      - name: Close existing automated PRs
+        id: close-old
+        if: steps.check.outputs.mode == 'detect-updates' && steps.check.outputs.has_updates == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Find and close any existing automated component-update PRs
+          EXISTING_PRS=$(gh pr list \
+            --search "head:automated/component-update-" \
+            --state open \
+            --json number,headRefName \
+            --jq '.[] | "\(.number) \(.headRefName)"' 2>/dev/null || true)
 
-            \`\`\`
-            ${updates}
-            \`\`\`
+          if [[ -n "$EXISTING_PRS" ]]; then
+            while IFS=' ' read -r pr_number branch_name; do
+              echo "Closing existing PR #${pr_number} (branch: ${branch_name})"
+              gh pr close "$pr_number" \
+                --comment "Superseded by newer component update detection." \
+                --delete-branch 2>/dev/null || true
+            done <<< "$EXISTING_PRS"
+          else
+            echo "No existing automated PRs to close"
+          fi
 
-            ### Action Required
+      - name: Create release PR
+        id: create-pr
+        if: steps.check.outputs.mode == 'detect-updates' && steps.check.outputs.has_updates == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="automated/component-update-$(date -u +%Y%m%d-%H%M%S)"
+          CHART_VERSION="${{ steps.check.outputs.chart_version }}"
 
-            Review the changes and decide if an update is needed:
+          # Verify chart files were modified
+          if git diff --quiet HEAD -- cost-onprem/values.yaml cost-onprem/Chart.yaml; then
+            echo "No changes to chart files, skipping PR creation"
+            echo "pr_created=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-            1. **Review** the upstream changes for each component
-            2. **Test** the new versions in a development environment
-            3. **Update** \`values.yaml\` if the changes are acceptable
-            4. **Close** this issue once addressed
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add cost-onprem/values.yaml cost-onprem/Chart.yaml component-updates.json
+          git commit -m "$(cat <<EOF
+          chore: bump component images → ${CHART_VERSION}
 
-            ---
-            *Last checked: ${date}*
-            *Automatically generated by check-components workflow*`;
+          Updated components:
+          ${{ steps.check.outputs.updates_summary }}
+          EOF
+          )"
 
-            // Check for existing open issue with same title
-            const existingIssues = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              labels: labels.join(',')
-            });
+          git push -u origin "$BRANCH"
 
-            const existingIssue = existingIssues.data.find(issue => issue.title === title);
+          # Build PR body
+          cat > /tmp/pr-body.md <<'PREOF'
+          ## Component Updates
 
-            if (existingIssue) {
-              // Update existing issue
-              await github.rest.issues.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: existingIssue.number,
-                body: body
-              });
-              console.log(`Updated existing issue #${existingIssue.number}`);
-            } else {
-              // Create new issue
-              const newIssue = await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: title,
-                body: body,
-                labels: labels
-              });
-              console.log(`Created new issue #${newIssue.data.number}`);
-            }
+          ${{ steps.check.outputs.updates_summary }}
+
+          ### What This PR Does
+
+          - Updates image tags in `values.yaml` to the latest concrete versions
+          - Increments `Chart.yaml` version to `${{ steps.check.outputs.chart_version }}`
+          - This PR is **release-ready** pending test validation
+
+          ### Reviewer Actions
+
+          1. **Wait for CI** (`e2e` smoke job runs automatically)
+          2. **Trigger deeper tests** if recommended (see test-advisor comment below)
+          3. **Verify upstream CI** — confirm the new image versions passed their own CI pipelines
+          4. **Approve & merge** once satisfied
+
+          > **Upstream validation**: Before merging, confirm that the updated component
+          > versions have passed CI in their respective upstream repositories
+          > (e.g., [koku CI](https://github.com/project-koku/koku/actions),
+          > [kruize CI](https://github.com/kruize/autotune/actions)).
+
+          ---
+          *Generated by check-components workflow*
+          PREOF
+
+          PR_URL=$(gh pr create \
+            --title "chore: component updates → ${CHART_VERSION}" \
+            --body-file /tmp/pr-body.md \
+            --label "component-update" \
+            --label "automated")
+          PR_NUM=$(echo "$PR_URL" | grep -oE '[0-9]+$')
+          echo "Created PR #$PR_NUM on branch $BRANCH"
+          echo "pr_number=$PR_NUM" >> "$GITHUB_OUTPUT"
+
+      # --- Recommend test profile based on changed components ---
+
+      - name: Recommend tests
+        id: recommend
+        if: steps.create-pr.outputs.pr_number
+        env:
+          BASE_BRANCH: main
+        run: ./scripts/qe/recommend-tests.sh
+
+      - name: Comment test recommendation
+        if: steps.recommend.outputs.needs_deeper_testing == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.create-pr.outputs.pr_number }}
+          PROFILE: ${{ steps.recommend.outputs.suggested_profile }}
+          COMPONENT_TABLE: ${{ steps.recommend.outputs.component_table }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: ./scripts/qe/post-test-advisor-comment.sh

@@ -36,6 +36,10 @@ VERBOSE=false
 DRY_RUN=false
 SKIP_VALIDATION=false
 
+# CMMO source creation - set to "false" for UI testing to avoid auto-created sources
+# that interfere with empty-state tests
+CMMO_CREATE_SOURCE="${CMMO_CREATE_SOURCE:-true}"
+
 # Logging functions with level-based filtering
 log_debug() {
     [[ "$LOG_LEVEL" == "DEBUG" ]] && echo -e "${BLUE}[DEBUG]${NC} $1"
@@ -805,6 +809,7 @@ create_metrics_config() {
 
     print_status "Using gateway URL: $INGRESS_URL"
     print_status "Using Keycloak URL: $KEYCLOAK_URL"
+    print_status "CMMO create_source: $CMMO_CREATE_SOURCE"
 
     if [[ "$DRY_RUN" != "true" ]]; then
         cat << EOF | oc apply -f -
@@ -842,8 +847,10 @@ spec:
     disable_metrics_collection_resource_optimization: false
 
   # Source configuration
+  # create_source: Set via CMMO_CREATE_SOURCE env var (default: true)
+  # Set to false for UI testing to avoid auto-created sources interfering with empty-state tests
   source:
-    create_source: true
+    create_source: $CMMO_CREATE_SOURCE
     check_cycle: 1440  # 24 hours
     sources_path: "/api/cost-management/v1/"  # Points to Koku API, not Sources API
     name: ""

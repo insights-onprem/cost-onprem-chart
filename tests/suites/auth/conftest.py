@@ -4,6 +4,8 @@ Auth suite fixtures.
 Fixtures specific to JWT authentication testing.
 """
 
+import os
+
 import pytest
 import requests
 
@@ -30,10 +32,24 @@ def ui_client_config(cluster_config, keycloak_config):
 
 @pytest.fixture
 def test_user_credentials():
-    """Get test user credentials for password grant flow."""
+    """Get test user credentials for password grant flow.
+    
+    Configurable via environment variables:
+    - TEST_USERNAME: Keycloak username (default: "admin")
+    - TEST_PASSWORD: Keycloak password (default: "admin")
+    
+    Note: Currently uses "admin" user which has full access. More involved
+    RBAC testing may require different users with specific role assignments
+    in the future.
+    
+    SECURITY NOTE: These credentials are ONLY valid in ephemeral CI test
+    environments. The test Keycloak user is provisioned by the test harness
+    bootstrap (see scripts/deploy-rhbk.sh). These credentials must never
+    match any staging or production credentials.
+    """
     return {
-        "username": "admin",
-        "password": "admin",
+        "username": os.environ.get("TEST_USERNAME", "admin"),
+        "password": os.environ.get("TEST_PASSWORD", "admin"),
     }
 
 
