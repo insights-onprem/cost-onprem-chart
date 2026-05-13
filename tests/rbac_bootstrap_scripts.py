@@ -232,10 +232,10 @@ except Exception as e:
 
 
 def render_rbac_iam_reader_bootstrap_script(org_id: str, username: str) -> str:
-    """Grant ``username`` a minimal insights-rbac IAM role (list groups).
+    """Grant ``username`` a minimal insights-rbac IAM role (read-only).
 
-    Requires ``manage.py seeds`` to have created ``application=rbac`` permissions.
-    Executed inside the rbac-api pod via ``manage.py shell -c``.
+    Prefer ``rbac:group:read`` when seeded; otherwise use ``rbac:principal:read``
+    (some on-prem RBAC images only ship wildcard + principal read).
     """
     return f"""
 from api.models import Tenant
@@ -247,14 +247,15 @@ username = {repr(username)}
 public = Tenant.objects.get(tenant_name="public")
 tenant = Tenant.objects.get(org_id=org_id)
 
-perm = (
-    Permission.objects.filter(
-        application="rbac", resource_type="group", verb="read"
-    ).first()
-    or Permission.objects.filter(application="rbac").first()
-)
+perm = Permission.objects.filter(
+    application="rbac", resource_type="group", verb="read"
+).first()
 if not perm:
-    raise SystemExit("no_rbac_permissions_seeded")
+    perm = Permission.objects.filter(
+        application="rbac", permission="rbac:principal:read"
+    ).first()
+if not perm:
+    raise SystemExit("no_rbac_iam_read_permission")
 
 role, _ = Role.objects.get_or_create(
     name="Gateway RBAC IAM Reader",
@@ -265,7 +266,8 @@ role, _ = Role.objects.get_or_create(
         "version": 2,
     }},
 )
-Access.objects.get_or_create(role=role, permission=perm, tenant=public)
+Access.objects.filter(role=role).delete()
+Access.objects.create(role=role, permission=perm, tenant=public)
 
 grp, _ = Group.objects.get_or_create(
     name="Gateway RBAC IAM Readers",

@@ -87,7 +87,7 @@ def _provision_rbac_iam_reader_gateway(
     org_id: str,
     rbac_gateway_test_user_password: str,
 ):
-    """Keycloak user + RBAC group binding with minimal ``rbac:group:read`` (or first rbac perm)."""
+    """Keycloak user + RBAC group binding with read-only rbac IAM (group or principal read)."""
     admin_token = fetch_keycloak_master_admin_token(
         keycloak_config.url,
         cluster_config.keycloak_namespace,
@@ -129,7 +129,7 @@ def _provision_rbac_iam_reader_gateway(
         timeout=120,
     )
     out = (result.stdout or "") + (result.stderr or "")
-    if result.returncode != 0 or "no_rbac_permissions_seeded" in out:
+    if result.returncode != 0 or "no_rbac_iam_read_permission" in out:
         pytest.skip(
             f"RBAC IAM bootstrap skipped (returncode={result.returncode}): {out[:600]}"
         )
@@ -242,17 +242,17 @@ class TestRBACGateway:
             f"got {response.status_code}: {response.text[:300]}"
         )
 
-    def test_gateway_rbac_groups_iam_reader_returns_200(
+    def test_gateway_rbac_principals_iam_reader_returns_200(
         self,
         gateway_url: str,
         http_session: requests.Session,
         gateway_rbac_iam_user_jwt,
     ):
-        """User with ``rbac:group:read`` (or equivalent) can list groups via gateway."""
+        """User with minimal ``rbac`` read permission can list principals via gateway."""
         if not _check_gateway_reachable(gateway_url, http_session):
             pytest.skip("Gateway service not available")
 
-        url = f"{gateway_url.rstrip('/')}/rbac/v1/groups/?limit=5"
+        url = f"{gateway_url.rstrip('/')}/rbac/v1/principals/?limit=5"
         response = http_session.get(
             url,
             headers=gateway_rbac_iam_user_jwt.authorization_header,
@@ -260,12 +260,12 @@ class TestRBACGateway:
             verify=False,
         )
         assert response.status_code == 200, (
-            f"Expected 200 listing groups with IAM read role, "
+            f"Expected 200 listing principals with IAM read role, "
             f"got {response.status_code}: {response.text[:400]}"
         )
         payload = response.json()
         assert "data" in payload or "meta" in payload, (
-            f"Unexpected RBAC groups JSON shape: {list(payload.keys())[:10]}"
+            f"Unexpected RBAC principals JSON shape: {list(payload.keys())[:10]}"
         )
 
     def test_gateway_rbac_groups_post_iam_reader_forbidden(
