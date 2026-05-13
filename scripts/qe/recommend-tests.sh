@@ -6,6 +6,10 @@
 #
 # Usage: BASE_BRANCH=main ./recommend-tests.sh
 #
+# Environment variables:
+#   BASE_BRANCH   - Branch to diff against (default: main)
+#   PR_HEAD_SHA   - PR head commit SHA (for pull_request_target workflows)
+#
 # Outputs (via GITHUB_OUTPUT if set):
 #   suggested_profile, component_table, needs_deeper_testing
 #
@@ -22,6 +26,8 @@ readonly DEFAULT_BASE_BRANCH="main"
 # Allow overrides via environment variables
 IMPACT_MAP="${IMPACT_MAP:-${DEFAULT_IMPACT_MAP}}"
 BASE_BRANCH="${BASE_BRANCH:-${DEFAULT_BASE_BRANCH}}"
+# PR_HEAD_SHA: when running under pull_request_target, this is the PR's head commit
+PR_HEAD="${PR_HEAD_SHA:-HEAD}"
 
 # --- Logging helpers -------------------------------------------------------
 
@@ -225,7 +231,7 @@ max_profile="smoke"
 component_rows=""
 has_component=false
 
-changed_files=$(git diff --name-only "${BASE_BRANCH}...HEAD" 2>/dev/null || git diff --name-only HEAD~1 2>/dev/null || echo "")
+changed_files=$(git diff --name-only "${BASE_BRANCH}...${PR_HEAD}" 2>/dev/null || git diff --name-only HEAD~1 2>/dev/null || echo "")
 
 if [[ -z "$changed_files" ]]; then
     info "No changed files detected"
@@ -237,7 +243,7 @@ fi
 # 1) Check values.yaml for image tag changes — look up each in components map
 #    Parse the diff hunk-by-hunk so each added tag: line binds to the
 #    repository: that appears in the same hunk context (not a global search).
-values_diff=$(git diff "${BASE_BRANCH}...HEAD" -- cost-onprem/values.yaml 2>/dev/null || echo "")
+values_diff=$(git diff "${BASE_BRANCH}...${PR_HEAD}" -- cost-onprem/values.yaml 2>/dev/null || echo "")
 
 if [[ -n "$values_diff" ]]; then
     # Extract (repository, tag) pairs from diff hunks:
