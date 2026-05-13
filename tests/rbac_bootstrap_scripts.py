@@ -229,3 +229,61 @@ except urllib.error.HTTPError as e:
 except Exception as e:
     print(f"DIAG KOKU-DIRECT: /cost-models/ error: {{e}}")
 """
+
+
+def render_rbac_iam_reader_bootstrap_script(org_id: str, username: str) -> str:
+    """Grant ``username`` a minimal insights-rbac IAM role (list groups).
+
+    Requires ``manage.py seeds`` to have created ``application=rbac`` permissions.
+    Executed inside the rbac-api pod via ``manage.py shell -c``.
+    """
+    return f"""
+from api.models import Tenant
+from management.models import Group, Policy, Role, Principal, Access, Permission
+from django.core.cache import cache
+
+org_id = {repr(org_id)}
+username = {repr(username)}
+public = Tenant.objects.get(tenant_name="public")
+tenant = Tenant.objects.get(org_id=org_id)
+
+perm = (
+    Permission.objects.filter(
+        application="rbac", resource_type="group", verb="read"
+    ).first()
+    or Permission.objects.filter(application="rbac").first()
+)
+if not perm:
+    raise SystemExit("no_rbac_permissions_seeded")
+
+role, _ = Role.objects.get_or_create(
+    name="Gateway RBAC IAM Reader",
+    tenant=public,
+    defaults={{
+        "description": "Chart test: RBAC IAM read for gateway tests",
+        "system": False,
+        "version": 2,
+    }},
+)
+Access.objects.get_or_create(role=role, permission=perm, tenant=public)
+
+grp, _ = Group.objects.get_or_create(
+    name="Gateway RBAC IAM Readers",
+    tenant=tenant,
+    defaults={{"description": "Chart gateway IAM test group"}},
+)
+pol, _ = Policy.objects.get_or_create(
+    name="Gateway RBAC IAM Readers Policy",
+    tenant=tenant,
+    group=grp,
+)
+pol.roles.clear()
+pol.roles.add(role)
+
+principal, _ = Principal.objects.get_or_create(
+    username=username, tenant=tenant, defaults={{"type": "user"}}
+)
+grp.principals.add(principal)
+cache.clear()
+print("gateway_rbac_iam_bootstrap_ok", perm.permission)
+"""

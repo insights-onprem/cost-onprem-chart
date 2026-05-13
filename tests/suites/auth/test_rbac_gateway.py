@@ -14,12 +14,16 @@ import pytest
 import requests
 
 from conftest import obtain_password_grant_token
+from rbac_bootstrap_scripts import render_rbac_iam_reader_bootstrap_script
 from rbac_keycloak_users import (
     ensure_realm_user_with_password,
     fetch_keycloak_master_admin_token,
 )
 from suites.auth.test_gateway_auth import _check_gateway_reachable
-from utils import get_route_url, run_oc_command
+from utils import exec_in_pod_raw, get_pod_by_label, get_route_url, run_oc_command
+
+
+RBAC_IAM_GATEWAY_USERNAME = "rbac-iam-admin"
 
 
 @pytest.fixture(scope="session")
@@ -70,6 +74,79 @@ def gateway_nobody_user_jwt(
     """Fresh password-grant JWT for ``nobody-unassigned``."""
     return obtain_password_grant_token(
         "nobody-unassigned",
+        rbac_gateway_test_user_password,
+        keycloak_config,
+        cluster_config,
+    )
+
+
+@pytest.fixture(scope="module")
+def _provision_rbac_iam_reader_gateway(
+    cluster_config,
+    keycloak_config,
+    org_id: str,
+    rbac_gateway_test_user_password: str,
+):
+    """Keycloak user + RBAC group binding with minimal ``rbac:group:read`` (or first rbac perm)."""
+    admin_token = fetch_keycloak_master_admin_token(
+        keycloak_config.url,
+        cluster_config.keycloak_namespace,
+    )
+    if not admin_token:
+        pytest.skip("Could not obtain Keycloak master admin token (secret or API)")
+
+    try:
+        ensure_realm_user_with_password(
+            keycloak_base_url=keycloak_config.url,
+            realm=keycloak_config.realm,
+            admin_token=admin_token,
+            username=RBAC_IAM_GATEWAY_USERNAME,
+            password=rbac_gateway_test_user_password,
+            org_id=org_id,
+            account_number="7890123",
+            email="rbac-iam-admin@rbac-gateway.test",
+        )
+    except RuntimeError as exc:
+        pytest.skip(f"Keycloak IAM test user provisioning failed: {exc}")
+
+    rbac_pod = get_pod_by_label(
+        cluster_config.namespace, "app.kubernetes.io/component=rbac-api"
+    )
+    if not rbac_pod:
+        pytest.skip("RBAC API pod not found")
+
+    script = render_rbac_iam_reader_bootstrap_script(org_id, RBAC_IAM_GATEWAY_USERNAME)
+    result = exec_in_pod_raw(
+        cluster_config.namespace,
+        rbac_pod,
+        [
+            "python",
+            "/opt/rbac/rbac/manage.py",
+            "shell",
+            "-c",
+            script,
+        ],
+        timeout=120,
+    )
+    out = (result.stdout or "") + (result.stderr or "")
+    if result.returncode != 0 or "no_rbac_permissions_seeded" in out:
+        pytest.skip(
+            f"RBAC IAM bootstrap skipped (returncode={result.returncode}): {out[:600]}"
+        )
+
+    yield
+
+
+@pytest.fixture
+def gateway_rbac_iam_user_jwt(
+    cluster_config,
+    keycloak_config,
+    rbac_gateway_test_user_password: str,
+    _provision_rbac_iam_reader_gateway,
+):
+    """JWT for user with insights-rbac IAM read (groups list)."""
+    return obtain_password_grant_token(
+        RBAC_IAM_GATEWAY_USERNAME,
         rbac_gateway_test_user_password,
         keycloak_config,
         cluster_config,
@@ -128,6 +205,93 @@ class TestRBACGateway:
         assert response.status_code in (403, 424), (
             f"Expected 403 (RBAC deny) or 424 (RBAC dependency failure), "
             f"got {response.status_code}: {response.text[:300]}"
+        )
+
+    def test_gateway_rbac_groups_unauthenticated_returns_401(
+        self, gateway_url: str, http_session: requests.Session
+    ):
+        """RBAC IAM ``/groups/`` requires JWT at the gateway."""
+        if not _check_gateway_reachable(gateway_url, http_session):
+            pytest.skip("Gateway service not available")
+
+        url = f"{gateway_url.rstrip('/')}/rbac/v1/groups/?limit=1"
+        response = http_session.get(url, timeout=20)
+        assert response.status_code == 401, (
+            f"Expected 401 without Authorization on RBAC groups, got "
+            f"{response.status_code}: {response.text[:200]}"
+        )
+
+    def test_gateway_rbac_groups_user_without_iam_returns_403(
+        self,
+        gateway_url: str,
+        http_session: requests.Session,
+        gateway_nobody_user_jwt,
+    ):
+        """User with no ``rbac`` application permissions cannot list groups."""
+        if not _check_gateway_reachable(gateway_url, http_session):
+            pytest.skip("Gateway service not available")
+
+        url = f"{gateway_url.rstrip('/')}/rbac/v1/groups/?limit=1"
+        response = http_session.get(
+            url,
+            headers=gateway_nobody_user_jwt.authorization_header,
+            timeout=60,
+        )
+        assert response.status_code in (403, 424), (
+            f"Expected 403 or 424 for RBAC groups without IAM perms, "
+            f"got {response.status_code}: {response.text[:300]}"
+        )
+
+    def test_gateway_rbac_groups_iam_reader_returns_200(
+        self,
+        gateway_url: str,
+        http_session: requests.Session,
+        gateway_rbac_iam_user_jwt,
+    ):
+        """User with ``rbac:group:read`` (or equivalent) can list groups via gateway."""
+        if not _check_gateway_reachable(gateway_url, http_session):
+            pytest.skip("Gateway service not available")
+
+        url = f"{gateway_url.rstrip('/')}/rbac/v1/groups/?limit=5"
+        response = http_session.get(
+            url,
+            headers=gateway_rbac_iam_user_jwt.authorization_header,
+            timeout=60,
+            verify=False,
+        )
+        assert response.status_code == 200, (
+            f"Expected 200 listing groups with IAM read role, "
+            f"got {response.status_code}: {response.text[:400]}"
+        )
+        payload = response.json()
+        assert "data" in payload or "meta" in payload, (
+            f"Unexpected RBAC groups JSON shape: {list(payload.keys())[:10]}"
+        )
+
+    def test_gateway_rbac_groups_post_iam_reader_forbidden(
+        self,
+        gateway_url: str,
+        http_session: requests.Session,
+        gateway_rbac_iam_user_jwt,
+    ):
+        """Read-only IAM role must not allow creating groups."""
+        if not _check_gateway_reachable(gateway_url, http_session):
+            pytest.skip("Gateway service not available")
+
+        url = f"{gateway_url.rstrip('/')}/rbac/v1/groups/"
+        response = http_session.post(
+            url,
+            headers={
+                **gateway_rbac_iam_user_jwt.authorization_header,
+                "Content-Type": "application/json",
+            },
+            json={"name": "pytest-rbac-iam-write-deny"},
+            timeout=60,
+            verify=False,
+        )
+        assert response.status_code in (403, 400), (
+            f"Expected 403 (forbidden) or 400 (validation before authz) for POST "
+            f"groups without write, got {response.status_code}: {response.text[:400]}"
         )
 
     def test_gateway_ros_recommendations_user_without_rbac_returns_403(
