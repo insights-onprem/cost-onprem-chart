@@ -845,7 +845,7 @@ valkey:
   port: 6379
   auth:
     enabled: true
-    secretName: "my-redis-credentials"  # Secret with key: redis-password
+    secretName: "my-redis-credentials"  # Secret with keys: redis-password, redis-username (optional)
 ```
 
 ```yaml
@@ -856,7 +856,7 @@ valkey:
   port: 6380
   auth:
     enabled: true
-    secretName: "my-redis-credentials"  # Secret with key: redis-password
+    secretName: "my-redis-credentials"  # Secret with keys: redis-password, redis-username (optional)
   tls:
     enabled: true
     caCertSecretName: "my-redis-ca"     # Secret with key: ca.crt
@@ -876,15 +876,22 @@ valkey:
 When `valkey.deploy: false`:
 - The chart skips the Valkey Deployment, Service, and PVC
 - Koku and Celery components connect to the external Redis host
-- If `auth.enabled`, a `REDIS_PASSWORD` environment variable is injected into all consumers (requires `auth.secretName`)
+- If `auth.enabled`, `REDIS_PASSWORD` (and optionally `REDIS_USERNAME`) environment variables are injected into all consumers (requires `auth.secretName`)
 - If `tls.enabled`, `REDIS_SSL=True` is set and the connection uses `rediss://` scheme
 - If `tls.caCertSecretName` is provided, the CA certificate is mounted at `/etc/redis-tls/ca.crt` and certificate verification is enforced (`ssl.CERT_REQUIRED`); without it, TLS is used but certificates are not verified (`ssl.CERT_NONE`)
 
 **Creating the auth Secret:**
 
 ```bash
+# Password only (default Redis user):
 kubectl create secret generic my-redis-credentials \
   --from-literal=redis-password='YOUR_REDIS_PASSWORD' \
+  -n cost-onprem
+
+# Password + username (Redis 6+ ACL authentication):
+kubectl create secret generic my-redis-credentials \
+  --from-literal=redis-password='YOUR_REDIS_PASSWORD' \
+  --from-literal=redis-username='YOUR_REDIS_USERNAME' \
   -n cost-onprem
 ```
 
