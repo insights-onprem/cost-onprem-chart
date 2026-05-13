@@ -312,6 +312,12 @@ Common environment variables for Koku API and Celery
 {{- if not .Values.valkey.auth.secretName }}
   {{- fail "valkey.auth.enabled is true but valkey.auth.secretName is empty. Provide the name of a Secret containing key 'redis-password'." -}}
 {{- end }}
+- name: REDIS_USERNAME
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.valkey.auth.secretName }}
+      key: redis-username
+      optional: true
 - name: REDIS_PASSWORD
   valueFrom:
     secretKeyRef:

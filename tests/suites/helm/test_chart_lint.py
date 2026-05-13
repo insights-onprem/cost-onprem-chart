@@ -118,6 +118,7 @@ class TestExternalValkey:
         success, output = helm_template(chart_path, set_values=values)
         assert success, f"Helm template failed:\n{output}"
         assert "REDIS_PASSWORD" in output, "REDIS_PASSWORD env var not rendered"
+        assert "REDIS_USERNAME" in output, "REDIS_USERNAME env var not rendered"
         assert "my-redis-secret" in output, "Secret reference not rendered"
         assert "kind: Deployment" not in output or "valkey" not in output.split("kind: Deployment")[0].split("---")[-1] or True, "Valkey deployment should not render"
 
@@ -165,6 +166,7 @@ class TestExternalValkey:
         }
         success, output = helm_template(chart_path, set_values=values)
         assert success, f"Helm template failed:\n{output}"
+        assert "REDIS_USERNAME" in output
         assert "REDIS_PASSWORD" in output
         assert "REDIS_SSL" in output
         assert "REDIS_SSL_CA_CERTS" in output
@@ -173,6 +175,7 @@ class TestExternalValkey:
         """Verify bundled Valkey does not inject TLS env vars."""
         success, output = helm_template(chart_path, set_values=OFFLINE_MOCK_VALUES)
         assert success, f"Helm template failed:\n{output}"
+        assert "REDIS_USERNAME" not in output, "REDIS_USERNAME should not be set for bundled Valkey"
         assert "REDIS_SSL" not in output, "REDIS_SSL should not be set for bundled Valkey"
         assert "redis-tls-ca" not in output, "TLS volume should not exist for bundled Valkey"
 

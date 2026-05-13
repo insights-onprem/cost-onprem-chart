@@ -738,8 +738,9 @@ valkey:
   # For password-protected Redis instances (e.g., ElastiCache, Redis Enterprise)
   auth:
     enabled: false
-    # Name of the Secret containing key: 'redis-password'
-    # Required when auth.enabled is true.
+    # Name of the Secret containing key 'redis-password' (required when auth.enabled is true).
+    # The Secret may also contain key 'redis-username' for Redis 6+ ACL authentication.
+    # When 'redis-username' is absent, the default Redis user is used.
     secretName: ""
 
   # TLS configuration for external Redis/Valkey (only used when deploy is false)
