@@ -328,17 +328,16 @@ def jwt_token(keycloak_config: KeycloakConfig) -> JWTToken:
     return obtain_jwt_token(keycloak_config)
 
 
-def obtain_user_jwt_token_for(
+def obtain_password_grant_token(
+    username: str,
+    password: str,
     keycloak_config: KeycloakConfig,
-    cluster_config,
-    username: str = "admin",
-    password: str = "admin",
+    cluster_config: ClusterConfig,
 ) -> JWTToken:
-    """Obtain a JWT token via password grant for the given user.
+    """Obtain a JWT via resource-owner password grant (confidential UI client).
 
-    The cost-management-operator SA token has a ``service-account-*`` username
-    that RBAC rejects with 400 ("Invalid format for a Service Account username").
-    API tests that go through the gateway must use a regular user token instead.
+    Use for gateway calls where RBAC expects a normal ``User`` identity (not a
+    service-account ``preferred_username``).
     """
     ui_client_id = "cost-management-ui"
     ui_client_secret = get_secret_value(
@@ -378,9 +377,29 @@ def obtain_user_jwt_token_for(
     )
 
 
+def obtain_user_jwt_token_for(
+    keycloak_config: KeycloakConfig,
+    cluster_config: ClusterConfig,
+    username: str = "admin",
+    password: str = "admin",
+) -> JWTToken:
+    """Obtain a JWT token via password grant for the given user."""
+    return obtain_password_grant_token(username, password, keycloak_config, cluster_config)
+
+
 def obtain_user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JWTToken:
-    """Obtain a JWT token via password grant for the admin user."""
-    return obtain_user_jwt_token_for(keycloak_config, cluster_config)
+    """Obtain a JWT token via password grant for the admin user.
+
+    The cost-management-operator SA token has a ``service-account-*`` username
+    that RBAC rejects with 400 ("Invalid format for a Service Account username").
+    API tests that go through the gateway must use a regular user token instead.
+    """
+    return obtain_password_grant_token(
+        os.environ.get("TEST_USERNAME", "admin"),
+        os.environ.get("TEST_PASSWORD", "admin"),
+        keycloak_config,
+        cluster_config,
+    )
 
 
 @pytest.fixture(scope="function")
