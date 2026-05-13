@@ -822,8 +822,14 @@ spec:
               userinfo.token.claim: "true"
               id.token.claim: "true"
               access.token.claim: "true"
-              claim.name: resource_access.${client_id}.roles
+              claim.name: "resource_access.\${client_id}.roles"
               jsonType.label: String
+          - name: audience resolve
+            protocol: openid-connect
+            protocolMapper: oidc-audience-resolve-mapper
+            config:
+              introspection.token.claim: "true"
+              access.token.claim: "true"
     roles:
       realm:
         - name: org-admin
@@ -854,7 +860,6 @@ spec:
           - roles
         optionalClientScopes:
           - offline_access
-          - roles
         protocolMappers:
           - name: audience-mapper
             protocol: openid-connect
@@ -933,7 +938,6 @@ spec:
           - roles
         optionalClientScopes:
           - offline_access
-          - roles
         protocolMappers:
           - name: aud-mapper-cost-management-ui
             protocol: openid-connect
