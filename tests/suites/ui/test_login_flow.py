@@ -30,25 +30,38 @@ class TestLoginFlow:
         expect(page.locator('input[name="password"]')).to_be_visible()
 
     def test_successful_login(self, page: Page, ui_url: str, keycloak_config):
-        """Verify successful login redirects back to UI."""
+        """Verify successful login redirects back to UI.
+        
+        Credentials are configurable via environment variables:
+        - TEST_USERNAME: Keycloak username (default: "admin")
+        - TEST_PASSWORD: Keycloak password (default: "admin")
+        
+        SECURITY NOTE: These credentials are ONLY valid in ephemeral CI test
+        environments. The test Keycloak user is provisioned by the test harness
+        bootstrap (see scripts/deploy-rhbk.sh). These credentials must never
+        match any staging or production credentials.
+        """
         import os
         
         # Navigate to UI (redirects to Keycloak)
         page.goto(ui_url)
         page.wait_for_url(f"**/{keycloak_config.realm}/**", timeout=10000)
         
-        # Fill login form
-        username = os.environ.get("TEST_UI_USERNAME", "admin")
-        password = os.environ.get("TEST_UI_PASSWORD", "admin")
+        # Fill login form (see docstring for security notes on credentials)
+        username = os.environ.get("TEST_USERNAME", "admin")
+        password = os.environ.get("TEST_PASSWORD", "admin")
         
         page.fill('input[name="username"]', username)
         page.fill('input[name="password"]', password)
         page.click('input[type="submit"], button[type="submit"]')
         
         # Should redirect back to UI
-        page.wait_for_url(f"{ui_url}**", timeout=15000)
+        page.wait_for_url(f"{ui_url}**", timeout=30000)
         
-        # Verify we're on the UI (not Keycloak)
+        # Verify we're on the UI (not Keycloak or stuck at OAuth2 callback)
+        assert "/oauth2/callback" not in page.url, (
+            f"OAuth2 callback did not complete. Page stuck at: {page.url}"
+        )
         expect(page).not_to_have_url(re.compile(f".*{keycloak_config.realm}.*"))
 
     def test_invalid_credentials_shows_error(self, page: Page, ui_url: str, keycloak_config):

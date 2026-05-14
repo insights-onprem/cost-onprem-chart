@@ -115,6 +115,9 @@ Provides DB, Redis, and application configuration for non-Clowder mode.
   value: "00000000-0000-4000-a000-000000000004"
 - name: CLOWDER_ENABLED
   value: "false"
+  {{/* On-prem has no Back Office Proxy (BOP/mbop); bypass its identity
+       verification so RBAC accepts the X-Rh-Identity header directly from
+       Envoy. Required for on-prem; SaaS uses BOP for this check. */}}
 - name: BYPASS_BOP_VERIFICATION
   value: "True"
 - name: KAFKA_ENABLED
@@ -145,6 +148,54 @@ RBAC service port (always 8000 — internal only, not user-configurable).
 */}}
 {{- define "cost-onprem.rbac.service.port" -}}
 8000
+{{- end -}}
+
+{{/*
+Resolve the bootstrap admin identity from jwtAuth.realmUsers.
+Finds the first entry with orgAdmin=true and returns username, orgId,
+accountNumber. When bootstrapAdmin.enabled is true and no orgAdmin
+user exists, the template fails with an actionable error.
+*/}}
+{{- define "cost-onprem.rbac.bootstrapAdmin.username" -}}
+{{- $found := false -}}
+{{- range .Values.jwtAuth.realmUsers -}}
+  {{- if and (not $found) .orgAdmin -}}
+    {{- $found = true -}}
+    {{- .username | required "jwtAuth.realmUsers: orgAdmin entry must have a username" -}}
+  {{- end -}}
+{{- end -}}
+{{- if not $found -}}
+  {{- if .Values.rbac.bootstrapAdmin.enabled -}}
+    {{- fail "rbac.bootstrapAdmin.enabled is true but no orgAdmin:true entry found in jwtAuth.realmUsers" -}}
+  {{- end -}}
+  {{- "admin" -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "cost-onprem.rbac.bootstrapAdmin.orgId" -}}
+{{- $found := false -}}
+{{- range .Values.jwtAuth.realmUsers -}}
+  {{- if and (not $found) .orgAdmin -}}
+    {{- $found = true -}}
+    {{- .orgId | required "jwtAuth.realmUsers: orgAdmin entry must have an orgId" -}}
+  {{- end -}}
+{{- end -}}
+{{- if not $found -}}
+  {{- "org1234567" -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "cost-onprem.rbac.bootstrapAdmin.accountNumber" -}}
+{{- $found := false -}}
+{{- range .Values.jwtAuth.realmUsers -}}
+  {{- if and (not $found) .orgAdmin -}}
+    {{- $found = true -}}
+    {{- .accountNumber | required "jwtAuth.realmUsers: orgAdmin entry must have an accountNumber" -}}
+  {{- end -}}
+{{- end -}}
+{{- if not $found -}}
+  {{- "7890123" -}}
+{{- end -}}
 {{- end -}}
 
 {{/*

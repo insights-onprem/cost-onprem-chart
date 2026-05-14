@@ -68,16 +68,9 @@ class TestJWTTokenAcquisition:
 
     def test_token_payload_decodable(self, jwt_token):
         """Verify JWT payload can be decoded."""
-        import base64
-        import json
-        
-        payload_b64 = jwt_token.access_token.split(".")[1]
-        # Add padding if needed
-        padding = 4 - len(payload_b64) % 4
-        if padding != 4:
-            payload_b64 += "=" * padding
-        
-        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-        
+        from conftest import decode_jwt_payload
+
+        payload = decode_jwt_payload(jwt_token.access_token)
+
         assert "exp" in payload, "Token missing 'exp' claim"
         assert "iss" in payload, "Token missing 'iss' claim"

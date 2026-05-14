@@ -443,7 +443,14 @@ deploy_rhbk() {
         export VERBOSE="true"
     fi
 
-    if ! execute_script "${SCRIPT_DEPLOY_RHBK}"; then
+    local rhbk_args=()
+    local chart_values="${PROJECT_ROOT}/cost-onprem/values.yaml"
+    if [[ -f "${chart_values}" ]]; then
+        rhbk_args+=(-f "${chart_values}")
+        log_info "Provisioning Keycloak users from: ${chart_values}"
+    fi
+
+    if ! execute_script "${SCRIPT_DEPLOY_RHBK}" "${rhbk_args[@]}"; then
         log_error "Red Hat Build of Keycloak (RHBK) deployment failed"
         exit 1
     fi
