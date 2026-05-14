@@ -1189,19 +1189,23 @@ def get_deployment_logs(
     Example:
         logs = get_deployment_logs("cost-onprem", "cost-onprem-koku-api", tail=500)
     """
-    # Get the deployment's selector labels
+    # Get the deployment's selector labels as JSON
     try:
         result = run_oc_command([
             "get", "deployment", deployment_name, "-n", namespace,
-            "-o", "jsonpath={.spec.selector.matchLabels}"
+            "-o", "json"
         ], check=False)
         
         if result.returncode != 0 or not result.stdout.strip():
             return None
         
-        # Parse the labels JSON and convert to label selector
-        labels_json = result.stdout.strip()
-        labels = json.loads(labels_json)
+        # Parse the full deployment JSON and extract matchLabels
+        deployment = json.loads(result.stdout)
+        labels = deployment.get("spec", {}).get("selector", {}).get("matchLabels", {})
+        
+        if not labels:
+            return None
+        
         label_selector = ",".join(f"{k}={v}" for k, v in labels.items())
         
         return get_pod_logs(

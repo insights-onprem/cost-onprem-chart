@@ -88,7 +88,6 @@ Validates database schema, migrations, and FLPATH-3265 hive workaround removal.
 | | `test_hive_database_not_created` | Verifies hive database does NOT exist (FLPATH-3265) |
 | | `test_koku_user_lacks_createrole_privilege` | Verifies koku_user lacks CREATEROLE (FLPATH-3265) |
 | | `test_koku_user_lacks_createdb_privilege` | Verifies koku_user lacks CREATEDB (FLPATH-3265) |
-| | `test_migration_skipped_hive_creation` | Validates migration logs show hive creation skipped |
 | `TestKruizeDatabase` | `test_kruize_experiments_table_exists` | Verifies kruize_experiments table exists |
 | | `test_kruize_recommendations_table_exists` | Verifies kruize_recommendations table exists |
 
