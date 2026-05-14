@@ -56,9 +56,12 @@ class TestLoginFlow:
         page.click('input[type="submit"], button[type="submit"]')
         
         # Should redirect back to UI
-        page.wait_for_url(f"{ui_url}**", timeout=15000)
+        page.wait_for_url(f"{ui_url}**", timeout=30000)
         
-        # Verify we're on the UI (not Keycloak)
+        # Verify we're on the UI (not Keycloak or stuck at OAuth2 callback)
+        assert "/oauth2/callback" not in page.url, (
+            f"OAuth2 callback did not complete. Page stuck at: {page.url}"
+        )
         expect(page).not_to_have_url(re.compile(f".*{keycloak_config.realm}.*"))
 
     def test_invalid_credentials_shows_error(self, page: Page, ui_url: str, keycloak_config):

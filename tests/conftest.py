@@ -43,6 +43,20 @@ pytest_plugins = ["suites.cost_management.conftest", "suites.sources.conftest"]
 # Disable SSL warnings for self-signed certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# Fallback identity values when Keycloak is unreachable.
+# Canonical source: jwtAuth.realmUsers in cost-onprem/values.yaml.
+_DEFAULT_ORG_ID = "org1234567"
+_DEFAULT_ACCOUNT_NUMBER = "7890123"
+
+
+def decode_jwt_payload(access_token: str) -> dict:
+    """Decode the payload section of a JWT without signature verification."""
+    payload_b64 = access_token.split(".")[1]
+    padding = 4 - len(payload_b64) % 4
+    if padding != 4:
+        payload_b64 += "=" * padding
+    return json.loads(base64.urlsafe_b64decode(payload_b64))
+
 
 # =============================================================================
 # Data Classes
@@ -314,8 +328,13 @@ def jwt_token(keycloak_config: KeycloakConfig) -> JWTToken:
     return obtain_jwt_token(keycloak_config)
 
 
-def obtain_user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JWTToken:
-    """Obtain a JWT token via password grant for the admin user.
+def obtain_user_jwt_token_for(
+    keycloak_config: KeycloakConfig,
+    cluster_config,
+    username: str = "admin",
+    password: str = "admin",
+) -> JWTToken:
+    """Obtain a JWT token via password grant for the given user.
 
     The cost-management-operator SA token has a ``service-account-*`` username
     that RBAC rejects with 400 ("Invalid format for a Service Account username").
@@ -336,8 +355,8 @@ def obtain_user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JW
             "grant_type": "password",
             "client_id": ui_client_id,
             "client_secret": ui_client_secret,
-            "username": "admin",
-            "password": "admin",
+            "username": username,
+            "password": password,
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         verify=False,
@@ -346,7 +365,7 @@ def obtain_user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JW
 
     if response.status_code != 200:
         pytest.fail(
-            f"Failed to obtain user JWT token via password grant: "
+            f"Failed to obtain JWT token for {username!r} via password grant: "
             f"{response.status_code} - {response.text}"
         )
 
@@ -357,6 +376,11 @@ def obtain_user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JW
         access_token=token_data["access_token"],
         expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in),
     )
+
+
+def obtain_user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JWTToken:
+    """Obtain a JWT token via password grant for the admin user."""
+    return obtain_user_jwt_token_for(keycloak_config, cluster_config)
 
 
 @pytest.fixture(scope="function")
@@ -806,7 +830,7 @@ def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> st
         ], check=False)
         
         if not admin_pass_result.stdout.strip():
-            return "org1234567"
+            return _DEFAULT_ORG_ID
         
         admin_password = base64.b64decode(admin_pass_result.stdout.strip()).decode("utf-8")
         
@@ -824,7 +848,7 @@ def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> st
         )
         
         if token_response.status_code != 200:
-            return "org1234567"
+            return _DEFAULT_ORG_ID
         
         admin_token = token_response.json().get("access_token")
         
@@ -847,9 +871,9 @@ def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> st
                 if org_id_value:
                     return org_id_value
         
-        return "org1234567"
+        return _DEFAULT_ORG_ID
     except Exception:
-        return "org1234567"
+        return _DEFAULT_ORG_ID
 
 
 # =============================================================================
@@ -889,9 +913,7 @@ def _rbac_bootstrap(cluster_config: ClusterConfig, keycloak_config: KeycloakConf
     sa_default = f"service-account-{keycloak_config.client_id}"
     sa_mapper_override = "cost-mgmt-operator"
     try:
-        payload = token.access_token.split(".")[1]
-        payload += "=" * (4 - len(payload) % 4)
-        claims = json.loads(base64.urlsafe_b64decode(payload))
+        claims = decode_jwt_payload(token.access_token)
         sa_username = claims.get("preferred_username") or claims.get("sub", sa_default)
     except Exception:
         sa_username = sa_default
@@ -922,8 +944,8 @@ def _rbac_bootstrap(cluster_config: ClusterConfig, keycloak_config: KeycloakConf
         return
 
     # Resolve org_id from the token claims or fall back to default
-    org_id_value = claims.get("org_id") or "org1234567"
-    acct_number = claims.get("account_number") or "1234567"
+    org_id_value = claims.get("org_id") or _DEFAULT_ORG_ID
+    acct_number = claims.get("account_number") or _DEFAULT_ACCOUNT_NUMBER
 
     bootstrap_script = render_bootstrap_script(sa_usernames, org_id_value, acct_number)
 

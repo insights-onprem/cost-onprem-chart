@@ -66,8 +66,10 @@ CMMO Source Creation:
 """
 
 import os
+import re
 import shutil
 from typing import Generator
+from urllib.parse import urlparse
 
 import pytest
 from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_playwright
@@ -179,6 +181,75 @@ def keycloak_login_url(keycloak_config: KeycloakConfig) -> str:
 # =============================================================================
 
 
+def _assert_callback_completed(
+    page,
+    context: BrowserContext,
+    ui_url: str,
+    timeout: int = 10000,
+) -> None:
+    """Verify the OAuth2 proxy callback completed and session cookies are set.
+
+    After Keycloak redirects to /oauth2/callback, oauth2-proxy must exchange
+    the code for tokens and redirect to the app.  If the page is still at
+    /oauth2/callback, the token exchange failed (e.g. bad TLS, malformed
+    claim names, missing audience).
+    """
+    if "/oauth2/callback" in page.url:
+        try:
+            page.wait_for_url(
+                re.compile(rf".*{re.escape(urlparse(ui_url).netloc)}(?!/oauth2/callback).*"),
+                timeout=timeout,
+            )
+        except Exception:
+            raise RuntimeError(
+                f"OAuth2 callback did not complete. Page stuck at: {page.url}\n"
+                "oauth2-proxy failed to exchange the authorization code for tokens. "
+                "Check oauth-proxy container logs for errors (TLS, redirect_uri mismatch, "
+                "malformed roles scope, etc.)."
+            )
+
+    session_cookies = [
+        c for c in context.cookies()
+        if c["name"].startswith("_oauth2_proxy")
+        and c["name"] != "_oauth2_proxy_csrf"
+    ]
+    if not session_cookies:
+        raise RuntimeError(
+            f"Login completed (URL: {page.url}) but no _oauth2_proxy session "
+            "cookies were set. The OAuth2 callback may have returned an error page."
+        )
+
+
+def _login_context(
+    browser: Browser,
+    ui_url: str,
+    keycloak_config: KeycloakConfig,
+    username: str,
+    password: str,
+) -> BrowserContext:
+    """Create a browser context authenticated via Keycloak login form.
+
+    Verifies the OAuth2 callback completes and session cookies are set.
+    """
+    context = browser.new_context(
+        viewport={"width": 1920, "height": 1080},
+        ignore_https_errors=True,
+    )
+
+    page = context.new_page()
+    page.goto(ui_url)
+    page.wait_for_url(f"**/{keycloak_config.realm}/**", timeout=10000)
+
+    page.fill('input[name="username"]', username)
+    page.fill('input[name="password"]', password)
+    page.click('input[type="submit"], button[type="submit"]')
+
+    page.wait_for_url(f"{ui_url}**", timeout=30000)
+    _assert_callback_completed(page, context, ui_url)
+    page.close()
+    return context
+
+
 def _get_reports_base_dir() -> str:
     """Get the base reports directory."""
     return os.path.join(
@@ -214,9 +285,9 @@ def authenticated_context(
     Performs Keycloak login and stores the session for the test.
     
     Credentials:
-        Default credentials are test/test, configurable via environment variables:
-        - TEST_USERNAME: Keycloak username (default: "admin")
-        - TEST_PASSWORD: Keycloak password (default: "admin")
+        Default credentials are admin/admin, configurable via environment variables:
+        - TEST_UI_USERNAME: Keycloak username (default: "admin")
+        - TEST_UI_PASSWORD: Keycloak password (default: "admin")
         
         SECURITY NOTE: These credentials are ONLY valid in ephemeral CI test
         environments. The test Keycloak user is provisioned by the test harness
@@ -265,19 +336,20 @@ def authenticated_context(
     page.wait_for_url(f"**/{keycloak_config.realm}/**", timeout=10000)
     
     # Fill login form (see docstring for security notes on these defaults)
-    username = os.environ.get("TEST_USERNAME", "admin")
-    password = os.environ.get("TEST_PASSWORD", "admin")
+    username = os.environ.get("TEST_UI_USERNAME", "admin")
+    password = os.environ.get("TEST_UI_PASSWORD", "admin")
     
     page.fill('input[name="username"]', username)
     page.fill('input[name="password"]', password)
     page.click('input[type="submit"], button[type="submit"]')
     
-    # Wait for redirect back to UI - use wildcard pattern that matches any path
-    # After login, UI may redirect to /openshift/cost-management or other paths
-    from urllib.parse import urlparse
+    # Wait for redirect back to UI host (any path)
     parsed = urlparse(ui_url)
     ui_host_pattern = f"**{parsed.netloc}**"
-    page.wait_for_url(ui_host_pattern, timeout=15000)
+    page.wait_for_url(ui_host_pattern, timeout=30000)
+    
+    # Verify the OAuth2 callback completed and cookies are set
+    _assert_callback_completed(page, context, ui_url)
     
     # Wait for page to fully load
     page.wait_for_load_state("networkidle")
@@ -290,6 +362,28 @@ def authenticated_context(
     # This ensures cleanup happens even if artifact capture fails.
     # If authenticated_context is used directly (without authenticated_page),
     # the context must be closed explicitly by the test or another fixture.
+
+
+@pytest.fixture(scope="function")
+def non_admin_authenticated_context(
+    browser: Browser,
+    ui_url: str,
+    keycloak_config: KeycloakConfig,
+) -> Generator[BrowserContext, None, None]:
+    """Browser context authenticated as viewer (no org-admin role)."""
+    context = _login_context(browser, ui_url, keycloak_config, "viewer", "viewer")
+    yield context
+    context.close()
+
+
+@pytest.fixture(scope="function")
+def non_admin_authenticated_page(
+    non_admin_authenticated_context: BrowserContext,
+) -> Generator[Page, None, None]:
+    """Create a page with non-admin (viewer) session."""
+    page = non_admin_authenticated_context.new_page()
+    yield page
+    page.close()
 
 
 # =============================================================================

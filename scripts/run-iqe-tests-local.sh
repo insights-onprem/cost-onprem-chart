@@ -470,8 +470,40 @@ extract_cluster_config() {
     export DYNACONF_users__cost_onprem_user__auth__jwt_grant_type="client_credentials"
     export DYNACONF_users__cost_onprem_user__auth__client_id="$DYNACONF_ONPREM_CLIENT_ID"
     export DYNACONF_users__cost_onprem_user__auth__client_secret="$DYNACONF_ONPREM_CLIENT_SECRET"
-    export DYNACONF_users__cost_onprem_user__identity__account_number="7890123"
-    export DYNACONF_users__cost_onprem_user__identity__org_id="org1234567"
+    # Read org_id and account_number from Keycloak (canonical source: jwtAuth.realmUsers)
+    local iqe_org_id="org1234567"
+    local iqe_acct="7890123"
+    local kc_host
+    kc_host=$(kubectl get route keycloak -n "$KEYCLOAK_NS" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+    if [ -n "$kc_host" ]; then
+        local kc_admin_user kc_admin_pass kc_token kc_user_json
+        kc_admin_user=$(kubectl get secret keycloak-initial-admin -n "$KEYCLOAK_NS" -o jsonpath='{.data.username}' 2>/dev/null | base64 -d || echo "admin")
+        kc_admin_pass=$(kubectl get secret keycloak-initial-admin -n "$KEYCLOAK_NS" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || echo "")
+        if [ -n "$kc_admin_pass" ]; then
+            kc_token=$(curl -sk -X POST "https://${kc_host}/realms/master/protocol/openid-connect/token" \
+                -d "client_id=admin-cli&grant_type=password&username=${kc_admin_user}&password=${kc_admin_pass}" 2>/dev/null | jq -r '.access_token // empty')
+            if [ -n "$kc_token" ]; then
+                # Find the first user with the org-admin realm role
+                local admin_username="admin"
+                local role_members
+                role_members=$(curl -sk "https://${kc_host}/admin/realms/kubernetes/roles/org-admin/users" \
+                    -H "Authorization: Bearer ${kc_token}" 2>/dev/null)
+                local detected_admin
+                detected_admin=$(echo "$role_members" | jq -r '.[0].username // empty')
+                [ -n "$detected_admin" ] && admin_username="$detected_admin"
+
+                kc_user_json=$(curl -sk "https://${kc_host}/admin/realms/kubernetes/users?username=${admin_username}&exact=true" \
+                    -H "Authorization: Bearer ${kc_token}" 2>/dev/null)
+                local detected_org detected_acct
+                detected_org=$(echo "$kc_user_json" | jq -r '.[0].attributes.org_id[0] // empty')
+                detected_acct=$(echo "$kc_user_json" | jq -r '.[0].attributes.account_number[0] // empty')
+                [ -n "$detected_org" ] && iqe_org_id="$detected_org"
+                [ -n "$detected_acct" ] && iqe_acct="$detected_acct"
+            fi
+        fi
+    fi
+    export DYNACONF_users__cost_onprem_user__identity__account_number="$iqe_acct"
+    export DYNACONF_users__cost_onprem_user__identity__org_id="$iqe_org_id"
     
     if [ "$DRY_RUN" = true ]; then
         log "[DRY RUN] Cluster configuration:"
