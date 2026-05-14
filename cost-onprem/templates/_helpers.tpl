@@ -1,6 +1,7 @@
 {{/*
 Expand the name of the chart.
 */}}
+{{/* TEST: Temporary change to validate recommend-tests workflow comment posting - REMOVE AFTER TESTING */}}
 {{/* prettier-ignore */}}
 {{- define "cost-onprem.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
