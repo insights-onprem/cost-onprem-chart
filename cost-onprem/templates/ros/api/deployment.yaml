@@ -93,6 +93,11 @@ spec:
               value: {{ include "cost-onprem.kafka.bootstrapServers" . | quote }}
             - name: KAFKA_SECURITY_PROTOCOL
               value: {{ include "cost-onprem.kafka.securityProtocol" . | quote }}
+            {{- include "cost-onprem.kafka.saslEnv" . | nindent 12 }}
+          {{- if and .Values.kafka.tls.enabled .Values.kafka.tls.caCertSecret }}
+          volumeMounts:
+            {{- include "cost-onprem.kafka.tlsVolumeMount" . | nindent 12 }}
+          {{- end }}
           livenessProbe:
             httpGet:
               path: /status
@@ -111,3 +116,7 @@ spec:
             failureThreshold: {{ .Values.probes.failureThreshold }}
           resources:
             {{- toYaml .Values.resources.application | nindent 12 }}
+      {{- if and .Values.kafka.tls.enabled .Values.kafka.tls.caCertSecret }}
+      volumes:
+        {{- include "cost-onprem.kafka.tlsVolume" . | nindent 8 }}
+      {{- end }}
