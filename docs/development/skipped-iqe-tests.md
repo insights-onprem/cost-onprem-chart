@@ -49,7 +49,7 @@ A curated set of source and cost model tests that pass reliably. Good for quick 
 ```
 
 Includes:
-- Source CRUD operations (except update)
+- Source CRUD operations (including update — FLPATH-3423 resolved)
 - Cost model creation and application
 - Basic API validation
 
@@ -107,7 +107,7 @@ comment on each test identifies the Jira ticket.
 | COST-7179: GPU/MIG schema mismatch | ~27 functions | bucketing, cost reports, volume, VM, forecasting, currency, cost model, resource types, data ingest, source |
 | COST-7179: `completed_datetime` timeout | ~3 functions | cost model (tag rates), order-by, cost distribution |
 | COST-7179: GPU/MIG data in `last-90-days` param | 2 param-level | `api_params.py` |
-| FLPATH-3423: Source CRUD update | 1 function | `test__i_source.py` |
+| ~~FLPATH-3423: Source CRUD update~~ | ~~1 function~~ | ~~`test__i_source.py`~~ — **RESOLVED** |
 | Kafka consumer: external TLS access unsupported by `BrokerConfig` | 1 function | `test_ros.py` — [details](#kafka-consumer-test-limitation) |
 
 ### Markers Not Added
@@ -201,15 +201,18 @@ handled in seconds rather than 8+ hours.
 
 ---
 
-### Source CRUD Update (`SKIP_SOURCE_CRUD_TESTS`)
+### Source CRUD Update (`SKIP_SOURCE_CRUD_TESTS`) — RESOLVED
 
 **Jira**: [FLPATH-3423](https://redhat.atlassian.net/browse/FLPATH-3423)
-**Status**: Blocked — requires IQE plugin and backend fixes
-**Impact**: 1 test
+**Status**: ✅ Fixed — Koku PR #5968, chart PR #151, IQE plugin fix
+**Impact**: 1 test — now included in smoke profile
 
-**Problem**: Wrong API client in plugin + backend PATCH endpoint returns 500.
+**Resolution**: Backend `AdminSourcesSerializer` fixed to gate create-only validation
+on `not self.instance`; `SourcesViewSet` passes `partial=True` on PATCH. IQE plugin
+fixed to use `sources_client.sources_api.update_source` with `authentication=data`
+instead of the broken `integrations_api` path.
 
-**Filter**: `test_api_ocp_source_crud`
+**Filter**: `test_api_ocp_source_crud` (no longer skipped)
 
 ---
 
@@ -341,7 +344,7 @@ These groups were validated and are now included in profiles above `smoke`.
 |--------|-------|--------|--------|
 | [COST-7179](https://issues.redhat.com/browse/COST-7179) | GPU/MIG schema mismatch (`mig_instance_uuid`) | ~90 direct + ~100 cascade (order-by, cost-dist, unstable, data-intensive, 90-day) | Open — backend fix needed |
 | [FLPATH-3429](https://redhat.atlassian.net/browse/FLPATH-3429) | NISE GPU data feature flag for on-prem | Would unblock COST-7179 tests by gating GPU data generation | Open — proposed resolution |
-| [FLPATH-3423](https://redhat.atlassian.net/browse/FLPATH-3423) | Source CRUD update: wrong API client + backend 500 | 1 test | Open |
+| [FLPATH-3423](https://redhat.atlassian.net/browse/FLPATH-3423) | Source CRUD update: wrong API client + backend 500 | 1 test | ✅ Resolved (2026-04-29) |
 | [FLPATH-3369](https://redhat.atlassian.net/browse/FLPATH-3369) | IQE plugin updates for on-prem (fail-fast, fixtures, markers) | All on-prem tests benefit | In progress — branch active |
 | [FLPATH-2689](https://redhat.atlassian.net/browse/FLPATH-2689) | IQE unstable test investigation | ~20 tests — now reclassified as deterministic (COST-7179) | Resolved (2026-03-25) |
 
