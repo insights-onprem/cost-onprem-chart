@@ -33,6 +33,8 @@ set -euo pipefail
 #   --namespace NAME          Target namespace (default: cost-onprem)
 #   --image-tag TAG           Custom image tag for cost-onprem-ocp-backend services
 #   --use-local-chart         Use local Helm chart instead of GitHub release
+#   --devel                   Include pre-release (rc) charts in Helm installation
+#   --chart-version VERSION   Pin a specific Helm chart version (e.g., 0.2.9, 0.3.0-rc1)
 #
 #   Test options:
 #   --iqe-marker EXPR         Pytest marker for IQE tests (default: cost_ocp_on_prem)
@@ -109,6 +111,8 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # Default configuration
 NAMESPACE="${NAMESPACE:-cost-onprem}"
 USE_LOCAL_CHART="${USE_LOCAL_CHART:-false}"
+USE_HELM_DEVEL="${USE_HELM_DEVEL:-false}"
+CHART_VERSION="${CHART_VERSION:-}"
 VERBOSE="${VERBOSE:-false}"
 DRY_RUN="${DRY_RUN:-false}"
 TESTS_ONLY="${TESTS_ONLY:-false}"
@@ -559,6 +563,8 @@ deploy_helm_chart() {
     export NAMESPACE="${NAMESPACE}"
     export JWT_AUTH_ENABLED="true"
     export USE_LOCAL_CHART="${USE_LOCAL_CHART}"
+    export USE_HELM_DEVEL="${USE_HELM_DEVEL}"
+    [[ -n "${CHART_VERSION}" ]] && export CHART_VERSION="${CHART_VERSION}"
     # Note: S3 setup behavior depends on values.yaml configuration:
     # - If objectStorage.endpoint is set: Script skips S3 auto-detection and bucket creation
     # - If not set: Script auto-detects (S4, NooBaa, external OBC) and creates buckets
@@ -1111,6 +1117,8 @@ print_summary() {
     [[ "${DEPLOY_S4}" == "true" ]] && echo "  S4 Namespace:        ${S4_NAMESPACE}"
     [[ "${OPENSHIFT_VALUES_FILE}" != "openshift-values.yaml" ]] && echo "  Values File:         ${OPENSHIFT_VALUES_FILE}"
     echo "  Use Local Chart:     ${USE_LOCAL_CHART}"
+    [[ "${USE_HELM_DEVEL}" == "true" ]] && echo "  Include Pre-release: ${USE_HELM_DEVEL}"
+    [[ -n "${CHART_VERSION}" ]] && echo "  Chart Version:       ${CHART_VERSION}"
     echo ""
     log_info "Steps to execute:"
     [[ "${SKIP_RHBK}" == "false" ]] && echo "  ✓ Deploy Red Hat Build of Keycloak (RHBK)" || echo "  ✗ Deploy RHBK (SKIPPED)"
@@ -1195,6 +1203,14 @@ main() {
                 USE_LOCAL_CHART=true
                 shift
                 ;;
+            --devel)
+                USE_HELM_DEVEL=true
+                shift
+                ;;
+            --chart-version)
+                CHART_VERSION="$2"
+                shift 2
+                ;;
             --verbose)
                 VERBOSE=true
                 shift
@@ -1270,6 +1286,18 @@ main() {
                 ;;
         esac
     done
+
+    # Validate flag combinations
+    if [[ "${USE_LOCAL_CHART}" == "true" ]]; then
+        if [[ "${USE_HELM_DEVEL}" == "true" ]]; then
+            log_error "Cannot use --devel with --use-local-chart"
+            exit 1
+        fi
+        if [[ -n "${CHART_VERSION}" ]]; then
+            log_error "Cannot use --chart-version with --use-local-chart"
+            exit 1
+        fi
+    fi
 
     # In tests-only / skip-deploy mode, skip all deployment steps
     if [[ "${TESTS_ONLY}" == "true" ]]; then

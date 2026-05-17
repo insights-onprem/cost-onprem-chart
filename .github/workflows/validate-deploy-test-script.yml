@@ -122,6 +122,35 @@ jobs:
             fi
           }
 
+          # run_error_case NAME FLAGS EXPECTED_ERROR
+          run_error_case() {
+            local name="$1" flags="$2" expected_error="$3"
+
+            echo ""
+            echo "━━━ ${name} (expect error) ━━━"
+
+            local output exit_code
+            set +e
+            output=$(bash "$SCRIPT" --dry-run $flags 2>&1)
+            exit_code=$?
+            set -e
+
+            if [ "$exit_code" -eq 0 ]; then
+              echo "    ✗ Expected error but script succeeded"
+              failures=$((failures + 1))
+              return
+            fi
+
+            if echo "$output" | grep -qF "$expected_error"; then
+              echo "    ✓ Got expected error: ${expected_error}"
+              passed=$((passed + 1))
+            else
+              echo "    ✗ Wrong error message — expected '${expected_error}'"
+              echo "    Got: $(echo "$output" | tail -3)"
+              failures=$((failures + 1))
+            fi
+          }
+
           #                NAME                                        FLAGS                                      MODE                    DEPLOY  CHART  PERF   IQE
           run_case         "(defaults)"                                ""                                         "Full deployment"       true    true   false  false
           run_case         "--run-iqe"                                 "--run-iqe"                                "Full deployment"       true    true   false  true
@@ -137,6 +166,15 @@ jobs:
           run_case         "--perf-only --perf-profile small"          "--perf-only --perf-profile small"         "Performance-only"      false   false  true   false
           run_case         "--perf-only --perf-profile medium"         "--perf-only --perf-profile medium"        "Performance-only"      false   false  true   false
           run_case         "--perf-only --perf-profile large"          "--perf-only --perf-profile large"         "Performance-only"      false   false  true   false
+
+          # Chart version flags
+          run_case         "--devel"                                   "--devel"                                  "Full deployment"       true    true   false  false
+          run_case         "--chart-version 0.2.19"                    "--chart-version 0.2.19"                   "Full deployment"       true    true   false  false
+          run_case         "--devel --chart-version 0.2.20-rc1"        "--devel --chart-version 0.2.20-rc1"       "Full deployment"       true    true   false  false
+
+          # Invalid flag combinations (should fail)
+          run_error_case   "--use-local-chart --devel"                 "--use-local-chart --devel"                "Cannot use --devel with --use-local-chart"
+          run_error_case   "--use-local-chart --chart-version 0.2.19"  "--use-local-chart --chart-version 0.2.19" "Cannot use --chart-version with --use-local-chart"
 
           echo ""
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
