@@ -131,6 +131,13 @@ spec:
         securityContext:
           {{- include "cost-onprem.securityContext.container" . | nindent 10 }}
 
+        {{- if and .Values.valkey.tls.enabled .Values.valkey.tls.caCertSecretName }}
+        volumeMounts:
+        - name: redis-tls-ca
+          mountPath: /etc/redis-tls
+          readOnly: true
+        {{- end }}
+
         resources:
           requests:
             cpu: 100m
@@ -138,4 +145,14 @@ spec:
           limits:
             cpu: 500m
             memory: 512Mi
+
+      {{- if and .Values.valkey.tls.enabled .Values.valkey.tls.caCertSecretName }}
+      volumes:
+      - name: redis-tls-ca
+        secret:
+          secretName: {{ .Values.valkey.tls.caCertSecretName }}
+          items:
+            - key: ca.crt
+              path: ca.crt
+      {{- end }}
 {{- end }}
