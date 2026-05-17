@@ -6,7 +6,13 @@ Tests for database schema validation and migration status.
 
 import pytest
 
-from utils import exec_in_pod, execute_db_query, run_oc_command
+from utils import (
+    exec_in_pod,
+    execute_db_query,
+    run_oc_command,
+    get_job_logs,
+    validate_logs,
+)
 
 
 @pytest.mark.infrastructure
@@ -160,6 +166,142 @@ class TestDatabaseMigrations:
         assert succeeded_count >= 1, (
             f"Migration job did not succeed (succeeded={succeeded}). "
             "Check logs: oc logs -l app.kubernetes.io/component=cost-management-migration"
+        )
+
+    def test_migration_job_logs_success(self, cluster_config):
+        """Verify migration job completed successfully via logs.
+        
+        This test validates that the Koku migration job ran without errors
+        by checking its log output for success indicators.
+        """
+        job_name = f"{cluster_config.helm_release_name}-koku-migrate"
+        logs = get_job_logs(
+            cluster_config.namespace,
+            job_name,
+            container="migrate",
+        )
+        
+        if logs is None:
+            pytest.skip("Migration job logs not available (job may have been cleaned up)")
+        
+        validate_logs(
+            logs,
+            must_contain=[
+                "Migrations completed successfully",
+            ],
+            must_not_contain=[
+                "Migration failed",
+                "Traceback (most recent call last)",
+            ],
+        )
+
+
+@pytest.mark.infrastructure
+@pytest.mark.component
+class TestHiveWorkaround:
+    """Tests for FLPATH-3265: Hive database workaround removal.
+    
+    FLPATH-3265 removed unnecessary hive role/database creation from on-prem
+    deployments. The hive role and database are only needed for Trino integration
+    in cloud deployments; on-prem uses PostgreSQL directly.
+    
+    These tests verify:
+    1. The hive role does NOT exist (workaround removed from db-init)
+    2. The hive database does NOT exist (workaround removed from db-init)
+    3. Migration 0039 was skipped (ONPREM=True behavior in Koku)
+    
+    References:
+    - https://issues.redhat.com/browse/FLPATH-3265
+    - https://github.com/project-koku/koku/pull/5900
+    - https://github.com/insights-onprem/cost-onprem-chart/pull/96
+    """
+
+    def test_hive_role_not_created(self, cluster_config, database_config):
+        """Verify hive role is NOT created (FLPATH-3265 fix).
+        
+        The hive role was previously created as a workaround because Koku
+        migration 0039 tried to create it but koku_user lacked CREATEROLE
+        privilege. With the fix in Koku PR #5900, migration 0039 is skipped
+        when ONPREM=True, so the workaround is no longer needed.
+        """
+        result = execute_db_query(
+            database_config.namespace,
+            database_config.pod_name,
+            database_config.database,
+            database_config.user,
+            "SELECT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'hive')",
+            password=database_config.password,
+        )
+        
+        assert result is not None, "Query failed"
+        assert result[0][0] in ["f", "False", False, "0"], (
+            "hive role should NOT exist in on-prem deployment (FLPATH-3265). "
+            "This indicates the old workaround is still in place or migration 0039 "
+            "ran unexpectedly. Check ONPREM environment variable is set to True."
+        )
+
+    def test_hive_database_not_created(self, cluster_config, database_config):
+        """Verify hive database is NOT created (FLPATH-3265 fix).
+        
+        Similar to the hive role, the hive database was pre-created as a
+        workaround. It should not exist in on-prem deployments.
+        """
+        result = execute_db_query(
+            database_config.namespace,
+            database_config.pod_name,
+            "postgres",  # Query pg_database from postgres db
+            database_config.user,
+            "SELECT EXISTS (SELECT FROM pg_database WHERE datname = 'hive')",
+            password=database_config.password,
+        )
+        
+        assert result is not None, "Query failed"
+        assert result[0][0] in ["f", "False", False, "0"], (
+            "hive database should NOT exist in on-prem deployment (FLPATH-3265). "
+            "This indicates the old workaround is still in place."
+        )
+
+    def test_koku_user_lacks_createrole_privilege(self, cluster_config, database_config):
+        """Verify koku_user does NOT have CREATEROLE privilege (FLPATH-3265 fix).
+        
+        The old workaround granted CREATEROLE to koku_user so it could create
+        the hive role. This is no longer needed and represents unnecessary
+        privilege escalation.
+        """
+        result = execute_db_query(
+            database_config.namespace,
+            database_config.pod_name,
+            database_config.database,
+            database_config.user,
+            f"SELECT rolcreaterole FROM pg_roles WHERE rolname = '{database_config.user}'",
+            password=database_config.password,
+        )
+        
+        assert result is not None, "Query failed"
+        assert result[0][0] in ["f", "False", False, "0"], (
+            f"{database_config.user} should NOT have CREATEROLE privilege (FLPATH-3265). "
+            "This privilege was only needed for the old hive workaround."
+        )
+
+    def test_koku_user_lacks_createdb_privilege(self, cluster_config, database_config):
+        """Verify koku_user does NOT have CREATEDB privilege (FLPATH-3265 fix).
+        
+        The old workaround granted CREATEDB to koku_user so it could create
+        the hive database. This is no longer needed.
+        """
+        result = execute_db_query(
+            database_config.namespace,
+            database_config.pod_name,
+            database_config.database,
+            database_config.user,
+            f"SELECT rolcreatedb FROM pg_roles WHERE rolname = '{database_config.user}'",
+            password=database_config.password,
+        )
+        
+        assert result is not None, "Query failed"
+        assert result[0][0] in ["f", "False", False, "0"], (
+            f"{database_config.user} should NOT have CREATEDB privilege (FLPATH-3265). "
+            "This privilege was only needed for the old hive workaround."
         )
 
 
