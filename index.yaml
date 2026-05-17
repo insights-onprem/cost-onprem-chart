@@ -2,6 +2,23 @@ apiVersion: v1
 entries:
   cost-onprem:
   - apiVersion: v2
+    appVersion: 0.2.20-rc5
+    created: "2026-05-17T08:10:55.726175452Z"
+    description: Cost Management On-Premise solution for OpenShift
+    digest: 8b18fa6ab9bcb7de63696a0f5d4d29cceecb2c8a5329f278b01b567f0eeb9358
+    keywords:
+    - cost-management
+    - resource-optimization
+    - openshift
+    - on-premise
+    maintainers:
+    - name: Insights On-Premise Team
+    name: cost-onprem
+    type: application
+    urls:
+    - https://github.com/insights-onprem/cost-onprem-chart/releases/download/cost-onprem-0.2.20-rc5/cost-onprem-0.2.20-rc5.tgz
+    version: 0.2.20-rc5
+  - apiVersion: v2
     appVersion: 0.2.20-rc4
     created: "2026-05-04T10:39:42.011617575Z"
     description: Cost Management On-Premise solution for OpenShift
@@ -256,4 +273,4 @@ entries:
     urls:
     - https://github.com/insights-onprem/cost-onprem-chart/releases/download/cost-onprem-0.2.9/cost-onprem-0.2.9.tgz
     version: 0.2.9
-generated: "2026-05-04T10:39:42.011905594Z"
+generated: "2026-05-17T08:10:55.726339061Z"
