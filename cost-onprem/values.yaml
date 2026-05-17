@@ -146,7 +146,7 @@ costManagement:
 
     image:
       repository: quay.io/redhat-services-prod/cost-mgmt-dev-tenant/koku
-      tag: "29b7704"
+      tag: "ad167c1"
       pullPolicy: IfNotPresent
 
     replicas: 1
@@ -737,9 +737,20 @@ valkey:
   # For password-protected Redis instances (e.g., ElastiCache, Redis Enterprise)
   auth:
     enabled: false
-    # Name of the Secret containing key: 'redis-password'
-    # Required when auth.enabled is true.
+    # Name of the Secret containing key 'redis-password' (required when auth.enabled is true).
+    # The Secret may also contain key 'redis-username' for Redis 6+ ACL authentication.
+    # When 'redis-username' is absent, the default Redis user is used.
     secretName: ""
+
+  # TLS configuration for external Redis/Valkey (only used when deploy is false)
+  # For TLS-encrypted Redis connections (e.g., ElastiCache in-transit encryption,
+  # Redis Enterprise TLS, Azure Cache for Redis)
+  tls:
+    enabled: false
+    # Name of the Secret containing key 'ca.crt' with the CA certificate.
+    # When set, certificate verification is enforced (ssl.CERT_REQUIRED).
+    # When empty, TLS is used but certificates are not verified (ssl.CERT_NONE).
+    caCertSecretName: ""
 
   # Persistence configuration for Celery chord callback reliability
   # Persistent storage is always enabled when deploying bundled Valkey.
