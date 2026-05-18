@@ -41,9 +41,9 @@ spec:
             MAX_WAIT=300
             ELAPSED=0
 
-            BOOTSTRAP_USERNAME="{{ .Values.rbac.bootstrapAdmin.username }}"
-            BOOTSTRAP_ORG_ID="{{ .Values.rbac.bootstrapAdmin.orgId }}"
-            BOOTSTRAP_ACCOUNT_NUMBER="{{ .Values.rbac.bootstrapAdmin.accountNumber }}"
+            BOOTSTRAP_USERNAME="{{ include "cost-onprem.rbac.bootstrapAdmin.username" . }}"
+            BOOTSTRAP_ORG_ID="{{ include "cost-onprem.rbac.bootstrapAdmin.orgId" . }}"
+            BOOTSTRAP_ACCOUNT_NUMBER="{{ include "cost-onprem.rbac.bootstrapAdmin.accountNumber" . }}"
 
             echo "=== insights-rbac admin bootstrap job ==="
             echo "Username: ${BOOTSTRAP_USERNAME}"
@@ -63,14 +63,18 @@ spec:
             echo "✓ PostgreSQL is ready (waited ${ELAPSED}s)"
 
             echo "Creating Tenant, Principal, Group, and Policy for admin user..."
-            python manage.py shell <<BOOTSTRAP_SCRIPT
+            export SYNC_USERNAME="${BOOTSTRAP_USERNAME}"
+            export SYNC_ORG_ID="${BOOTSTRAP_ORG_ID}"
+            export SYNC_ACCOUNT_NUMBER="${BOOTSTRAP_ACCOUNT_NUMBER}"
+            python manage.py shell <<'BOOTSTRAP_SCRIPT'
+            import os
             from api.models import Tenant
             from management.models import Group, Policy, Role, Principal
             from django.core.cache import cache
 
-            username = "${BOOTSTRAP_USERNAME}"
-            org_id = "${BOOTSTRAP_ORG_ID}"
-            acct_number = "${BOOTSTRAP_ACCOUNT_NUMBER}"
+            username = os.environ['SYNC_USERNAME']
+            org_id = os.environ['SYNC_ORG_ID']
+            acct_number = os.environ['SYNC_ACCOUNT_NUMBER']
 
             public_tenant = Tenant.objects.get(tenant_name='public')
             admin_default_roles = Role.objects.filter(admin_default=True, tenant=public_tenant)

@@ -8,7 +8,7 @@ the external API contract.
 import pytest
 import requests
 
-from conftest import ClusterConfig, JWTToken, obtain_user_jwt_token
+from conftest import create_authenticated_session
 from utils import run_oc_command
 
 
@@ -29,13 +29,7 @@ def ocp_source_type_id(
     Skips:
         If the source types endpoint is not accessible or OCP type not found
     """
-    token = obtain_user_jwt_token(keycloak_config, cluster_config)
-    
-    session = requests.Session()
-    session.headers.update({
-        "Authorization": f"Bearer {token.access_token}",
-    })
-    session.verify = False
+    session = create_authenticated_session(keycloak_config)
     
     try:
         response = session.get(

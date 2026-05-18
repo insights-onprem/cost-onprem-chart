@@ -662,9 +662,10 @@ def upload_with_retry(
     auth_header: Dict[str, str],
     max_retries: int = 3,
     retry_delay: int = 5,
+    timeout: int = 180,
 ) -> requests.Response:
     """Upload file with retry logic for transient errors.
-    
+
     Args:
         session: Requests session (should have verify=False for self-signed certs)
         url: Upload URL
@@ -672,10 +673,11 @@ def upload_with_retry(
         auth_header: Authorization header dict
         max_retries: Maximum number of retry attempts
         retry_delay: Base delay between retries (exponential backoff)
-    
+        timeout: Request timeout in seconds (default 180s for large files)
+
     Returns:
         Response object
-    
+
     Raises:
         RuntimeError: If all retries fail
     """
@@ -688,7 +690,7 @@ def upload_with_retry(
                     url,
                     files={"file": ("cost-mgmt.tar.gz", f, UPLOAD_CONTENT_TYPE)},
                     headers=auth_header,
-                    timeout=60,
+                    timeout=timeout,
                 )
             
             if response.status_code in [200, 201, 202]:

@@ -7,27 +7,8 @@ Quick validation that the entire system is operational.
 import pytest
 import requests
 
+from conftest import get_fresh_auth_header
 from utils import check_pod_ready, run_oc_command
-
-
-def get_fresh_token(keycloak_config, http_session: requests.Session) -> dict:
-    """Get a fresh JWT token (avoids session-scoped token expiry issues)."""
-    response = http_session.post(
-        keycloak_config.token_url,
-        data={
-            "grant_type": "client_credentials",
-            "client_id": keycloak_config.client_id,
-            "client_secret": keycloak_config.client_secret,
-        },
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        timeout=30,
-    )
-    
-    if response.status_code != 200:
-        return None
-    
-    token = response.json().get("access_token")
-    return {"Authorization": f"Bearer {token}"} if token else None
 
 
 @pytest.mark.e2e
@@ -65,14 +46,14 @@ class TestE2ESmoke:
 
     def test_jwt_token_obtainable(self, keycloak_config, http_session: requests.Session):
         """Verify JWT token can be obtained."""
-        auth_header = get_fresh_token(keycloak_config, http_session)
+        auth_header = get_fresh_auth_header(keycloak_config, http_session)
         assert auth_header, "Could not obtain JWT token"
 
     def test_gateway_accepts_authenticated_requests(
         self, gateway_url: str, keycloak_config, http_session: requests.Session
     ):
         """Verify gateway accepts authenticated requests."""
-        auth_header = get_fresh_token(keycloak_config, http_session)
+        auth_header = get_fresh_auth_header(keycloak_config, http_session)
         if not auth_header:
             pytest.skip("Could not obtain fresh JWT token")
         
@@ -91,7 +72,7 @@ class TestE2ESmoke:
         self, gateway_url: str, keycloak_config, http_session: requests.Session
     ):
         """Verify backend API is accessible through the gateway."""
-        auth_header = get_fresh_token(keycloak_config, http_session)
+        auth_header = get_fresh_auth_header(keycloak_config, http_session)
         if not auth_header:
             pytest.skip("Could not obtain fresh JWT token")
 

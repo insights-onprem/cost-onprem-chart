@@ -106,8 +106,8 @@ python -c "from playwright.sync_api import sync_playwright; p = sync_playwright(
 | `PLAYWRIGHT_BROWSER` | `chromium` | Browser to use (`chromium`, `firefox`, `webkit`) |
 | `PLAYWRIGHT_HEADLESS` | `true` | Run in headless mode |
 | `PLAYWRIGHT_SLOW_MO` | `0` | Slow down actions by N milliseconds (for debugging) |
-| `TEST_UI_USERNAME` | `test` | Keycloak test user username |
-| `TEST_UI_PASSWORD` | `test` | Keycloak test user password |
+| `TEST_USERNAME` | `admin` | Keycloak test user username |
+| `TEST_PASSWORD` | `admin` | Keycloak test user password |
 
 ## Running Tests
 

@@ -449,6 +449,10 @@ def create_rh_identity_header(org_id: str, account_number: str = None) -> str:
 
     The X-Rh-Identity header is a base64-encoded JSON structure required by
     Koku middleware for tenant identification and authorization.
+    
+    NOTE: The "username" field in the identity JSON is NOT a Keycloak credential.
+    It's a placeholder value in the identity claim structure used for internal
+    API testing. It doesn't need to match any real user.
 
     Args:
         org_id: Organization ID for the tenant
@@ -493,7 +497,14 @@ def create_identity_header_custom(
     entitlements: Optional[dict] = None,
     account_number: Optional[str] = None,
 ) -> str:
-    """Create X-Rh-Identity header with customizable fields.
+    """Create X-Rh-Identity header with customizable fields for error testing.
+
+    This function allows creating identity headers with various configurations
+    to test authentication error scenarios.
+    
+    NOTE: The "username" field in the identity JSON is NOT a Keycloak credential.
+    It's a placeholder value in the identity claim structure used for internal
+    API testing. It doesn't need to match any real user.
 
     Args:
         org_id: Organization ID for the tenant
