@@ -183,3 +183,336 @@ def ensure_rbac_gateway_persona_users(
             account_number=account_number,
             email=f"{uname}@rbac-gateway.test",
         )
+
+
+def _get_or_create_realm_role(
+    base: str,
+    realm: str,
+    admin_token: str,
+    role_name: str,
+) -> dict:
+    """Return Keycloak realm role representation, creating a simple realm role if missing."""
+    headers = {
+        "Authorization": f"Bearer {admin_token}",
+        "Content-Type": "application/json",
+    }
+    r = requests.get(
+        f"{base}/admin/realms/{realm}/roles/{role_name}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        verify=False,
+        timeout=30,
+    )
+    if r.status_code == 200:
+        return r.json()
+    if r.status_code != 404:
+        raise RuntimeError(
+            f"Keycloak GET realm role {role_name!r} failed: {r.status_code} {r.text[:300]}"
+        )
+    cr = requests.post(
+        f"{base}/admin/realms/{realm}/roles",
+        json={"name": role_name, "description": "Realm role for cost-onprem chart tests"},
+        headers=headers,
+        verify=False,
+        timeout=30,
+    )
+    if cr.status_code not in (201, 204):
+        raise RuntimeError(
+            f"Keycloak create realm role {role_name!r} failed: {cr.status_code} {cr.text[:300]}"
+        )
+    r2 = requests.get(
+        f"{base}/admin/realms/{realm}/roles/{role_name}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        verify=False,
+        timeout=30,
+    )
+    if r2.status_code != 200:
+        raise RuntimeError(
+            f"Keycloak re-fetch realm role {role_name!r} failed: {r2.status_code} {r2.text[:300]}"
+        )
+    return r2.json()
+
+
+def _list_user_realm_roles(
+    base: str,
+    realm: str,
+    admin_token: str,
+    user_id: str,
+) -> list[dict]:
+    r = requests.get(
+        f"{base}/admin/realms/{realm}/users/{user_id}/role-mappings/realm",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        verify=False,
+        timeout=30,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(
+            f"Keycloak list realm roles for user failed: {r.status_code} {r.text[:300]}"
+        )
+    return r.json()
+
+
+def _set_user_has_realm_role(
+    base: str,
+    realm: str,
+    admin_token: str,
+    user_id: str,
+    role_rep: dict,
+    want: bool,
+) -> None:
+    """Add or remove a single realm role on a user."""
+    headers = {
+        "Authorization": f"Bearer {admin_token}",
+        "Content-Type": "application/json",
+    }
+    body = [{"id": role_rep["id"], "name": role_rep["name"]}]
+    if want:
+        r = requests.post(
+            f"{base}/admin/realms/{realm}/users/{user_id}/role-mappings/realm",
+            json=body,
+            headers=headers,
+            verify=False,
+            timeout=30,
+        )
+        if r.status_code not in (204, 200):
+            raise RuntimeError(
+                f"Keycloak add realm role {role_rep['name']!r}: {r.status_code} {r.text[:300]}"
+            )
+        return
+    current = _list_user_realm_roles(base, realm, admin_token, user_id)
+    names = {x.get("name") for x in current}
+    if role_rep["name"] not in names:
+        return
+    r = requests.delete(
+        f"{base}/admin/realms/{realm}/users/{user_id}/role-mappings/realm",
+        json=body,
+        headers=headers,
+        verify=False,
+        timeout=30,
+    )
+    if r.status_code not in (204, 200):
+        raise RuntimeError(
+            f"Keycloak remove realm role {role_rep['name']!r}: {r.status_code} {r.text[:300]}"
+        )
+
+
+def _find_keycloak_ui_client_internal_id(
+    base: str,
+    realm: str,
+    admin_token: str,
+    ui_client_id: str,
+) -> tuple[Optional[str], str]:
+    """Return (internal UUID, diagnostic). internal UUID is None on failure."""
+    r = requests.get(
+        f"{base}/admin/realms/{realm}/clients",
+        params={"clientId": ui_client_id, "max": 1},
+        headers={"Authorization": f"Bearer {admin_token}"},
+        verify=False,
+        timeout=30,
+    )
+    if r.status_code != 200:
+        return None, (
+            f"GET /admin/realms/{realm}/clients?clientId={ui_client_id!r} "
+            f"→ HTTP {r.status_code}: {r.text[:400]!r}"
+        )
+    clients = r.json()
+    if not clients:
+        return None, (
+            f"GET clients returned 200 but empty list for clientId={ui_client_id!r} "
+            f"(realm={realm!r})"
+        )
+    cid = clients[0].get("id")
+    if not cid:
+        snippet = repr(clients[0])[:400]
+        return None, f"client record missing 'id': {snippet}"
+    return cid, "ok"
+
+
+def _find_roles_client_scope_id(
+    base: str,
+    realm: str,
+    admin_token: str,
+) -> tuple[Optional[str], str]:
+    """Return (scope internal id for name ``roles``, diagnostic)."""
+    r = requests.get(
+        f"{base}/admin/realms/{realm}/client-scopes",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        verify=False,
+        timeout=30,
+    )
+    if r.status_code != 200:
+        return None, (
+            f"GET /admin/realms/{realm}/client-scopes "
+            f"→ HTTP {r.status_code}: {r.text[:400]!r}"
+        )
+    rows = r.json()
+    names = sorted({row.get("name") for row in rows if row.get("name")})
+    for row in rows:
+        if row.get("name") == "roles":
+            sid = row.get("id")
+            if sid:
+                return sid, "ok"
+            return None, "client-scope named 'roles' exists but has no 'id' field"
+    hints = sorted(n for n in names if "role" in n.lower())[:30]
+    return None, (
+        f"no client-scope named exactly 'roles' (realm has {len(names)} scopes: {names!r}); "
+        f"names containing 'role' (case-insensitive, max 30): {hints!r}"
+    )
+
+
+def ensure_cost_management_ui_roles_default_client_scope(
+    keycloak_base_url: str,
+    realm: str,
+    admin_token: str,
+    ui_client_id: str = "cost-management-ui",
+) -> bool:
+    """Attach the realm ``roles`` *client scope* as a default scope on the UI client.
+
+    Password-grant tokens then include ``realm_access.roles`` without passing a
+    literal ``roles`` value in the OAuth ``scope`` query string (Keycloak often
+    rejects that with ``invalid_scope``).
+
+    Logs a distinct ``[Keycloak UI default scope 'roles']`` prefix on each outcome
+    so CI/lab logs show which Admin API step failed.
+    """
+    log_pfx = "[Keycloak UI default scope 'roles']"
+    base = keycloak_base_url.rstrip("/")
+
+    internal_id, diag = _find_keycloak_ui_client_internal_id(
+        base, realm, admin_token, ui_client_id,
+    )
+    if not internal_id:
+        logger.warning("%s resolve UI client %r → %s", log_pfx, ui_client_id, diag)
+        return False
+
+    roles_sid, diag = _find_roles_client_scope_id(base, realm, admin_token)
+    if not roles_sid:
+        logger.warning("%s resolve client-scope 'roles' → %s", log_pfx, diag)
+        return False
+
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    r = requests.get(
+        f"{base}/admin/realms/{realm}/clients/{internal_id}/default-client-scopes",
+        headers=headers,
+        verify=False,
+        timeout=30,
+    )
+    if r.status_code != 200:
+        logger.warning(
+            "%s GET default-client-scopes for client_uuid=%s → HTTP %s: %s",
+            log_pfx,
+            internal_id,
+            r.status_code,
+            repr(r.text[:400]) if r.text else "",
+        )
+        return False
+    current = r.json()
+    if any(s.get("id") == roles_sid for s in current):
+        linked = [s.get("name") for s in current if s.get("id") == roles_sid]
+        logger.info(
+            "%s already linked: clientId=%r client_uuid=%s scope=%r",
+            log_pfx,
+            ui_client_id,
+            internal_id,
+            linked[0] if linked else roles_sid,
+        )
+        return True
+
+    pr = requests.put(
+        f"{base}/admin/realms/{realm}/clients/{internal_id}/default-client-scopes/{roles_sid}",
+        headers=headers,
+        verify=False,
+        timeout=30,
+    )
+    if pr.status_code not in (200, 204):
+        logger.warning(
+            "%s PUT …/clients/%s/default-client-scopes/%s → HTTP %s: %s",
+            log_pfx,
+            internal_id,
+            roles_sid,
+            pr.status_code,
+            repr(pr.text[:400]) if pr.text else "",
+        )
+        return False
+    logger.info(
+        "%s linked scope 'roles' to clientId=%r client_uuid=%s",
+        log_pfx,
+        ui_client_id,
+        internal_id,
+    )
+    return True
+
+
+def ensure_password_grant_lab_users_with_org_admin(
+    *,
+    keycloak_base_url: str,
+    keycloak_namespace: str,
+    realm: str,
+    org_id: str,
+    account_number: str,
+    admin_username: str = "admin",
+    admin_password: str = "admin",
+    viewer_username: str = "viewer",
+    viewer_password: str = "viewer",
+) -> None:
+    """Ensure admin/viewer exist for UI password grant and org-admin realm role is correct.
+
+    Lab clusters sometimes lose Keycloak realm role mappings after restores or
+    partial installs. Tests expect ``admin`` to carry the ``org-admin`` realm role
+    and ``viewer`` to authenticate with password ``viewer`` without that role.
+    """
+    token = fetch_keycloak_master_admin_token(keycloak_base_url, keycloak_namespace)
+    if not token:
+        raise RuntimeError("Could not obtain Keycloak master admin token")
+
+    # Ensures JWT realm_access.roles for org-admin tests (see module docstring).
+    ensure_cost_management_ui_roles_default_client_scope(
+        keycloak_base_url, realm, token,
+    )
+
+    base = keycloak_base_url.rstrip("/")
+    admin_uid = _realm_user_id(base, realm, token, admin_username)
+    if admin_uid:
+        ur = requests.get(
+            f"{base}/admin/realms/{realm}/users/{admin_uid}",
+            headers={"Authorization": f"Bearer {token}"},
+            verify=False,
+            timeout=30,
+        )
+        if ur.status_code == 200:
+            attrs = ur.json().get("attributes") or {}
+            oid = (attrs.get("org_id") or [None])[0]
+            acct = (attrs.get("account_number") or [None])[0]
+            if oid:
+                org_id = oid
+            if acct:
+                account_number = acct
+
+    ensure_realm_user_with_password(
+        keycloak_base_url=keycloak_base_url,
+        realm=realm,
+        admin_token=token,
+        username=admin_username,
+        password=admin_password,
+        org_id=org_id,
+        account_number=account_number,
+        email=f"{admin_username}@cost-onprem-chart.test",
+    )
+    ensure_realm_user_with_password(
+        keycloak_base_url=keycloak_base_url,
+        realm=realm,
+        admin_token=token,
+        username=viewer_username,
+        password=viewer_password,
+        org_id=org_id,
+        account_number=account_number,
+        email=f"{viewer_username}@cost-onprem-chart.test",
+    )
+
+    admin_uid = _realm_user_id(base, realm, token, admin_username)
+    viewer_uid = _realm_user_id(base, realm, token, viewer_username)
+    if not admin_uid or not viewer_uid:
+        raise RuntimeError("Could not resolve Keycloak user ids after provisioning")
+
+    org_admin_role = _get_or_create_realm_role(base, realm, token, "org-admin")
+    _set_user_has_realm_role(base, realm, token, admin_uid, org_admin_role, want=True)
+    _set_user_has_realm_role(base, realm, token, viewer_uid, org_admin_role, want=False)

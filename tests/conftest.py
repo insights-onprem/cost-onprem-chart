@@ -48,6 +48,15 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 _DEFAULT_ORG_ID = "org1234567"
 _DEFAULT_ACCOUNT_NUMBER = "7890123"
 
+# OAuth ``scope`` string for password grant. Do **not** include the literal token
+# ``roles`` here on many Keycloak builds: it is a *client scope name*, not an
+# OIDC scope, and triggers ``invalid_scope``. Realm roles still appear in JWTs
+# when the ``roles`` *client scope* is attached as a default scope on the UI
+# client (see ``ensure_password_grant_lab_users_with_org_admin``).
+OIDC_PASSWORD_GRANT_SCOPE = os.environ.get(
+    "OIDC_PASSWORD_GRANT_SCOPE", "openid profile email"
+)
+
 
 def decode_jwt_payload(access_token: str) -> dict:
     """Decode the payload section of a JWT without signature verification."""
@@ -338,6 +347,11 @@ def obtain_password_grant_token(
 
     Use for gateway calls where RBAC expects a normal ``User`` identity (not a
     service-account ``preferred_username``).
+
+    Sends ``OIDC_PASSWORD_GRANT_SCOPE`` when non-empty (default ``openid profile
+    email``). The ``roles`` Keycloak *client scope* must be a **default** scope on
+    ``cost-management-ui`` so ``realm_access.roles`` is populated; requesting
+    ``roles`` in the OAuth ``scope`` parameter often returns ``invalid_scope``.
     """
     ui_client_id = "cost-management-ui"
     ui_client_secret = get_secret_value(
@@ -348,15 +362,20 @@ def obtain_password_grant_token(
     if not ui_client_secret:
         pytest.fail("Could not find cost-management-ui client secret for password grant")
 
+    data: dict = {
+        "grant_type": "password",
+        "client_id": ui_client_id,
+        "client_secret": ui_client_secret,
+        "username": username,
+        "password": password,
+    }
+    _scope = OIDC_PASSWORD_GRANT_SCOPE.strip()
+    if _scope:
+        data["scope"] = _scope
+
     response = requests.post(
         keycloak_config.token_url,
-        data={
-            "grant_type": "password",
-            "client_id": ui_client_id,
-            "client_secret": ui_client_secret,
-            "username": username,
-            "password": password,
-        },
+        data=data,
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         verify=False,
         timeout=30,
@@ -893,6 +912,39 @@ def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> st
         return _DEFAULT_ORG_ID
     except Exception:
         return _DEFAULT_ORG_ID
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _ensure_keycloak_password_grant_lab_users(
+    cluster_config: ClusterConfig,
+    keycloak_config: KeycloakConfig,
+    org_id: str,
+) -> None:
+    """Keep ``admin`` / ``viewer`` and the ``org-admin`` realm role aligned with tests.
+
+    Ephemeral lab clusters can drift (missing realm role on admin, wrong viewer
+    password). Provisioning runs once per session after ``org_id`` is resolved.
+    """
+    log = logging.getLogger(__name__)
+    try:
+        from rbac_keycloak_users import ensure_password_grant_lab_users_with_org_admin
+
+        ensure_password_grant_lab_users_with_org_admin(
+            keycloak_base_url=keycloak_config.url,
+            keycloak_namespace=cluster_config.keycloak_namespace,
+            realm=keycloak_config.realm,
+            org_id=org_id,
+            account_number=os.environ.get("TEST_ACCOUNT_NUMBER", _DEFAULT_ACCOUNT_NUMBER),
+            admin_username=os.environ.get("TEST_USERNAME", "admin"),
+            admin_password=os.environ.get("TEST_PASSWORD", "admin"),
+            viewer_username=os.environ.get("VIEWER_USERNAME", "viewer"),
+            viewer_password=os.environ.get("VIEWER_PASSWORD", "viewer"),
+        )
+    except Exception as exc:
+        log.warning(
+            "Keycloak lab user sync failed (org-admin / viewer tests may fail): %s",
+            exc,
+        )
 
 
 # =============================================================================
