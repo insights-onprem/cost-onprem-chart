@@ -4,11 +4,15 @@
 # Only comments when changes map to extended/stable/full profiles.
 # Smoke-only changes (UI, init containers, auth proxy) are silent.
 # Uses [TEST-ADVISOR] prefix for idempotent comment updates.
+#
+# NOTE: Uses pull_request_target (not pull_request) to enable comment posting
+# on PRs from forks. This is safe because we only run scripts from the base
+# branch and only analyze the PR diff (no code execution from the PR).
 
 name: Recommend IQE Test Profile
 
 on:
-  pull_request:
+  pull_request_target:
     branches: [ main ]
     paths:
       - 'cost-onprem/**'
@@ -27,15 +31,22 @@ jobs:
     timeout-minutes: 2
 
     steps:
-      - name: Checkout
+      - name: Checkout base branch
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.base.ref }}
+
+      - name: Fetch PR head
+        run: |
+          git fetch origin pull/${{ github.event.pull_request.number }}/head:pr-head
+          echo "PR_HEAD_SHA=$(git rev-parse pr-head)" >> "$GITHUB_ENV"
 
       - name: Analyze diff
         id: analyze
         env:
           BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_SHA: ${{ env.PR_HEAD_SHA }}
         run: ./scripts/qe/recommend-tests.sh
 
       - name: Comment recommendation

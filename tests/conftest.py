@@ -14,7 +14,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import pytest
 import requests
@@ -42,6 +42,20 @@ pytest_plugins = ["suites.cost_management.conftest", "suites.sources.conftest"]
 
 # Disable SSL warnings for self-signed certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Fallback identity values when Keycloak is unreachable.
+# Canonical source: jwtAuth.realmUsers in cost-onprem/values.yaml.
+_DEFAULT_ORG_ID = "org1234567"
+_DEFAULT_ACCOUNT_NUMBER = "7890123"
+
+
+def decode_jwt_payload(access_token: str) -> dict:
+    """Decode the payload section of a JWT without signature verification."""
+    payload_b64 = access_token.split(".")[1]
+    padding = 4 - len(payload_b64) % 4
+    if padding != 4:
+        payload_b64 += "=" * padding
+    return json.loads(base64.urlsafe_b64decode(payload_b64))
 
 
 # =============================================================================
@@ -214,6 +228,91 @@ def obtain_jwt_token(keycloak_config: KeycloakConfig) -> JWTToken:
     )
 
 
+def get_fresh_auth_header(
+    keycloak_config: KeycloakConfig,
+    http_session: requests.Session,
+) -> Optional[Dict[str, str]]:
+    """Get a fresh JWT authorization header from Keycloak.
+    
+    This is a lightweight alternative to obtain_jwt_token() when you only need
+    the authorization header and don't need the full JWTToken object with
+    expiration tracking.
+    
+    Use this in tests that need to refresh tokens mid-execution or when you
+    already have an http_session available.
+    
+    Args:
+        keycloak_config: Keycloak configuration with URL and credentials
+        http_session: Existing requests session (used for the token request)
+        
+    Returns:
+        Dict with "Authorization" header, or None if token acquisition fails
+        
+    Example:
+        auth_header = get_fresh_auth_header(keycloak_config, http_session)
+        if not auth_header:
+            pytest.skip("Could not obtain fresh JWT token")
+        response = http_session.get(url, headers=auth_header)
+    """
+    try:
+        response = http_session.post(
+            keycloak_config.token_url,
+            data={
+                "grant_type": "client_credentials",
+                "client_id": keycloak_config.client_id,
+                "client_secret": keycloak_config.client_secret,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=30,
+        )
+        
+        if response.status_code != 200:
+            return None
+        
+        token = response.json().get("access_token")
+        return {"Authorization": f"Bearer {token}"} if token else None
+    except requests.RequestException:
+        return None
+
+
+def create_authenticated_session(
+    keycloak_config: KeycloakConfig,
+    content_type: Optional[str] = None,
+) -> requests.Session:
+    """Create a requests session pre-configured with JWT authentication.
+    
+    This is a factory function for creating authenticated sessions. Use this
+    when you need a fresh session with a new token, particularly for:
+    - Module-scoped fixtures that may outlive the token lifetime
+    - One-off API operations in test setup/teardown
+    - Tests that need isolated sessions
+    
+    Args:
+        keycloak_config: Keycloak configuration with URL and credentials
+        content_type: Optional Content-Type header (e.g., "application/json")
+        
+    Returns:
+        Configured requests.Session with:
+        - Authorization header with Bearer token
+        - SSL verification disabled (for self-signed certs)
+        - Optional Content-Type header
+        
+    Raises:
+        pytest.fail: If token acquisition fails
+        
+    Example:
+        session = create_authenticated_session(keycloak_config, content_type="application/json")
+        response = session.get(f"{gateway_url}/cost-management/v1/sources")
+    """
+    token = obtain_jwt_token(keycloak_config)
+    session = requests.Session()
+    session.headers["Authorization"] = f"Bearer {token.access_token}"
+    if content_type:
+        session.headers["Content-Type"] = content_type
+    session.verify = False
+    return session
+
+
 @pytest.fixture(scope="function")
 def jwt_token(keycloak_config: KeycloakConfig) -> JWTToken:
     """Obtain a JWT token from Keycloak using client credentials flow.
@@ -229,8 +328,13 @@ def jwt_token(keycloak_config: KeycloakConfig) -> JWTToken:
     return obtain_jwt_token(keycloak_config)
 
 
-def obtain_user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JWTToken:
-    """Obtain a JWT token via password grant for the admin user.
+def obtain_user_jwt_token_for(
+    keycloak_config: KeycloakConfig,
+    cluster_config,
+    username: str = "admin",
+    password: str = "admin",
+) -> JWTToken:
+    """Obtain a JWT token via password grant for the given user.
 
     The cost-management-operator SA token has a ``service-account-*`` username
     that RBAC rejects with 400 ("Invalid format for a Service Account username").
@@ -251,8 +355,8 @@ def obtain_user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JW
             "grant_type": "password",
             "client_id": ui_client_id,
             "client_secret": ui_client_secret,
-            "username": "admin",
-            "password": "admin",
+            "username": username,
+            "password": password,
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         verify=False,
@@ -261,7 +365,7 @@ def obtain_user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JW
 
     if response.status_code != 200:
         pytest.fail(
-            f"Failed to obtain user JWT token via password grant: "
+            f"Failed to obtain JWT token for {username!r} via password grant: "
             f"{response.status_code} - {response.text}"
         )
 
@@ -272,6 +376,11 @@ def obtain_user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JW
         access_token=token_data["access_token"],
         expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in),
     )
+
+
+def obtain_user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JWTToken:
+    """Obtain a JWT token via password grant for the admin user."""
+    return obtain_user_jwt_token_for(keycloak_config, cluster_config)
 
 
 @pytest.fixture(scope="function")
@@ -700,7 +809,19 @@ if failed:
 
 @pytest.fixture(scope="session")
 def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> str:
-    """Get org_id from Keycloak test user or use default."""
+    """Get org_id from Keycloak admin test user or use default.
+    
+    Looks up the admin user (configurable via TEST_USERNAME env var,
+    default: "admin") in Keycloak to retrieve the org_id attribute.
+    
+    Note: Currently uses "admin" user. More involved RBAC testing may require
+    different users with specific role assignments in the future.
+    
+    SECURITY NOTE: These credentials are ONLY valid in ephemeral CI test
+    environments. The test Keycloak user is provisioned by the test harness
+    bootstrap (see scripts/deploy-rhbk.sh). These credentials must never
+    match any staging or production credentials.
+    """
     try:
         # Get admin credentials
         admin_pass_result = run_oc_command([
@@ -709,7 +830,7 @@ def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> st
         ], check=False)
         
         if not admin_pass_result.stdout.strip():
-            return "org1234567"
+            return _DEFAULT_ORG_ID
         
         admin_password = base64.b64decode(admin_pass_result.stdout.strip()).decode("utf-8")
         
@@ -727,14 +848,17 @@ def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> st
         )
         
         if token_response.status_code != 200:
-            return "org1234567"
+            return _DEFAULT_ORG_ID
         
         admin_token = token_response.json().get("access_token")
         
-        # Get admin user's org_id
+        # Get admin user's org_id (username configurable via TEST_USERNAME)
+        # Note: Currently uses "admin" user. More involved RBAC testing may
+        # require different users with specific role assignments in the future.
+        admin_username = os.environ.get("TEST_USERNAME", "admin")
         users_response = requests.get(
             f"{keycloak_config.url}/admin/realms/kubernetes/users",
-            params={"username": "admin", "exact": "true"},
+            params={"username": admin_username, "exact": "true"},
             headers={"Authorization": f"Bearer {admin_token}"},
             verify=False,
             timeout=30,
@@ -747,9 +871,9 @@ def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> st
                 if org_id_value:
                     return org_id_value
         
-        return "org1234567"
+        return _DEFAULT_ORG_ID
     except Exception:
-        return "org1234567"
+        return _DEFAULT_ORG_ID
 
 
 # =============================================================================
@@ -789,9 +913,7 @@ def _rbac_bootstrap(cluster_config: ClusterConfig, keycloak_config: KeycloakConf
     sa_default = f"service-account-{keycloak_config.client_id}"
     sa_mapper_override = "cost-mgmt-operator"
     try:
-        payload = token.access_token.split(".")[1]
-        payload += "=" * (4 - len(payload) % 4)
-        claims = json.loads(base64.urlsafe_b64decode(payload))
+        claims = decode_jwt_payload(token.access_token)
         sa_username = claims.get("preferred_username") or claims.get("sub", sa_default)
     except Exception:
         sa_username = sa_default
@@ -822,8 +944,8 @@ def _rbac_bootstrap(cluster_config: ClusterConfig, keycloak_config: KeycloakConf
         return
 
     # Resolve org_id from the token claims or fall back to default
-    org_id_value = claims.get("org_id") or "org1234567"
-    acct_number = claims.get("account_number") or "1234567"
+    org_id_value = claims.get("org_id") or _DEFAULT_ORG_ID
+    acct_number = claims.get("account_number") or _DEFAULT_ACCOUNT_NUMBER
 
     bootstrap_script = render_bootstrap_script(sa_usernames, org_id_value, acct_number)
 

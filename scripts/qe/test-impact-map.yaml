@@ -86,10 +86,10 @@ paths:
     description: "Helm templates — affects all deployed resources"
 
   deploy-scripts:
-    pattern: "^scripts/(deploy|run-iqe)"
-    profile: extended
-    impact: medium
-    description: "Deployment/test scripts"
+    pattern: "^scripts/(deploy|install|run-iqe|run-pytest|setup)"
+    profile: smoke
+    impact: low
+    description: "Deployment and test scripts — smoke tests catch most breakage"
 
   values-structural:
     # Triggered by values.yaml changes to resource limits, replicas, or toggles

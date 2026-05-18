@@ -2,8 +2,23 @@
 
 Role-Based Access Control (RBAC) configuration, user management, and troubleshooting for Cost Management On-Premise.
 
+## Breaking Changes
+
+> **Chart ≥ 0.2.20**: `jwtAuth.orgAdminUsernames` has been removed.
+> Admin status is now determined by the Keycloak **org-admin** realm role, which
+> is assigned automatically when `orgAdmin: true` is set on a user in
+> `jwtAuth.realmUsers`. If you previously set `orgAdminUsernames`, migrate those
+> usernames into `jwtAuth.realmUsers` entries with `orgAdmin: true` and re-run
+> `deploy-rhbk.sh -f <values.yaml>`.
+>
+> Similarly, `bootstrapAdmin.username`, `bootstrapAdmin.orgId`, and
+> `bootstrapAdmin.accountNumber` are now derived from the first `orgAdmin: true`
+> entry in `jwtAuth.realmUsers` — explicit values in `bootstrapAdmin` are no
+> longer required.
+
 ## Table of Contents
 
+- [Breaking Changes](#breaking-changes)
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
@@ -23,7 +38,7 @@ Cost Management On-Premise uses [insights-rbac](https://github.com/RedHatInsight
 
 Key properties:
 - Authorization is **role-based**, not attribute-based
-- `is_org_admin` is **false by default** in the identity header — admin privileges come from RBAC roles only. Specific usernames can be granted `is_org_admin: true` via `jwtAuth.orgAdminUsernames` in `values.yaml`, which triggers the `admin_default` group mechanism (see [Identity Header](#identity-header))
+- `is_org_admin` defaults to **true for the `admin` user** via `jwtAuth.realmUsers` (where `orgAdmin: true`). This triggers the `admin_default` group mechanism, granting Cost Administrator permissions automatically. Additional users can be added to `realmUsers`, or `orgAdmin` can be set to `false` for the most restrictive posture where all access requires explicit RBAC group membership (see [Identity Header](#identity-header))
 - Permissions are scoped by `resourceDefinitions` (e.g., specific clusters, namespaces)
 - The system seeds 5 built-in roles covering common access patterns
 - RBAC is **always enabled** for both Koku and ROS — there is no toggle to disable it
@@ -45,7 +60,7 @@ sequenceDiagram
     U->>KC: Authenticate
     KC-->>U: JWT token
     U->>GW: API request + JWT
-    GW->>GW: Validate JWT, build x-rh-identity<br/>(is_org_admin = false)
+    GW->>GW: Validate JWT, build x-rh-identity<br/>(is_org_admin from JWT org-admin role)
     alt Cost Management request
         GW->>K: Forward request + x-rh-identity
         K->>R: GET /api/rbac/v1/access/<br/>?application=cost-management
@@ -66,7 +81,7 @@ sequenceDiagram
 ```
 
 1. User authenticates via Keycloak and obtains a JWT
-2. Envoy validates the JWT and constructs the `x-rh-identity` header (with `is_org_admin: false`)
+2. Envoy validates the JWT and constructs the `x-rh-identity` header (`is_org_admin` derived from the JWT `org-admin` realm role)
 3. The request is routed to either Koku or ROS, depending on the API path
 4. Both services call insights-rbac's `/api/rbac/v1/access/` endpoint with the forwarded identity
 5. insights-rbac resolves the user's groups → policies → roles → permissions
@@ -151,7 +166,7 @@ The `x-rh-identity` header is constructed by the Envoy gateway and contains:
     "user": {
       "username": "<from-jwt>",
       "email": "<from-jwt>",
-      "is_org_admin": false
+      "is_org_admin": true
     }
   },
   "entitlements": {
@@ -162,7 +177,49 @@ The `x-rh-identity` header is constructed by the Envoy gateway and contains:
 }
 ```
 
-**Important**: `is_org_admin` is `false` by default. Specific usernames listed in `jwtAuth.orgAdminUsernames` (in `values.yaml`) receive `is_org_admin: true`, which triggers insights-rbac's `admin_default` group mechanism — granting Cost Administrator permissions automatically. When the list is empty (default), all admin access must come through explicit RBAC group membership. See the [PoC Analysis](https://gist.github.com/jordigilh/c81c73ba411637e24a30acd6a743e5fb) for security rationale.
+`is_org_admin` is `true` when the JWT contains the `org-admin` realm role, `false` otherwise.
+
+**Important**: `is_org_admin` is derived from the Keycloak **`org-admin` realm role**. The Envoy gateway reads `realm_access.roles` from the JWT and sets `is_org_admin: true` when the `org-admin` role is present. Keycloak is the single source of truth for admin status.
+
+For initial provisioning, `deploy-rhbk.sh -f values.yaml` reads `jwtAuth.realmUsers` and assigns the `org-admin` role to users with `orgAdmin: true`:
+
+```yaml
+jwtAuth:
+  realmUsers:
+    - username: admin
+      password: admin
+      orgAdmin: true      # assigned "org-admin" realm role → is_org_admin=true
+    - username: viewer
+      password: viewer
+      orgAdmin: false     # no org-admin role → standard user
+```
+
+After deployment, admin status can be managed directly in the Keycloak admin console by assigning or removing the `org-admin` realm role -- no `helm upgrade` required. See the [PoC Analysis](https://gist.github.com/jordigilh/c81c73ba411637e24a30acd6a743e5fb) for security rationale.
+
+### Production Hardening (FedRAMP)
+
+**Brute-force protection (AC-7)**: RHBK includes built-in brute-force detection that is **disabled by default** in development realms. Production and FedRAMP deployments **must** enable it:
+
+1. In the Keycloak admin console, navigate to **Realm Settings → Security Defenses → Brute Force Detection**.
+2. Enable **Permanent Lockout** or configure a lockout duration and failure threshold.
+3. Alternatively, configure via the `KeycloakRealmImport` CR:
+
+```yaml
+spec:
+  realm:
+    bruteForceProtected: true
+    permanentLockout: false
+    maxFailureWaitSeconds: 900
+    failureFactor: 5
+    waitIncrementSeconds: 60
+```
+
+**Password policy (IA-5)**: The default `realmUsers` in `values.yaml` use simple passwords for development convenience. Production deployments must:
+
+- Change all passwords in `jwtAuth.realmUsers` before deployment.
+- Configure a Keycloak password policy (Realm Settings → Authentication → Password Policy) that enforces organizational complexity requirements.
+
+**TLS (SC-8)**: The `deploy-rhbk.sh` script uses `curl -sk` (skip TLS verification) for test/dev environments. Production deployments must configure a trusted CA bundle and use `--cacert /path/to/ca-bundle.crt`.
 
 ---
 
@@ -484,7 +541,9 @@ echo "Both caches flushed — permission changes are now active"
 RBAC_POD=$(kubectl get pod -l app.kubernetes.io/component=rbac-api -n <namespace> -o jsonpath='{.items[0].metadata.name}')
 
 # Create identity header for the user
-IDENTITY=$(echo -n '{"org_id":"<org>","identity":{"org_id":"<org>","account_number":"<acct>","type":"User","user":{"username":"<user>","email":"<email>","is_org_admin":false}},"entitlements":{"cost_management":{"is_entitled":true}}}' | base64 | tr -d '\n')
+# Set IS_ORG_ADMIN to true for admin users (those with the org-admin Keycloak role), false otherwise
+IS_ORG_ADMIN=false
+IDENTITY=$(echo -n "{\"org_id\":\"<org>\",\"identity\":{\"org_id\":\"<org>\",\"account_number\":\"<acct>\",\"type\":\"User\",\"user\":{\"username\":\"<user>\",\"email\":\"<email>\",\"is_org_admin\":${IS_ORG_ADMIN}}},\"entitlements\":{\"cost_management\":{\"is_entitled\":true}}}" | base64 | tr -d '\n')
 
 # Query RBAC access endpoint
 kubectl exec -it $RBAC_POD -n <namespace> -- \
