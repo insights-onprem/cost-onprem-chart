@@ -9,27 +9,33 @@ from __future__ import annotations
 
 import json
 import os
+import time
 
 import pytest
 import requests
 
-from conftest import obtain_password_grant_token
-from rbac_bootstrap_scripts import render_rbac_iam_reader_bootstrap_script
+from conftest import _DEFAULT_ACCOUNT_NUMBER, obtain_password_grant_token
+from jwt_forge import forge_expired_jwt, forge_jwt_missing_sub
+from rbac_bootstrap_scripts import (
+    render_rbac_gateway_permission_restore_script,
+    render_rbac_gateway_permission_revoke_script,
+    render_rbac_iam_reader_bootstrap_script,
+)
 from rbac_keycloak_users import (
     ensure_realm_user_with_password,
     fetch_keycloak_master_admin_token,
 )
 from suites.auth.test_gateway_auth import _check_gateway_reachable
-from utils import exec_in_pod_raw, get_pod_by_label, get_route_url, run_oc_command
+from utils import (
+    exec_in_pod_raw,
+    get_pod_by_label,
+    get_route_url,
+    run_oc_command,
+    wait_for_deployment_replicas,
+)
 
 
 RBAC_IAM_GATEWAY_USERNAME = "rbac-iam-admin"
-
-
-@pytest.fixture(scope="session")
-def rbac_gateway_test_user_password() -> str:
-    """Password for synthetic RBAC gateway test users (Keycloak + password grant)."""
-    return os.environ.get("RBAC_GATEWAY_TEST_USER_PASSWORD", "RbacGwTest1!")
 
 
 @pytest.fixture(scope="module")
@@ -294,6 +300,20 @@ class TestRBACGateway:
             f"groups without write, got {response.status_code}: {response.text[:400]}"
         )
 
+    def test_gateway_ros_recommendations_unauthenticated_returns_401(
+        self, gateway_url: str, http_session: requests.Session
+    ):
+        """ROS recommendations route requires JWT at the gateway."""
+        if not _check_gateway_reachable(gateway_url, http_session):
+            pytest.skip("Gateway service not available")
+
+        url = f"{gateway_url.rstrip('/')}/cost-management/v1/recommendations/openshift"
+        response = http_session.get(url, timeout=20)
+        assert response.status_code == 401, (
+            f"Expected 401 without Authorization on ROS recommendations, got "
+            f"{response.status_code}: {response.text[:200]}"
+        )
+
     def test_gateway_ros_recommendations_user_without_rbac_returns_403(
         self,
         gateway_url: str,
@@ -379,8 +399,6 @@ class TestRBACSecurityBoundaries:
         backend is unreachable. A 424 (Failed Dependency) or 503 is acceptable
         only if it denies data access. A 200 with data would be a P0 security bug.
         """
-        from utils import run_oc_command
-
         if not _check_gateway_reachable(gateway_url, http_session):
             pytest.skip("Gateway service not available")
 
@@ -400,10 +418,14 @@ class TestRBACSecurityBoundaries:
         if scale_result.returncode != 0:
             pytest.skip(f"Could not scale RBAC deployment: {scale_result.stderr}")
 
+        rbac_label = "app.kubernetes.io/component=rbac-api"
+
         try:
-            # Wait for pods to terminate
-            import time
-            time.sleep(10)
+            # Wait for replicas to reach 0 (pods terminated)
+            if not wait_for_deployment_replicas(
+                cluster_config.namespace, rbac_label, expected_replicas=0, timeout=30
+            ):
+                pytest.skip("RBAC deployment did not scale to 0 within timeout")
 
             # Attempt authenticated request - should fail-closed
             url = f"{gateway_url.rstrip('/')}/cost-management/v1/reports/openshift/costs/"
@@ -429,102 +451,45 @@ class TestRBACSecurityBoundaries:
 
         finally:
             # Restore RBAC service
-            run_oc_command(
+            restore_result = run_oc_command(
                 [
                     "scale",
                     "deployment",
                     "-n",
                     cluster_config.namespace,
                     "-l",
-                    "app.kubernetes.io/component=rbac-api",
+                    rbac_label,
                     "--replicas=1",
                 ],
                 check=False,
             )
-            # Wait for RBAC to be ready again
-            import time
-            time.sleep(15)
+            # Wait for RBAC to be ready again (readyReplicas=1)
+            if restore_result.returncode == 0:
+                wait_for_deployment_replicas(
+                    cluster_config.namespace, rbac_label, expected_replicas=1, timeout=60
+                )
 
     def test_expired_jwt_rejected(
         self,
         gateway_url: str,
         http_session: requests.Session,
-        keycloak_config,
-        cluster_config,
-        rbac_gateway_test_user_password: str,
-        _provision_rbac_iam_reader_gateway,
+        org_id: str,
     ):
-        """Expired JWTs (exp claim in the past) MUST be rejected with 401.
-
-        Tests that the gateway enforces JWT expiration to prevent session
-        hijacking with stale credentials.
-        """
+        """Expired JWTs (exp claim in the past) MUST be rejected with 401."""
         if not _check_gateway_reachable(gateway_url, http_session):
             pytest.skip("Gateway service not available")
 
-        # Obtain a fresh token first
-        fresh_token = obtain_password_grant_token(
-            RBAC_IAM_GATEWAY_USERNAME,
-            rbac_gateway_test_user_password,
-            keycloak_config,
-            cluster_config,
-        )
-
-        # Extract token parts and decode payload to check structure
-        import base64
-        token_parts = fresh_token.access_token.split(".")
-        if len(token_parts) != 3:
-            pytest.skip("JWT not in expected 3-part format")
-
-        # Decode payload (add padding if needed)
-        payload_b64 = token_parts[1]
-        padding = 4 - len(payload_b64) % 4
-        if padding != 4:
-            payload_b64 += "=" * padding
-
-        try:
-            payload_json = base64.urlsafe_b64decode(payload_b64)
-            payload = json.loads(payload_json)
-        except Exception as e:
-            pytest.skip(f"Could not decode JWT payload: {e}")
-
-        # Check if token has expiration
-        if "exp" not in payload:
-            pytest.skip("JWT does not contain exp claim")
-
-        # Create an expired token by requesting with very short lifetime
-        # (We can't forge tokens, so we wait for a short-lived one to expire)
-        # Alternative: Test that a token created yesterday fails
-        # For this test, we'll verify the gateway checks exp by using the token
-        # after waiting for it to expire
-
-        # Most Keycloak configs have 5min token lifetime - we can't wait that long
-        # Instead, verify the Envoy config would reject expired tokens by
-        # checking the current token is accepted, then document the expected behavior
-
         url = f"{gateway_url.rstrip('/')}/cost-management/v1/status/"
-
-        # First verify fresh token works
-        response_fresh = http_session.get(
+        expired_jwt = forge_expired_jwt(org_id=org_id)
+        response = http_session.get(
             url,
-            headers=fresh_token.authorization_header,
+            headers={"Authorization": f"Bearer {expired_jwt}"},
             timeout=30,
             verify=False,
         )
-        assert response_fresh.status_code == 200, (
-            f"Fresh token should work, got {response_fresh.status_code}"
-        )
-
-        # Document expected behavior for expired tokens
-        # (Full test requires either: time-travel, token forging, or waiting 5+ minutes)
-        # For now, we validate the gateway is configured to check exp claim
-        # by confirming Envoy JWT filter is present in the config
-
-        pytest.skip(
-            "Expired token test requires either: (a) forging JWTs with past exp, "
-            "(b) Keycloak config for 10s token lifetime, or (c) 5+ minute wait. "
-            "Gateway JWT filter configuration verified separately. "
-            "TODO: Implement with JWT forging or short-lived Keycloak test realm."
+        assert response.status_code == 401, (
+            f"Expected 401 for expired/forged JWT, got {response.status_code}: "
+            f"{response.text[:200]}"
         )
 
     @pytest.mark.parametrize(
@@ -542,50 +507,66 @@ class TestRBACSecurityBoundaries:
         self,
         gateway_url: str,
         http_session: requests.Session,
-        gateway_rbac_iam_user_jwt,
+        cluster_config,
+        keycloak_config,
+        rbac_gateway_test_user_password: str,
         malicious_org_id: str,
         expected_status: int,
+        request,
     ):
-        """Malicious or malformed org_id values cannot bypass tenant isolation.
+        """Malicious org_id in a valid Keycloak JWT must not yield cost report data.
 
-        Tests that the system validates and sanitizes org_id to prevent:
-        - SQL injection via org_id in RBAC queries
-        - Path traversal in schema lookup
-        - Integer overflow in tenant identifiers
-        - Cross-tenant data access
+        Envoy accepts the JWT (valid signature); Lua embeds org_id into
+        ``X-Rh-Identity``; Koku/RBAC must reject the request.
         """
         if not _check_gateway_reachable(gateway_url, http_session):
             pytest.skip("Gateway service not available")
 
-        # Note: We can't directly manipulate X-Rh-Identity (Envoy generates it from JWT)
-        # This test validates backend defense-in-depth by attempting requests
-        # The org_id comes from the JWT, so malicious values would need to be
-        # injected at Keycloak or via JWT forgery
+        param_id = request.node.callspec.id
+        username = f"orgid-test-{param_id}"
+        admin_token = fetch_keycloak_master_admin_token(
+            keycloak_config.url,
+            cluster_config.keycloak_namespace,
+        )
+        if not admin_token:
+            pytest.skip("Could not obtain Keycloak master admin token")
 
-        # For this test, we verify that:
-        # 1. Normal authenticated requests work (baseline)
-        # 2. Document expected behavior for malformed org_id
+        account_number = os.environ.get("TEST_ACCOUNT_NUMBER", _DEFAULT_ACCOUNT_NUMBER)
+        try:
+            ensure_realm_user_with_password(
+                keycloak_base_url=keycloak_config.url,
+                realm=keycloak_config.realm,
+                admin_token=admin_token,
+                username=username,
+                password=rbac_gateway_test_user_password,
+                org_id=malicious_org_id,
+                account_number=account_number,
+                email=f"{username}@rbac-gateway.test",
+            )
+        except RuntimeError as exc:
+            pytest.skip(f"Keycloak user for org_id case {param_id!r}: {exc}")
 
+        token = obtain_password_grant_token(
+            username,
+            rbac_gateway_test_user_password,
+            keycloak_config,
+            cluster_config,
+        )
         url = f"{gateway_url.rstrip('/')}/cost-management/v1/reports/openshift/costs/"
         response = http_session.get(
             url,
-            headers=gateway_rbac_iam_user_jwt.authorization_header,
+            headers=token.authorization_header,
             timeout=90,
             verify=False,
         )
-
-        # We can't inject malicious org_id through the JWT path without forging tokens
-        # This test documents the expected validation behavior
-        # Real implementation would require:
-        # - Direct POST to Koku with crafted X-Rh-Identity header (bypassing gateway)
-        # - OR forging JWTs with malicious org_id claims
-
-        pytest.skip(
-            f"org_id boundary test for '{malicious_org_id}' requires either: "
-            f"(a) direct in-cluster access to bypass Envoy, or "
-            f"(b) forging JWTs with malicious claims. "
-            f"Expected behavior: system MUST reject with {expected_status}. "
-            f"TODO: Implement via in-cluster pod with crafted X-Rh-Identity header."
+        # 401 = Envoy/Lua rejects bad org_id before Koku; 400/403/424 = backend deny
+        allowed = {expected_status, 400, 401, 403, 424}
+        assert response.status_code in allowed, (
+            f"org_id case {param_id!r} ({malicious_org_id!r}): expected one of "
+            f"{sorted(allowed)}, got {response.status_code}: {response.text[:300]}"
+        )
+        assert response.status_code != 200, (
+            f"SECURITY: malicious org_id {malicious_org_id!r} must not return 200"
         )
 
     def test_permission_revocation_honored_after_cache_clear(
@@ -594,13 +575,15 @@ class TestRBACSecurityBoundaries:
         gateway_url: str,
         http_session: requests.Session,
         keycloak_config,
+        org_id: str,
         rbac_gateway_test_user_password: str,
         _provision_rbac_iam_reader_gateway,
     ):
-        """Revoked RBAC permissions are honored after cache TTL expires.
+        """Revoked RBAC permissions are honored after cache clear.
 
-        Tests that permission changes propagate through the RBAC cache layer
-        and that users lose access within an acceptable time window.
+        Removes group membership and temporarily disables platform-default roles
+        that grant ``rbac:principal:read`` / ``rbac:group:read`` (e.g. seeded
+        ``User Access principal viewer``), so denial is not masked by defaults.
         """
         if not _check_gateway_reachable(gateway_url, http_session):
             pytest.skip("Gateway service not available")
@@ -637,62 +620,64 @@ class TestRBACSecurityBoundaries:
         if not rbac_pod:
             pytest.skip("RBAC API pod not found")
 
-        # Script to remove principal from group
-        revoke_script = f"""
-from management.models import Group, Principal
-from django.core.cache import cache
-
-principal = Principal.objects.filter(username="{RBAC_IAM_GATEWAY_USERNAME}").first()
-if principal:
-    groups = Group.objects.filter(principals=principal)
-    for group in groups:
-        group.principals.remove(principal)
-    cache.clear()
-    print(f"Revoked: removed from {{groups.count()}} groups")
-else:
-    print("Principal not found")
-"""
-
-        result = exec_in_pod_raw(
-            cluster_config.namespace,
-            rbac_pod,
-            [
-                "python",
-                "/opt/rbac/rbac/manage.py",
-                "shell",
-                "-c",
-                revoke_script,
-            ],
-            timeout=60,
+        restore_script = render_rbac_gateway_permission_restore_script(
+            org_id, RBAC_IAM_GATEWAY_USERNAME
         )
 
-        if result.returncode != 0:
-            pytest.skip(f"Could not revoke permissions: {result.stderr}")
+        try:
+            revoke_script = render_rbac_gateway_permission_revoke_script(
+                RBAC_IAM_GATEWAY_USERNAME
+            )
 
-        # Cache was cleared explicitly, so check immediately
-        import time
-        time.sleep(2)  # Small delay for cache propagation
+            result = exec_in_pod_raw(
+                cluster_config.namespace,
+                rbac_pod,
+                [
+                    "python",
+                    "/opt/rbac/rbac/manage.py",
+                    "shell",
+                    "-c",
+                    revoke_script,
+                ],
+                timeout=60,
+            )
 
-        # Get NEW token (old token might be cached in Koku)
-        revoked_token = obtain_password_grant_token(
-            RBAC_IAM_GATEWAY_USERNAME,
-            rbac_gateway_test_user_password,
-            keycloak_config,
-            cluster_config,
-        )
+            if result.returncode != 0:
+                pytest.skip(f"Could not revoke permissions: {result.stderr}")
 
-        # Verify user now gets 403
-        response_after = http_session.get(
-            url,
-            headers=revoked_token.authorization_header,
-            timeout=60,
-            verify=False,
-        )
+            time.sleep(2)
 
-        assert response_after.status_code in (403, 424), (
-            f"Expected 403/424 after permission revocation, "
-            f"got {response_after.status_code}: {response_after.text[:300]}"
-        )
+            revoked_token = obtain_password_grant_token(
+                RBAC_IAM_GATEWAY_USERNAME,
+                rbac_gateway_test_user_password,
+                keycloak_config,
+                cluster_config,
+            )
+
+            response_after = http_session.get(
+                url,
+                headers=revoked_token.authorization_header,
+                timeout=60,
+                verify=False,
+            )
+
+            assert response_after.status_code in (403, 424), (
+                f"Expected 403/424 after permission revocation, "
+                f"got {response_after.status_code}: {response_after.text[:300]}"
+            )
+        finally:
+            exec_in_pod_raw(
+                cluster_config.namespace,
+                rbac_pod,
+                [
+                    "python",
+                    "/opt/rbac/rbac/manage.py",
+                    "shell",
+                    "-c",
+                    restore_script,
+                ],
+                timeout=120,
+            )
 
     def test_rbac_iam_reader_cannot_modify_own_permissions(
         self,
@@ -791,7 +776,7 @@ else:
         import time
 
         num_concurrent = 6
-        min_success = 2
+        min_success = 4
         max_workers = 3
         url = f"{gateway_url.rstrip('/')}/rbac/v1/principals/?limit=1"
         tokens = []
@@ -865,28 +850,23 @@ else:
         self,
         gateway_url: str,
         http_session: requests.Session,
+        org_id: str,
     ):
-        """JWTs missing required claims (org_id, account_number) must be rejected.
-
-        Tests that the Envoy Lua filter validates required claims before
-        constructing X-Rh-Identity.
-        """
+        """JWTs missing required claims (e.g. sub) must be rejected with 401."""
         if not _check_gateway_reachable(gateway_url, http_session):
             pytest.skip("Gateway service not available")
 
-        # This test would require forging JWTs with missing claims
-        # For now, document expected behavior and verify with valid token
-        # Real implementation requires:
-        # - OpenSSL to generate RSA key pair
-        # - Crafting JWT with missing org_id or account_number
-        # - Signing with fake key
-
-        pytest.skip(
-            "JWT claim validation test requires forging tokens with missing claims. "
-            "Expected behavior: Envoy MUST reject JWTs without org_id, account_number, "
-            "or sub claims with 401 before reaching backend. "
-            "Gateway Lua filter implementation should validate these claims. "
-            "TODO: Implement with JWT forging using openssl/python-jose."
+        url = f"{gateway_url.rstrip('/')}/cost-management/v1/status/"
+        no_sub_jwt = forge_jwt_missing_sub(org_id=org_id)
+        response = http_session.get(
+            url,
+            headers={"Authorization": f"Bearer {no_sub_jwt}"},
+            timeout=30,
+            verify=False,
+        )
+        assert response.status_code == 401, (
+            f"Expected 401 for JWT missing sub, got {response.status_code}: "
+            f"{response.text[:200]}"
         )
 
     def test_rbac_cache_ttl_configuration_exists(self, cluster_config):

@@ -551,9 +551,9 @@ def rbac_gateway_jwt_password(
     keycloak_config: KeycloakConfig,
     org_id: str,
     rbac_access_setup,
+    rbac_gateway_test_user_password: str,
 ):
-    """Create Keycloak users matching RBAC principals; yield password for grants."""
-    pwd = os.environ.get("RBAC_GATEWAY_TEST_USER_PASSWORD", "RbacGwTest1!")
+    """Create Keycloak users matching RBAC principals; yield session password."""
     try:
         ensure_rbac_gateway_persona_users(
             keycloak_config.url,
@@ -561,11 +561,11 @@ def rbac_gateway_jwt_password(
             keycloak_config.realm,
             org_id,
             "7890123",
-            password=pwd,
+            password=rbac_gateway_test_user_password,
         )
     except RuntimeError as exc:
         pytest.skip(f"Keycloak RBAC gateway persona provisioning failed: {exc}")
-    yield pwd
+    yield rbac_gateway_test_user_password
 
 
 # =============================================================================
@@ -648,10 +648,12 @@ class TestRBACAccessControl:
                 if proj:
                     projects_seen.add(proj)
 
-        if projects_seen:
-            assert projects_seen == {"payment"}, (
-                f"Alice should only see 'payment' but saw: {projects_seen}"
-            )
+        assert len(projects_seen) > 0, (
+            "Alice returned 200 but no project data — RBAC fixture may not have seeded data"
+        )
+        assert projects_seen == {"payment"}, (
+            f"Alice should only see 'payment' but saw: {projects_seen}"
+        )
 
     def test_bob_unfiltered_sees_only_alpha(
         self, cluster_config, test_runner_pod, org_id, rbac_access_setup, rbac_cluster_data
@@ -671,10 +673,12 @@ class TestRBACAccessControl:
                 if cid:
                     clusters_seen.add(cid)
 
-        if clusters_seen:
-            assert clusters_seen == {alpha_id}, (
-                f"Bob should only see cluster-alpha ({alpha_id}) but saw: {clusters_seen}"
-            )
+        assert len(clusters_seen) > 0, (
+            "Bob returned 200 but no cluster data — RBAC fixture may not have seeded data"
+        )
+        assert clusters_seen == {alpha_id}, (
+            f"Bob should only see cluster-alpha ({alpha_id}) but saw: {clusters_seen}"
+        )
 
     def test_carol_unfiltered_sees_everything(
         self, cluster_config, test_runner_pod, org_id, rbac_access_setup, rbac_cluster_data
@@ -694,12 +698,12 @@ class TestRBACAccessControl:
                     clusters_seen.add(cid)
 
         expected_clusters = set(rbac_cluster_data["cluster_ids"].values())
-        if clusters_seen:
-            # Carol has full access -- verify all 3 test clusters are present
-            # (there may also be leftover clusters from prior runs)
-            assert expected_clusters.issubset(clusters_seen), (
-                f"Carol should see at least {expected_clusters} but saw: {clusters_seen}"
-            )
+        assert len(clusters_seen) > 0, (
+            "Carol returned 200 but no cluster data — RBAC fixture may not have seeded data"
+        )
+        assert expected_clusters.issubset(clusters_seen), (
+            f"Carol should see at least {expected_clusters} but saw: {clusters_seen}"
+        )
 
     # =========================================================================
     # Explicit Filter -- Allowed (200 with data)
@@ -832,10 +836,13 @@ class TestRBACAccessControl:
                 proj = project_group.get("project")
                 if proj:
                     projects_seen.add(proj)
-        if projects_seen:
-            assert projects_seen == {"payment"}, (
-                f"Alice gateway should only see 'payment' but saw: {projects_seen}"
-            )
+        assert len(projects_seen) > 0, (
+            "Alice (gateway) returned 200 but no project data — "
+            "RBAC fixture may not have seeded data"
+        )
+        assert projects_seen == {"payment"}, (
+            f"Alice gateway should only see 'payment' but saw: {projects_seen}"
+        )
 
     def test_bob_password_grant_via_gateway_sees_only_alpha(
         self,
@@ -875,10 +882,13 @@ class TestRBACAccessControl:
                 cid = cluster_group.get("cluster")
                 if cid:
                     clusters_seen.add(cid)
-        if clusters_seen:
-            assert clusters_seen == {alpha_id}, (
-                f"Bob gateway should only see alpha ({alpha_id}) but saw: {clusters_seen}"
-            )
+        assert len(clusters_seen) > 0, (
+            "Bob (gateway) returned 200 but no cluster data — "
+            "RBAC fixture may not have seeded data"
+        )
+        assert clusters_seen == {alpha_id}, (
+            f"Bob gateway should only see alpha ({alpha_id}) but saw: {clusters_seen}"
+        )
 
     def test_carol_password_grant_via_gateway_sees_all_test_clusters(
         self,
@@ -918,11 +928,14 @@ class TestRBACAccessControl:
                 if cid:
                     clusters_seen.add(cid)
         expected_clusters = set(rbac_cluster_data["cluster_ids"].values())
-        if clusters_seen:
-            assert expected_clusters.issubset(clusters_seen), (
-                f"Carol gateway should see at least {expected_clusters} "
-                f"but saw: {clusters_seen}"
-            )
+        assert len(clusters_seen) > 0, (
+            "Carol (gateway) returned 200 but no cluster data — "
+            "RBAC fixture may not have seeded data"
+        )
+        assert expected_clusters.issubset(clusters_seen), (
+            f"Carol gateway should see at least {expected_clusters} "
+            f"but saw: {clusters_seen}"
+        )
 
     def test_alice_password_grant_via_gateway_ros_recommendations_ok(
         self,

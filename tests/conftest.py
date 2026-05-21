@@ -145,6 +145,21 @@ class S3Config:
 
 
 @pytest.fixture(scope="session")
+def rbac_gateway_test_user_password() -> str:
+    """Password for synthetic RBAC gateway test users (Keycloak + password grant).
+
+    Uses ``RBAC_GATEWAY_TEST_USER_PASSWORD`` when set. Otherwise generates a
+    unique ephemeral secret per session (no hardcoded fallback on real clusters).
+    """
+    pw = os.environ.get("RBAC_GATEWAY_TEST_USER_PASSWORD", "").strip()
+    if pw:
+        return pw
+    import secrets
+
+    return secrets.token_urlsafe(24)
+
+
+@pytest.fixture(scope="session")
 def cluster_config() -> ClusterConfig:
     """Get cluster configuration from environment variables."""
     return ClusterConfig(

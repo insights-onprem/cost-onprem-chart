@@ -289,3 +289,104 @@ grp.principals.add(principal)
 cache.clear()
 print("gateway_rbac_iam_bootstrap_ok", perm.permission)
 """
+
+
+def render_rbac_gateway_permission_revoke_script(username: str) -> str:
+    """Remove group bindings and sever platform-default RBAC IAM read paths.
+
+    On-prem RBAC grants ``rbac:principal:read`` via the platform-default group
+    ``Default access`` (role ``User Access principal viewer``), not only via
+    explicit group membership. Revoke removes membership, detaches those roles
+    from platform-default group policies, and clears ``role.platform_default``.
+    """
+    return f"""
+from management.models import Group, Policy, Principal, Role, Access
+from django.db.models import Q
+from django.core.cache import cache
+
+username = {repr(username)}
+
+rbac_iam_read = (
+    Q(
+        permission__application="rbac",
+        permission__resource_type="group",
+        permission__verb="read",
+    )
+    | Q(permission__permission="rbac:principal:read")
+    | Q(permission__permission="rbac:group:read")
+)
+
+principal = Principal.objects.filter(username=username).first()
+group_count = 0
+if principal:
+    for group in list(Group.objects.filter(principals=principal)):
+        group.principals.remove(principal)
+        group_count += 1
+else:
+    print("principal_not_found")
+
+detached = []
+for group in Group.objects.filter(platform_default=True):
+    for policy in Policy.objects.filter(group=group):
+        for role in list(policy.roles.all()):
+            if Access.objects.filter(role=role).filter(rbac_iam_read).exists():
+                policy.roles.remove(role)
+                detached.append(f"{{group.name}}:{{role.name}}")
+
+disabled = []
+for role in Role.objects.filter(platform_default=True).distinct():
+    if Access.objects.filter(role=role).filter(rbac_iam_read).exists():
+        role.platform_default = False
+        role.save(update_fields=["platform_default"])
+        disabled.append(role.name)
+
+cache.clear()
+print(
+    f"revoked: groups={{group_count}} detached={{detached}} "
+    f"disabled_platform_default={{disabled}}"
+)
+"""
+
+
+def render_rbac_gateway_permission_restore_script(org_id: str, username: str) -> str:
+    """Re-run IAM reader bootstrap and restore seeded platform-default RBAC IAM read."""
+    bootstrap = render_rbac_iam_reader_bootstrap_script(org_id, username)
+    return (
+        bootstrap
+        + """
+from management.models import Group, Policy, Role, Access
+from django.db.models import Q
+from django.core.cache import cache
+
+rbac_iam_read = (
+    Q(
+        permission__application="rbac",
+        permission__resource_type="group",
+        permission__verb="read",
+    )
+    | Q(permission__permission="rbac:principal:read")
+    | Q(permission__permission="rbac:group:read")
+)
+
+SEEDED_PLATFORM_DEFAULT_RBAC_ROLES = ("User Access principal viewer",)
+
+reattached = []
+for group in Group.objects.filter(platform_default=True):
+    for policy in Policy.objects.filter(group=group):
+        for role in Role.objects.filter(name__in=SEEDED_PLATFORM_DEFAULT_RBAC_ROLES):
+            if not Access.objects.filter(role=role).filter(rbac_iam_read).exists():
+                continue
+            policy.roles.add(role)
+            reattached.append(f"{group.name}:{role.name}")
+
+restored_flags = []
+for role in Role.objects.filter(name__in=SEEDED_PLATFORM_DEFAULT_RBAC_ROLES):
+    if not role.platform_default:
+        role.platform_default = True
+        role.save(update_fields=["platform_default"])
+        restored_flags.append(role.name)
+
+cache.clear()
+print(f"reattached={reattached} restored_platform_default={restored_flags}")
+"""
+    )
