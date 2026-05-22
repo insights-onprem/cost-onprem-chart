@@ -22,6 +22,8 @@
 #   S3_BUCKET_INGRESS / S3_BUCKET_KOKU / S3_BUCKET_ROS - Override individual bucket names (override prefix)
 #   SKIP_S3_SETUP   - Skip S3 bucket creation entirely (default: false)
 #   S3_CLI_IMAGE    - Container image with AWS CLI for bucket creation (default: amazon/aws-cli:latest)
+#   HELM_FORCE_CONFLICTS - When true, pass --force-conflicts to helm upgrade (SSA field ownership;
+#                          use after kubectl set / oc set image on chart-managed resources)
 #
 # Examples:
 #   # Default (clean output with successes/warnings/errors only)
@@ -1302,6 +1304,12 @@ deploy_helm_chart() {
     if [ ${#HELM_EXTRA_ARGS[@]} -gt 0 ]; then
         echo_info "Adding additional Helm arguments: ${HELM_EXTRA_ARGS[*]}"
         helm_cmd="$helm_cmd ${HELM_EXTRA_ARGS[*]}"
+    fi
+
+    # Reconcile server-side apply conflicts (e.g. after oc set image on deployments)
+    if [ "${HELM_FORCE_CONFLICTS:-false}" = "true" ]; then
+        helm_cmd="$helm_cmd --force-conflicts"
+        echo_info "Helm upgrade: --force-conflicts (server-side apply)"
     fi
 
     echo_info "Executing: $helm_cmd"
