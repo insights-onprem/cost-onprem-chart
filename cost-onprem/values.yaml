@@ -926,6 +926,12 @@ objectStorage:
   # Override to AWS region (e.g., "us-east-1") if deploying to AWS S3
   s3:
     region: "onprem"
+    # S3 addressing style for bucket URL resolution:
+    #   "path"    - Path-style: endpoint/bucket (default, for on-prem S3-compatible backends)
+    #   "auto"    - SDK auto-detection: virtual-hosted when supported (recommended for AWS S3)
+    #   "virtual" - Virtual-hosted style: bucket.endpoint/object (AWS preferred, not supported by most on-prem backends)
+    # The install script sets this to "auto" for AWS S3 endpoints (*.amazonaws.com).
+    addressingStyle: "path"
 
 
 # -----------------------------------------------------------------------------
