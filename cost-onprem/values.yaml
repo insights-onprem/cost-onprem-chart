@@ -691,6 +691,89 @@ rbac:
   bootstrapAdmin:
     enabled: false
 
+  # Keycloak-to-RBAC principal sync CronJob.
+  # Periodically fetches all users from a Keycloak realm and upserts
+  # corresponding RBAC Tenant/Principal/Group records so that API
+  # authorization stays in sync with the identity provider.
+  # Requires a dedicated Keycloak service-account client with realm-management
+  # view-users role (provisioned by deploy-rhbk.sh).
+  #
+  # RELATIONSHIP WITH bootstrapAdmin:
+  #   When keycloakSync is enabled, bootstrapAdmin.enabled should typically be
+  #   false. The sync CronJob creates the same Group/Policy/Principal objects.
+  #   If both are enabled, they coexist safely (idempotent get_or_create), but
+  #   the bootstrap admin principal may be pruned if that user does not exist
+  #   in Keycloak. Disable bootstrapAdmin once keycloakSync is managing users.
+  #
+  # SINGLE-TENANT LIMITATION:
+  #   The sync targets a single org_id (derived from the first orgAdmin:true
+  #   entry in jwtAuth.realmUsers). All synced Keycloak users are placed under
+  #   this tenant. Multi-org deployments require one CronJob per org (not yet
+  #   supported). This matches the typical on-prem single-organization model.
+  #
+  # MONITORING (FedRAMP SI-4):
+  # The CronJob is a batch workload with no persistent metrics endpoint.
+  # Prometheus cannot scrape ephemeral job pods, and automountServiceAccountToken
+  # is disabled (security hardening), so the script cannot emit K8s Events.
+  # Sync failures are visible only through:
+  #   - Pod logs: "SYNC COMPLETE" or error messages
+  #   - kube-state-metrics: kube_job_status_failed (if kube-state-metrics is
+  #     deployed and Prometheus has access — not guaranteed in all clusters)
+  # Operators should configure log-based alerting on:
+  #   - Absence of "SYNC COMPLETE" log line within 2x the schedule interval
+  #   - "AUDIT action=skip_disabled" log lines (disabled user detected)
+  #
+  # FUTURE IMPROVEMENT: Replace the CronJob with a long-running controller
+  # (analogous to the SaaS BOP service) that exposes /metrics, /healthz, and
+  # emits Kubernetes Events for first-class observability.
+  #
+  # ACCESS FRESHNESS SLA (FedRAMP AC-2(4)): Keycloak user changes (creation,
+  # disablement, role revocation) propagate to RBAC within one schedule
+  # interval. For FedRAMP compliance, keep schedule <= 15 minutes.
+  #
+  # SECRET ROTATION:
+  #   If the Keycloak client secret is rotated, update the K8s secret
+  #   referenced by clientSecretRef. The next CronJob run will pick up the
+  #   new value automatically (env vars are read fresh per job execution).
+  #   Re-run deploy-rhbk.sh to regenerate and mirror the secret.
+  #
+  # TROUBLESHOOTING:
+  #   "Public tenant does not exist" -> RBAC migrations haven't run; the job
+  #     retries automatically (backoffLimit: 3).
+  #   "Failed to authenticate with Keycloak" -> Check KEYCLOAK_URL and client
+  #     secret. Verify the secret exists: oc get secret <clientSecretRef.name>
+  #   "User count drift" warning -> Users were added/removed during sync;
+  #     usually harmless, resolves on next run.
+  #   CronJob never starts -> Verify the K8s secret is in the release
+  #     namespace (not the Keycloak namespace). deploy-rhbk.sh mirrors it
+  #     automatically.
+  keycloakSync:
+    enabled: false
+    # Schedule interval. Maximum staleness for access data equals this value.
+    # FedRAMP AC-2(4) recommendation: do not exceed "*/15 * * * *".
+    schedule: "*/15 * * * *"
+    # Keycloak realm role that maps to is_org_admin / admin_default group.
+    orgAdminRole: "org-admin"
+    # Delete RBAC Principals that no longer exist in the Keycloak realm.
+    # Pruning is skipped automatically if the Keycloak user listing was incomplete.
+    pruneOrphans: true
+    # Keycloak service-account client for Admin API access.
+    clientId: "rbac-keycloak-sync"
+    # K8s Secret containing the Keycloak client secret.
+    # Required when keycloakSync is enabled — Helm render will fail if empty.
+    clientSecretRef:
+      name: ""
+      key: CLIENT_SECRET
+    successfulJobsHistoryLimit: 3
+    failedJobsHistoryLimit: 3
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 250m
+        memory: 512Mi
+
 # -----------------------------------------------------------------------------
 # Shared Infrastructure - Kafka
 # -----------------------------------------------------------------------------

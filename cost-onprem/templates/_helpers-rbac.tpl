@@ -223,6 +223,20 @@ user exists, the template fails with an actionable error.
 {{- end -}}
 
 {{/*
+Keycloak-to-RBAC sync CronJob name.
+*/}}
+{{- define "cost-onprem.rbac.keycloakSync.name" -}}
+{{- printf "%s-rbac-keycloak-sync" (include "cost-onprem.fullname" .) -}}
+{{- end -}}
+
+{{/*
+Keycloak-to-RBAC sync ConfigMap name.
+*/}}
+{{- define "cost-onprem.rbac.keycloakSync.configmapName" -}}
+{{- printf "%s-rbac-sync-script" (include "cost-onprem.fullname" .) -}}
+{{- end -}}
+
+{{/*
 RBAC database secret name. Reuses the main DB credentials secret
 with RBAC-specific keys, or a dedicated secret.
 */}}

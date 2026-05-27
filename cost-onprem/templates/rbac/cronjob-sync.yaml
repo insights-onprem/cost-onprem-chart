@@ -1,0 +1,98 @@
+{{- if .Values.rbac.keycloakSync.enabled }}
+{{- $_ := required "rbac.keycloakSync.clientSecretRef.name is required when keycloakSync is enabled" .Values.rbac.keycloakSync.clientSecretRef.name -}}
+{{- $hasOrgAdmin := false -}}
+{{- range .Values.jwtAuth.realmUsers -}}
+  {{- if .orgAdmin -}}{{- $hasOrgAdmin = true -}}{{- end -}}
+{{- end -}}
+{{- if not $hasOrgAdmin -}}
+  {{- fail "rbac.keycloakSync.enabled is true but no orgAdmin:true entry found in jwtAuth.realmUsers. The sync CronJob requires an explicit org_id and account_number." -}}
+{{- end -}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "cost-onprem.rbac.keycloakSync.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-onprem.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac-keycloak-sync
+spec:
+  schedule: {{ .Values.rbac.keycloakSync.schedule | quote }}
+  startingDeadlineSeconds: 900
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ .Values.rbac.keycloakSync.successfulJobsHistoryLimit | default 3 }}
+  failedJobsHistoryLimit: {{ .Values.rbac.keycloakSync.failedJobsHistoryLimit | default 3 }}
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 300
+      backoffLimit: 3
+      template:
+        metadata:
+          labels:
+            {{- include "cost-onprem.labels" . | nindent 12 }}
+            app.kubernetes.io/component: rbac-keycloak-sync
+        spec:
+          restartPolicy: OnFailure
+          automountServiceAccountToken: false
+
+          securityContext:
+            {{- include "cost-onprem.securityContext.pod.nonRoot" . | nindent 12 }}
+
+          {{- with .Values.global.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+
+          initContainers:
+            {{- include "cost-onprem.initContainer.waitForDb" (list . "rbac") | nindent 12 }}
+
+          containers:
+          - name: keycloak-sync
+            image: "{{ include "cost-onprem.rbac.image" . }}"
+            imagePullPolicy: {{ .Values.rbac.image.pullPolicy }}
+            workingDir: /opt/rbac/rbac
+
+            command: ["/bin/bash", "-c"]
+            args:
+              - "python manage.py shell < /opt/rbac/rbac/sync_keycloak_principals.py"
+
+            env:
+            {{- include "cost-onprem.rbac.commonEnv" . | nindent 12 }}
+            - name: KEYCLOAK_URL
+              value: {{ .Values.jwtAuth.keycloak.url | quote }}
+            - name: KEYCLOAK_REALM
+              value: {{ .Values.jwtAuth.keycloak.realm | quote }}
+            - name: KEYCLOAK_CLIENT_ID
+              value: {{ .Values.rbac.keycloakSync.clientId | quote }}
+            - name: KEYCLOAK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.rbac.keycloakSync.clientSecretRef.name | quote }}
+                  key: {{ .Values.rbac.keycloakSync.clientSecretRef.key | default "CLIENT_SECRET" | quote }}
+            - name: KEYCLOAK_TLS_VERIFY
+              value: {{ not (.Values.jwtAuth.keycloak.tls.insecureSkipVerify) | ternary "true" "false" | quote }}
+            - name: SYNC_ORG_ID
+              value: {{ include "cost-onprem.rbac.bootstrapAdmin.orgId" . | quote }}
+            - name: SYNC_ACCOUNT_NUMBER
+              value: {{ include "cost-onprem.rbac.bootstrapAdmin.accountNumber" . | quote }}
+            - name: SYNC_ORG_ADMIN_ROLE
+              value: {{ .Values.rbac.keycloakSync.orgAdminRole | quote }}
+            - name: SYNC_PRUNE_ORPHANS
+              value: {{ .Values.rbac.keycloakSync.pruneOrphans | ternary "true" "false" | quote }}
+
+            volumeMounts:
+            - name: sync-script
+              mountPath: /opt/rbac/rbac/sync_keycloak_principals.py
+              subPath: sync_keycloak_principals.py
+              readOnly: true
+
+            securityContext:
+              {{- include "cost-onprem.securityContext.container" . | nindent 14 }}
+
+            resources:
+              {{- toYaml .Values.rbac.keycloakSync.resources | nindent 14 }}
+
+          volumes:
+          - name: sync-script
+            configMap:
+              name: {{ include "cost-onprem.rbac.keycloakSync.configmapName" . }}
+{{- end }}
