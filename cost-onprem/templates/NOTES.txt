@@ -75,6 +75,26 @@ Storage Classes:
   - Kafka: {{ default (include "cost-onprem.storage.class" .) .Values.kafka.storageClass }}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{{- if .Values.rbac.keycloakSync.enabled }}
+
+🔄 KEYCLOAK-TO-RBAC USER SYNC
+
+CronJob: {{ include "cost-onprem.rbac.keycloakSync.name" . }}
+Schedule: {{ .Values.rbac.keycloakSync.schedule }}
+Client ID: {{ .Values.rbac.keycloakSync.clientId }}
+Secret: {{ .Values.rbac.keycloakSync.clientSecretRef.name }}
+
+Check sync status:
+  oc get cronjob {{ include "cost-onprem.rbac.keycloakSync.name" . }} -n {{ $namespace }}
+
+View latest sync logs:
+  oc logs -n {{ $namespace }} -l app.kubernetes.io/component=rbac-keycloak-sync --tail=50
+
+Trigger manual sync:
+  oc create job --from=cronjob/{{ include "cost-onprem.rbac.keycloakSync.name" . }} manual-sync -n {{ $namespace }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{{- end }}
 
 🔍 TROUBLESHOOTING
 

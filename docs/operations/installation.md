@@ -940,13 +940,37 @@ helm upgrade cost-onprem ./cost-onprem -n cost-onprem \
 
 The hook is idempotent — safe to leave enabled across upgrades.
 
-**Option B: Manual sync script**
+**Option B: Automatic Keycloak-to-RBAC sync CronJob (recommended for production)**
+
+Enable the CronJob to continuously sync all Keycloak realm users into RBAC:
 
 ```bash
-NAMESPACE=cost-onprem ./scripts/sync-rbac-admin.sh
+helm upgrade cost-onprem ./cost-onprem -n cost-onprem \
+  --set rbac.keycloakSync.enabled=true \
+  --set rbac.keycloakSync.clientSecretRef.name=keycloak-client-secret-rbac-sync
 ```
 
-See `./scripts/sync-rbac-admin.sh --help` for custom username/org options.
+The CronJob runs every 15 minutes by default. `install-helm-chart.sh` triggers an initial sync immediately after deployment so that users are available before health checks run.
+
+To trigger a manual sync:
+
+```bash
+kubectl create job --from=cronjob/cost-onprem-rbac-keycloak-sync manual-sync -n cost-onprem
+kubectl wait --for=condition=complete job/manual-sync -n cost-onprem --timeout=300s
+kubectl logs job/manual-sync -n cost-onprem
+```
+
+See `values.yaml` → `rbac.keycloakSync` for schedule, resource limits, and pruning options.
+
+> **Observability limitation:** The CronJob is a batch workload with no
+> persistent metrics endpoint. Prometheus cannot scrape it directly, and the
+> pod's `automountServiceAccountToken: false` setting prevents it from
+> emitting Kubernetes Events. Sync failures are visible only in pod logs and
+> through `kube_job_status_failed` metrics exposed by kube-state-metrics (if
+> present). A future improvement is to replace the CronJob with a long-running
+> controller (similar to the SaaS BOP service) that exposes `/metrics`,
+> `/healthz`, and emits proper Kubernetes Events — providing first-class
+> observability without depending on external monitoring infrastructure.
 
 **Next steps:**
 
