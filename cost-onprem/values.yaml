@@ -651,8 +651,8 @@ database:
 # Deploys an API server (Gunicorn) and a Celery worker for async tasks.
 rbac:
   image:
-    repository: quay.io/cloudservices/rbac
-    tag: "c2b9ccf"
+    repository: quay.io/redhat-services-prod/hcc-accessmanagement-tenant/insights-rbac
+    tag: "b34eb9a"
     pullPolicy: IfNotPresent
 
   api:
