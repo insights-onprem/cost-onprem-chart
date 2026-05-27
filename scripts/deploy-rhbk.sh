@@ -47,6 +47,7 @@ STORAGE_CLASS=${STORAGE_CLASS:-}  # Auto-detect if empty
 REALM_NAME=${REALM_NAME:-kubernetes}
 COST_MGMT_OPERATOR_CLIENT_ID=${COST_MGMT_OPERATOR_CLIENT_ID:-cost-management-operator}
 COST_MGMT_UI_CLIENT_ID=${COST_MGMT_UI_CLIENT_ID:-cost-management-ui}
+RBAC_SYNC_CLIENT_ID=${RBAC_SYNC_CLIENT_ID:-rbac-keycloak-sync}
 COST_MGMT_NAMESPACE=${COST_MGMT_NAMESPACE:-cost-onprem}
 COST_MGMT_RELEASE_NAME=${COST_MGMT_RELEASE_NAME:-cost-onprem}
 KEYCLOAK_INSTANCES=${KEYCLOAK_INSTANCES:-1}
@@ -914,6 +915,21 @@ spec:
               id.token.claim: "true"
               jsonType.label: String
               userinfo.token.claim: "true"
+      - clientId: $RBAC_SYNC_CLIENT_ID
+        name: "RBAC Keycloak Sync"
+        description: "Service account for Keycloak-to-RBAC principal sync CronJob"
+        enabled: true
+        clientAuthenticatorType: client-secret
+        serviceAccountsEnabled: true
+        standardFlowEnabled: false
+        directAccessGrantsEnabled: false
+        implicitFlowEnabled: false
+        publicClient: false
+        fullScopeAllowed: false
+        protocol: openid-connect
+        defaultClientScopes:
+          - openid
+        optionalClientScopes: []
       - clientId: $COST_MGMT_UI_CLIENT_ID
         name: "Cost Management UI"
         description: "OAuth2 client for Cost Management UI"
@@ -1124,6 +1140,20 @@ validate_deployment() {
         echo_warning "⚠ Keycloak route not found (may be normal depending on ingress configuration)"
     fi
 
+    # Check RBAC sync client secret in both namespaces
+    if oc get secret keycloak-client-secret-rbac-sync -n "$NAMESPACE" >/dev/null 2>&1; then
+        echo_success "✓ RBAC sync client secret exists in $NAMESPACE"
+    else
+        echo_warning "⚠ RBAC sync client secret not found in $NAMESPACE"
+    fi
+    if [ "$NAMESPACE" != "$COST_MGMT_NAMESPACE" ]; then
+        if oc get secret keycloak-client-secret-rbac-sync -n "$COST_MGMT_NAMESPACE" >/dev/null 2>&1; then
+            echo_success "✓ RBAC sync client secret mirrored to $COST_MGMT_NAMESPACE"
+        else
+            echo_warning "⚠ RBAC sync client secret not found in $COST_MGMT_NAMESPACE (CronJob will fail)"
+        fi
+    fi
+
     if [ $validation_errors -eq 0 ]; then
         echo_success "All validation checks passed!"
         return 0
@@ -1330,7 +1360,129 @@ extract_client_secret() {
     # Extract UI client secret (used by oauth2-proxy for authorization_code flow)
     extract_single_client_secret "$COST_MGMT_UI_CLIENT_ID" "keycloak-client-secret-cost-management-ui" || echo_warning "Failed to extract UI client secret"
 
+    # Extract RBAC sync client secret and mirror to cost-mgmt namespace.
+    # The CronJob runs in COST_MGMT_NAMESPACE, not in the Keycloak namespace,
+    # and K8s secretKeyRef requires the secret to be in the same namespace as the pod.
+    extract_single_client_secret "$RBAC_SYNC_CLIENT_ID" "keycloak-client-secret-rbac-sync" || echo_warning "Failed to extract RBAC sync client secret"
+    if [ "$NAMESPACE" != "$COST_MGMT_NAMESPACE" ]; then
+        echo_info "Mirroring RBAC sync secret to namespace '$COST_MGMT_NAMESPACE'..."
+        oc get secret keycloak-client-secret-rbac-sync -n "$NAMESPACE" -o yaml \
+            | sed "s/namespace: $NAMESPACE/namespace: $COST_MGMT_NAMESPACE/" \
+            | oc apply -n "$COST_MGMT_NAMESPACE" -f - >/dev/null 2>&1 \
+            && echo_success "Mirrored secret to $COST_MGMT_NAMESPACE" \
+            || echo_warning "Failed to mirror sync secret to $COST_MGMT_NAMESPACE"
+    fi
+
     echo ""
+}
+
+# Assign realm-management view-users role to the RBAC sync service account.
+# The service account must be able to enumerate users and query role memberships.
+assign_sync_client_realm_roles() {
+    echo_header "ASSIGNING REALM-MANAGEMENT ROLES TO RBAC SYNC CLIENT"
+
+    local KEYCLOAK_URL=$(oc get route keycloak -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+    if [ -z "$KEYCLOAK_URL" ]; then
+        echo_warning "Could not determine Keycloak URL, skipping role assignment"
+        return 1
+    fi
+    KEYCLOAK_URL="https://$KEYCLOAK_URL"
+
+    get_admin_credentials
+    if [ -z "$ADMIN_PASSWORD" ]; then
+        echo_error "Could not retrieve admin password, skipping role assignment"
+        return 1
+    fi
+
+    local TOKEN_RESPONSE
+    TOKEN_RESPONSE=$(curl -sk -X POST "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -d "username=$ADMIN_USERNAME" \
+        -d "password=$ADMIN_PASSWORD" \
+        -d "grant_type=password" \
+        -d "client_id=admin-cli" 2>/dev/null)
+
+    local ACCESS_TOKEN=$(safe_jq '.access_token // empty' "$TOKEN_RESPONSE")
+
+    if [ -z "$ACCESS_TOKEN" ]; then
+        echo_warning "Could not obtain admin token, skipping role assignment"
+        return 1
+    fi
+
+    # Look up the service account user for the sync client
+    local SA_USERNAME="service-account-${RBAC_SYNC_CLIENT_ID}"
+    echo_info "Looking up service account user: $SA_USERNAME"
+
+    local SA_RESPONSE
+    SA_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=$SA_USERNAME&exact=true" \
+        -H "Authorization: Bearer $ACCESS_TOKEN" 2>/dev/null)
+
+    local SA_USER_ID=$(safe_jq '.[0].id // empty' "$SA_RESPONSE")
+
+    if [ -z "$SA_USER_ID" ]; then
+        echo_warning "Could not find service account user '$SA_USERNAME'"
+        return 1
+    fi
+    echo_success "Found service account user: $SA_USER_ID"
+
+    # Look up the realm-management client UUID
+    local RM_RESPONSE
+    RM_RESPONSE=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/clients?clientId=realm-management" \
+        -H "Authorization: Bearer $ACCESS_TOKEN" 2>/dev/null)
+
+    local RM_CLIENT_UUID=$(safe_jq '.[0].id // empty' "$RM_RESPONSE")
+
+    if [ -z "$RM_CLIENT_UUID" ]; then
+        echo_warning "Could not find realm-management client"
+        return 1
+    fi
+    echo_success "Found realm-management client: $RM_CLIENT_UUID"
+
+    # Get the view-users and view-realm client role representations
+    local ROLES_NEEDED=("view-users" "query-users" "view-realm")
+    local ROLE_PAYLOAD="["
+    local first=true
+
+    for role_name in "${ROLES_NEEDED[@]}"; do
+        local ROLE_JSON
+        ROLE_JSON=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/clients/$RM_CLIENT_UUID/roles/$role_name" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" 2>/dev/null)
+
+        local ROLE_ID=$(safe_jq '.id // empty' "$ROLE_JSON")
+
+        if [ -z "$ROLE_ID" ]; then
+            echo_warning "Could not find realm-management role '$role_name', skipping"
+            continue
+        fi
+
+        echo_info "Found role: $role_name ($ROLE_ID)"
+        if [ "$first" = true ]; then
+            first=false
+        else
+            ROLE_PAYLOAD+=","
+        fi
+        ROLE_PAYLOAD+="{\"id\":\"$ROLE_ID\",\"name\":\"$role_name\"}"
+    done
+    ROLE_PAYLOAD+="]"
+
+    if [ "$ROLE_PAYLOAD" = "[]" ]; then
+        echo_warning "No roles found to assign"
+        return 1
+    fi
+
+    # Assign the roles to the service account user
+    local HTTP_CODE
+    HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" -X POST \
+        "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users/$SA_USER_ID/role-mappings/clients/$RM_CLIENT_UUID" \
+        -H "Authorization: Bearer $ACCESS_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "$ROLE_PAYLOAD" 2>/dev/null)
+
+    if [ "$HTTP_CODE" = "204" ] || [ "$HTTP_CODE" = "200" ]; then
+        echo_success "✓ Assigned realm-management roles (${ROLES_NEEDED[*]}) to $SA_USERNAME"
+    else
+        echo_warning "Role assignment returned HTTP $HTTP_CODE (may already be assigned)"
+    fi
 }
 
 # Read realm users from values file (jwtAuth.realmUsers) or return default JSON
@@ -1608,6 +1760,13 @@ display_summary() {
     echo_info "  Secret stored in: keycloak-client-secret-cost-management-ui"
     echo ""
 
+    echo_info "RBAC Keycloak Sync Client Information:"
+    echo_info "  Client ID: $RBAC_SYNC_CLIENT_ID"
+    echo_info "  Client Type: Confidential (client_credentials service account)"
+    echo_info "  Realm-management roles: view-users, query-users, view-realm"
+    echo_info "  Secret stored in: keycloak-client-secret-rbac-sync"
+    echo ""
+
     echo_info "Provisioned Realm Users:"
     local USERS_JSON
     USERS_JSON=$(get_realm_users_json 2>/dev/null) || USERS_JSON='[]'
@@ -1627,11 +1786,12 @@ display_summary() {
     done
     echo_info ""
     echo_info "  RBAC Permissions:"
-    echo_info "    To grant the admin user Cost Administrator on helm install/upgrade:"
-    echo_info "      rbac.bootstrapAdmin.enabled=true"
+    echo_info "    To sync all Keycloak users to RBAC automatically (recommended):"
+    echo_info "      rbac.keycloakSync.enabled=true"
+    echo_info "      rbac.keycloakSync.clientSecretRef.name=keycloak-client-secret-rbac-sync"
     echo_info ""
-    echo_info "    Or run after chart install:"
-    echo_info "      NAMESPACE=${COST_MGMT_NAMESPACE} ./scripts/sync-rbac-admin.sh"
+    echo_info "    Or for single-user bootstrap on install/upgrade only:"
+    echo_info "      rbac.bootstrapAdmin.enabled=true"
     echo ""
 
     # Display admin credential retrieval
@@ -1673,6 +1833,8 @@ cleanup_deployment() {
     oc delete secret keycloak-db-secret -n "$NAMESPACE" 2>/dev/null || true
     oc delete secret keycloak-client-secret-cost-management-operator -n "$NAMESPACE" 2>/dev/null || true
     oc delete secret keycloak-client-secret-cost-management-ui -n "$NAMESPACE" 2>/dev/null || true
+    oc delete secret keycloak-client-secret-rbac-sync -n "$NAMESPACE" 2>/dev/null || true
+    oc delete secret keycloak-client-secret-rbac-sync -n "$COST_MGMT_NAMESPACE" 2>/dev/null || true
 
     # Remove PVCs (if any were manually created in old versions)
     # Note: RHBK operator manages its own PVCs, they'll be deleted with the namespace
@@ -1715,6 +1877,7 @@ main() {
     create_kubernetes_realm
     configure_admin_console
     extract_client_secret
+    assign_sync_client_realm_roles
     create_realm_users
 
     # Validate and summarize
@@ -1781,6 +1944,7 @@ case "${COMMAND}" in
         echo "  REALM_NAME                Realm name (default: kubernetes)"
         echo "  COST_MGMT_OPERATOR_CLIENT_ID  Operator client ID (default: cost-management-operator)"
         echo "  COST_MGMT_UI_CLIENT_ID    UI client ID (default: cost-management-ui)"
+        echo "  RBAC_SYNC_CLIENT_ID       RBAC sync client ID (default: rbac-keycloak-sync)"
         echo "  COST_MGMT_NAMESPACE    UI namespace for URL construction (default: cost-onprem)"
         echo "  COST_MGMT_RELEASE_NAME UI release name for URL construction (default: cost-onprem)"
         echo "  COST_MGMT_UI_BASE_URL     UI base URL (auto-detected if not set)"
