@@ -67,6 +67,7 @@ HELM_REPO_NAME="cost-onprem"
 HELM_REPO_URL="https://insights-onprem.github.io/cost-onprem-chart"
 CHART_VERSION=${CHART_VERSION:-}  # Empty = latest; set to pin a version (e.g., "0.2.9")
 USE_LOCAL_CHART=${USE_LOCAL_CHART:-false}  # Set to true to use local chart instead of Helm repository
+USE_HELM_DEVEL=${USE_HELM_DEVEL:-false}  # Set to true to include pre-release (rc) charts
 LOCAL_CHART_PATH=${LOCAL_CHART_PATH:-../cost-onprem}  # Path to local chart directory
 KAFKA_NAMESPACE=${KAFKA_NAMESPACE:-}  # If set, look for operator and Kafka cluster in this namespace
 
@@ -1159,6 +1160,12 @@ deploy_helm_chart() {
     if [ -n "$CHART_VERSION" ] && [ "$USE_LOCAL_CHART" != "true" ]; then
         helm_cmd="$helm_cmd --version \"$CHART_VERSION\""
         echo_info "Pinning chart version: $CHART_VERSION"
+    fi
+
+    # Include pre-release charts (e.g., rc versions) when --devel is enabled
+    if [ "$USE_HELM_DEVEL" = "true" ] && [ "$USE_LOCAL_CHART" != "true" ]; then
+        helm_cmd="$helm_cmd --devel"
+        echo_info "Including pre-release (--devel) charts"
     fi
 
     # Add values file if specified
