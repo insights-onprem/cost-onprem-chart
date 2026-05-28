@@ -10,7 +10,7 @@ import re
 import pytest
 import requests
 
-from conftest import decode_jwt_payload
+from conftest import OIDC_PASSWORD_GRANT_SCOPE, decode_jwt_payload
 from utils import run_oc_command, get_route_url
 
 
@@ -21,7 +21,7 @@ def _obtain_token(http_session, keycloak_config, ui_client_config, credentials):
         "password": credentials["password"],
         "grant_type": "password",
         "client_id": ui_client_config["client_id"],
-        "scope": "openid profile email",
+        "scope": OIDC_PASSWORD_GRANT_SCOPE,
     }
     if ui_client_config.get("client_secret"):
         data["client_secret"] = ui_client_config["client_secret"]
@@ -104,7 +104,7 @@ class TestUIOAuthFlow:
             "password": test_user_credentials["password"],
             "grant_type": "password",
             "client_id": ui_client_config["client_id"],
-            "scope": "openid profile email",
+            "scope": OIDC_PASSWORD_GRANT_SCOPE,
         }
         if ui_client_config.get("client_secret"):
             data["client_secret"] = ui_client_config["client_secret"]
@@ -138,7 +138,7 @@ class TestUIOAuthFlow:
             "password": test_user_credentials["password"],
             "grant_type": "password",
             "client_id": ui_client_config["client_id"],
-            "scope": "openid profile email",
+            "scope": OIDC_PASSWORD_GRANT_SCOPE,
         }
         if ui_client_config.get("client_secret"):
             data["client_secret"] = ui_client_config["client_secret"]

@@ -853,18 +853,18 @@ def wait_for_condition(
     description: str = "condition",
 ) -> bool:
     """Wait for a condition to become true.
-    
+
     Args:
         check_func: Callable that returns True when condition is met
         timeout: Maximum wait time in seconds
         interval: Check interval in seconds
         description: Description for logging
-    
+
     Returns:
         True if condition was met, False if timeout
     """
     import time
-    
+
     start_time = time.time()
     while time.time() - start_time < timeout:
         if check_func():
@@ -1228,3 +1228,61 @@ def get_deployment_logs(
         )
     except (subprocess.CalledProcessError, json.JSONDecodeError):
         return None
+
+
+def wait_for_deployment_replicas(
+    namespace: str,
+    label_selector: str,
+    expected_replicas: int,
+    timeout: int = 60,
+    interval: int = 2,
+) -> bool:
+    """Wait for a deployment to reach the expected replica count.
+
+    Args:
+        namespace: Kubernetes namespace
+        label_selector: Label selector (e.g., "app.kubernetes.io/component=rbac-api")
+        expected_replicas: Expected number of ready replicas
+        timeout: Maximum wait time in seconds
+        interval: Check interval in seconds
+
+    Returns:
+        True if replicas reached expected count, False if timeout
+
+    Example:
+        # Wait for scale-down to 0
+        wait_for_deployment_replicas(ns, "app=rbac", 0, timeout=30)
+
+        # Wait for scale-up to 1
+        wait_for_deployment_replicas(ns, "app=rbac", 1, timeout=60)
+    """
+    import time
+
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            # Check ready replicas via deployment status
+            result = run_oc_command(
+                [
+                    "get", "deployment",
+                    "-n", namespace,
+                    "-l", label_selector,
+                    "-o", "jsonpath={.items[0].status.readyReplicas}",
+                ],
+                check=False,
+            )
+
+            ready_str = result.stdout.strip()
+            # If no readyReplicas field (deployment scaled to 0), treat as 0
+            ready_count = int(ready_str) if ready_str else 0
+
+            if ready_count == expected_replicas:
+                return True
+
+        except (subprocess.CalledProcessError, ValueError):
+            # Transient errors or missing deployment - keep polling
+            pass
+
+        time.sleep(interval)
+
+    return False

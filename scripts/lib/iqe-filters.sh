@@ -34,10 +34,9 @@ TEST_PROFILE="${TEST_PROFILE:-}"
 apply_profile() {
     case "${TEST_PROFILE}" in
         smoke)
-            # Quick validation (~43 tests, ~17 min)
+            # Quick validation (~44 tests, ~17 min)
             # Uses positive -k filter to select source + cost model tests
-            # Excludes test_api_ocp_source_crud (backend 500 error on update)
-            SMOKE_FILTER="(test_api_ocp_source and not test_api_ocp_source_crud) or test_api_cost_model_ocp"
+            SMOKE_FILTER="test_api_ocp_source or test_api_cost_model_ocp"
             # Skip all optional groups for fastest run
             SKIP_INFRA_TESTS=true
             SKIP_SLOW_TESTS=true
@@ -63,9 +62,14 @@ apply_profile() {
             SKIP_FLAKY_TESTS=false
             ;;
         full)
-            # Release validation (~3324 tests, 2-3 hours)
-            # All cost_ocp_on_prem tests, no skip filters
-            SKIP_FILTER_BUILD=true
+            # Release validation (~2350 tests, ~55 min)
+            # All cost_ocp_on_prem tests except 90-day date range tests (~120 tests)
+            # 90-day tests require RETAIN_NUM_MONTHS=4 in chart (FLPATH-4131, COST-7253)
+            SKIP_DATE_RANGE_TESTS=true
+            SKIP_INFRA_TESTS=false
+            SKIP_SLOW_TESTS=false
+            SKIP_DELTA_TESTS=false
+            SKIP_FLAKY_TESTS=false
             ;;
         *)
             # Default: same as stable (all validated groups)
@@ -98,8 +102,9 @@ SKIP_ROS_TESTS="${SKIP_ROS_TESTS:-true}"
 FILTER_ROS="test_api_ocp_ros"
 
 # --- Date Range Tests (Insufficient Historical Data) ---
-# On-prem generates ~60 days of data; 90-day queries and random date ranges fail
-# ~50 tests affected
+# On-prem generates ~60 days of data; 90-day queries fail with 400 errors
+# ~120 tests affected (hardcoded last-90-days params)
+# Jira: COST-7253 (retention config), COST-573 (>90 days epic)
 # Note: Use underscores in patterns - pytest -k treats hyphens as "and not"
 SKIP_DATE_RANGE_TESTS="${SKIP_DATE_RANGE_TESTS:-true}"
 FILTER_DATE_RANGE="(last and 90 and days) or random_date_range or random_daily_time_filter"
@@ -126,7 +131,7 @@ FILTER_COST_DISTRIBUTION="test_api_cost_model_ocp_cost_distribution"
 # --- Source CRUD Update Test (Backend Bug) ---
 # Backend PATCH endpoint returns 500 error
 # 1 test affected
-SKIP_SOURCE_CRUD_TESTS="${SKIP_SOURCE_CRUD_TESTS:-true}"
+SKIP_SOURCE_CRUD_TESTS="${SKIP_SOURCE_CRUD_TESTS:-false}"
 FILTER_SOURCE_CRUD="test_api_ocp_source_crud"
 
 # --- Tag-Based Rates Update Test (COST-7179 related) ---

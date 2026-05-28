@@ -34,7 +34,12 @@ from typing import Dict
 import pytest
 import requests
 
-from conftest import ClusterConfig, KeycloakConfig, obtain_jwt_token
+from conftest import (
+    ClusterConfig,
+    KeycloakConfig,
+    obtain_jwt_token,
+    obtain_password_grant_token,
+)
 from e2e_helpers import (
     get_koku_api_url,
     register_source,
@@ -42,6 +47,8 @@ from e2e_helpers import (
     wait_for_provider,
     wait_for_summary_tables,
 )
+from rbac_keycloak_users import ensure_rbac_gateway_persona_users
+from suites.auth.test_gateway_auth import _check_gateway_reachable
 from suites.e2e.conftest import make_user_pod_session
 from utils import (
     create_pod_session,
@@ -538,6 +545,29 @@ def rbac_access_setup(
     }
 
 
+@pytest.fixture(scope="module")
+def rbac_gateway_jwt_password(
+    cluster_config: ClusterConfig,
+    keycloak_config: KeycloakConfig,
+    org_id: str,
+    rbac_access_setup,
+    rbac_gateway_test_user_password: str,
+):
+    """Create Keycloak users matching RBAC principals; yield session password."""
+    try:
+        ensure_rbac_gateway_persona_users(
+            keycloak_config.url,
+            cluster_config.keycloak_namespace,
+            keycloak_config.realm,
+            org_id,
+            "7890123",
+            password=rbac_gateway_test_user_password,
+        )
+    except RuntimeError as exc:
+        pytest.skip(f"Keycloak RBAC gateway persona provisioning failed: {exc}")
+    yield rbac_gateway_test_user_password
+
+
 # =============================================================================
 # Test Class
 # =============================================================================
@@ -618,10 +648,12 @@ class TestRBACAccessControl:
                 if proj:
                     projects_seen.add(proj)
 
-        if projects_seen:
-            assert projects_seen == {"payment"}, (
-                f"Alice should only see 'payment' but saw: {projects_seen}"
-            )
+        assert len(projects_seen) > 0, (
+            "Alice returned 200 but no project data — RBAC fixture may not have seeded data"
+        )
+        assert projects_seen == {"payment"}, (
+            f"Alice should only see 'payment' but saw: {projects_seen}"
+        )
 
     def test_bob_unfiltered_sees_only_alpha(
         self, cluster_config, test_runner_pod, org_id, rbac_access_setup, rbac_cluster_data
@@ -641,10 +673,12 @@ class TestRBACAccessControl:
                 if cid:
                     clusters_seen.add(cid)
 
-        if clusters_seen:
-            assert clusters_seen == {alpha_id}, (
-                f"Bob should only see cluster-alpha ({alpha_id}) but saw: {clusters_seen}"
-            )
+        assert len(clusters_seen) > 0, (
+            "Bob returned 200 but no cluster data — RBAC fixture may not have seeded data"
+        )
+        assert clusters_seen == {alpha_id}, (
+            f"Bob should only see cluster-alpha ({alpha_id}) but saw: {clusters_seen}"
+        )
 
     def test_carol_unfiltered_sees_everything(
         self, cluster_config, test_runner_pod, org_id, rbac_access_setup, rbac_cluster_data
@@ -664,12 +698,12 @@ class TestRBACAccessControl:
                     clusters_seen.add(cid)
 
         expected_clusters = set(rbac_cluster_data["cluster_ids"].values())
-        if clusters_seen:
-            # Carol has full access -- verify all 3 test clusters are present
-            # (there may also be leftover clusters from prior runs)
-            assert expected_clusters.issubset(clusters_seen), (
-                f"Carol should see at least {expected_clusters} but saw: {clusters_seen}"
-            )
+        assert len(clusters_seen) > 0, (
+            "Carol returned 200 but no cluster data — RBAC fixture may not have seeded data"
+        )
+        assert expected_clusters.issubset(clusters_seen), (
+            f"Carol should see at least {expected_clusters} but saw: {clusters_seen}"
+        )
 
     # =========================================================================
     # Explicit Filter -- Allowed (200 with data)
@@ -760,3 +794,175 @@ class TestRBACAccessControl:
             assert gamma_id not in clusters_seen, (
                 f"Gamma ({gamma_id}) should NOT appear (no payment namespace)"
             )
+
+    # =========================================================================
+    # Gateway JWT path (Keycloak password grant → Envoy → Koku)
+    # =========================================================================
+
+    def test_alice_password_grant_via_gateway_sees_only_payment(
+        self,
+        gateway_url: str,
+        http_session: requests.Session,
+        cluster_config: ClusterConfig,
+        keycloak_config: KeycloakConfig,
+        rbac_access_setup,
+        rbac_cluster_data,
+        rbac_gateway_jwt_password: str,
+    ):
+        """Alice JWT through gateway matches in-cluster RBAC (payment only)."""
+        if not _check_gateway_reachable(gateway_url, http_session):
+            pytest.skip("Gateway service not available")
+
+        tok = obtain_password_grant_token(
+            "alice",
+            rbac_gateway_jwt_password,
+            keycloak_config,
+            cluster_config,
+        )
+        url = (
+            f"{gateway_url.rstrip('/')}/cost-management/v1/reports/openshift/costs/"
+            "?group_by[project]=*"
+        )
+        response = http_session.get(
+            url, headers=tok.authorization_header, timeout=120, verify=False
+        )
+        assert response.status_code == 200, (
+            f"Alice (gateway) got {response.status_code}: {response.text[:400]}"
+        )
+        data = response.json()
+        projects_seen = set()
+        for day in data.get("data", []):
+            for project_group in day.get("projects", []):
+                proj = project_group.get("project")
+                if proj:
+                    projects_seen.add(proj)
+        assert len(projects_seen) > 0, (
+            "Alice (gateway) returned 200 but no project data — "
+            "RBAC fixture may not have seeded data"
+        )
+        assert projects_seen == {"payment"}, (
+            f"Alice gateway should only see 'payment' but saw: {projects_seen}"
+        )
+
+    def test_bob_password_grant_via_gateway_sees_only_alpha(
+        self,
+        gateway_url: str,
+        http_session: requests.Session,
+        cluster_config: ClusterConfig,
+        keycloak_config: KeycloakConfig,
+        rbac_access_setup,
+        rbac_cluster_data,
+        rbac_gateway_jwt_password: str,
+    ):
+        """Bob JWT through gateway is limited to cluster-alpha."""
+        if not _check_gateway_reachable(gateway_url, http_session):
+            pytest.skip("Gateway service not available")
+
+        tok = obtain_password_grant_token(
+            "bob",
+            rbac_gateway_jwt_password,
+            keycloak_config,
+            cluster_config,
+        )
+        alpha_id = rbac_cluster_data["cluster_ids"]["alpha"]
+        url = (
+            f"{gateway_url.rstrip('/')}/cost-management/v1/reports/openshift/costs/"
+            "?group_by[cluster]=*"
+        )
+        response = http_session.get(
+            url, headers=tok.authorization_header, timeout=120, verify=False
+        )
+        assert response.status_code == 200, (
+            f"Bob (gateway) got {response.status_code}: {response.text[:400]}"
+        )
+        data = response.json()
+        clusters_seen = set()
+        for day in data.get("data", []):
+            for cluster_group in day.get("clusters", []):
+                cid = cluster_group.get("cluster")
+                if cid:
+                    clusters_seen.add(cid)
+        assert len(clusters_seen) > 0, (
+            "Bob (gateway) returned 200 but no cluster data — "
+            "RBAC fixture may not have seeded data"
+        )
+        assert clusters_seen == {alpha_id}, (
+            f"Bob gateway should only see alpha ({alpha_id}) but saw: {clusters_seen}"
+        )
+
+    def test_carol_password_grant_via_gateway_sees_all_test_clusters(
+        self,
+        gateway_url: str,
+        http_session: requests.Session,
+        cluster_config: ClusterConfig,
+        keycloak_config: KeycloakConfig,
+        rbac_access_setup,
+        rbac_cluster_data,
+        rbac_gateway_jwt_password: str,
+    ):
+        """Carol (Cost Administrator) via gateway sees all three RBAC test clusters."""
+        if not _check_gateway_reachable(gateway_url, http_session):
+            pytest.skip("Gateway service not available")
+
+        tok = obtain_password_grant_token(
+            "carol",
+            rbac_gateway_jwt_password,
+            keycloak_config,
+            cluster_config,
+        )
+        url = (
+            f"{gateway_url.rstrip('/')}/cost-management/v1/reports/openshift/costs/"
+            "?group_by[cluster]=*"
+        )
+        response = http_session.get(
+            url, headers=tok.authorization_header, timeout=120, verify=False
+        )
+        assert response.status_code == 200, (
+            f"Carol (gateway) got {response.status_code}: {response.text[:400]}"
+        )
+        data = response.json()
+        clusters_seen = set()
+        for day in data.get("data", []):
+            for cluster_group in day.get("clusters", []):
+                cid = cluster_group.get("cluster")
+                if cid:
+                    clusters_seen.add(cid)
+        expected_clusters = set(rbac_cluster_data["cluster_ids"].values())
+        assert len(clusters_seen) > 0, (
+            "Carol (gateway) returned 200 but no cluster data — "
+            "RBAC fixture may not have seeded data"
+        )
+        assert expected_clusters.issubset(clusters_seen), (
+            f"Carol gateway should see at least {expected_clusters} "
+            f"but saw: {clusters_seen}"
+        )
+
+    def test_alice_password_grant_via_gateway_ros_recommendations_ok(
+        self,
+        gateway_url: str,
+        http_session: requests.Session,
+        cluster_config: ClusterConfig,
+        keycloak_config: KeycloakConfig,
+        rbac_access_setup,
+        rbac_gateway_jwt_password: str,
+    ):
+        """Alice can reach ROS recommendations through gateway (same RBAC app)."""
+        if not _check_gateway_reachable(gateway_url, http_session):
+            pytest.skip("Gateway service not available")
+
+        tok = obtain_password_grant_token(
+            "alice",
+            rbac_gateway_jwt_password,
+            keycloak_config,
+            cluster_config,
+        )
+        url = (
+            f"{gateway_url.rstrip('/')}/cost-management/v1/recommendations/openshift"
+        )
+        response = http_session.get(
+            url, headers=tok.authorization_header, timeout=120, verify=False
+        )
+        assert response.status_code in (200, 404), (
+            f"Alice ROS (gateway) expected 200 or 404, got {response.status_code}: "
+            f"{response.text[:400]}"
+        )
