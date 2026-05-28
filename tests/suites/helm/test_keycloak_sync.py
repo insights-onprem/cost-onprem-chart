@@ -5,6 +5,8 @@ Validates that keycloakSync resources render correctly when enabled,
 are omitted when disabled, and that guard clauses reject invalid configs.
 """
 
+import re
+
 import pytest
 import yaml
 
@@ -29,7 +31,7 @@ SYNC_ENABLED_VALUES = {
 def _parse_manifests(rendered: str) -> list[dict]:
     """Split multi-document YAML into a list of parsed dicts."""
     docs = []
-    for doc in rendered.split("---"):
+    for doc in re.split(r"^---\s*$", rendered, flags=re.MULTILINE):
         stripped = doc.strip()
         if not stripped:
             continue
