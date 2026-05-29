@@ -1,5 +1,26 @@
 {
-  "last_check": null,
-  "pending_updates": [],
-  "update_history": []
+  "last_check": "2026-05-29T11:17:59Z",
+  "pending_updates": [
+    {
+      "image": "quay.io/redhat-services-prod/insights-management-tenant/insights-ocp-resource-optimization/ros-ocp-backend",
+      "previous_tag": "45e36af",
+      "new_tag": "f7e0096",
+      "digest": "sha256:ef84232ce3854a86b6a254b20e1a601adc25fd20c44ee32448f7e05253815cac",
+      "detected_at": "2026-05-29T11:17:59Z"
+    },
+    {
+      "image": "quay.io/redhat-services-prod/kruize-autotune-tenant/autotune",
+      "previous_tag": "5eeae99",
+      "new_tag": "ea47634",
+      "digest": "sha256:50f8f9a14460327387074f4cb80318316aa8131c32009a1e1f60a08ac7f4ea9e",
+      "detected_at": "2026-05-29T11:17:59Z"
+    },
+    {
+      "image": "quay.io/redhat-services-prod/hcc-accessmanagement-tenant/insights-rbac",
+      "previous_tag": "b34eb9a",
+      "new_tag": "3be2346",
+      "digest": "sha256:df97e625fa102519413fbab5ac1d7c3de26ee6a34b42c119b6f6d4a198a13d4e",
+      "detected_at": "2026-05-29T11:17:59Z"
+    }
+  ]
 }
