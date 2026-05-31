@@ -55,10 +55,15 @@ def cleanup_old_cost_val_clusters(
     
     This ensures cost_validation tests start with a clean slate and don't
     pick up data from previous runs.
+    
+    Note: Cluster IDs are generated as "e2e-pytest-cost-val-{unique}" by
+    generate_cluster_id("cost-val"), so we need to match that pattern.
+    Source names are "cost-validation-{last8chars}".
     """
     import json
     
     # Find and delete old cost-val sources
+    # Match both old pattern (cost-val-*) and new pattern (e2e-pytest-cost-val-*)
     try:
         result = exec_in_pod(
             namespace,
@@ -75,9 +80,12 @@ def cleanup_old_cost_val_clusters(
             sources = json.loads(result)
             for source in sources.get("data", []):
                 source_ref = source.get("source_ref", "")
-                if source_ref and source_ref.startswith("cost-val-"):
+                source_name = source.get("name", "")
+                # Match cluster IDs: e2e-pytest-cost-val-* or legacy cost-val-*
+                # Also match source names: cost-validation-*
+                if source_ref and ("cost-val" in source_ref or source_name.startswith("cost-validation")):
                     source_id = source.get("id")
-                    print(f"       Deleting old source: {source.get('name')} (ref: {source_ref})")
+                    print(f"       Deleting old source: {source_name} (ref: {source_ref})")
                     exec_in_pod(
                         namespace,
                         ingress_pod,
@@ -92,6 +100,7 @@ def cleanup_old_cost_val_clusters(
         print(f"       Warning: Could not clean old sources: {e}")
     
     # Clean up database records for cost-val clusters
+    # Match both patterns: e2e-pytest-cost-val-* (current) and cost-val-* (legacy)
     try:
         # Delete manifest statuses
         execute_db_query(
@@ -100,7 +109,7 @@ def cleanup_old_cost_val_clusters(
             DELETE FROM reporting_common_costusagereportstatus 
             WHERE manifest_id IN (
                 SELECT id FROM reporting_common_costusagereportmanifest 
-                WHERE cluster_id LIKE 'cost-val-%'
+                WHERE cluster_id LIKE '%cost-val-%'
             )
             """
         )
@@ -108,7 +117,7 @@ def cleanup_old_cost_val_clusters(
         # Delete manifests
         execute_db_query(
             namespace, db_pod, "costonprem_koku", "koku_user",
-            "DELETE FROM reporting_common_costusagereportmanifest WHERE cluster_id LIKE 'cost-val-%'"
+            "DELETE FROM reporting_common_costusagereportmanifest WHERE cluster_id LIKE '%cost-val-%'"
         )
         
         # Get all schemas and clean summary tables + tenant provider mappings
@@ -124,7 +133,7 @@ def cleanup_old_cost_val_clusters(
                     try:
                         execute_db_query(
                             namespace, db_pod, "costonprem_koku", "koku_user",
-                            f"DELETE FROM {schema}.reporting_ocpusagelineitem_daily_summary WHERE cluster_id LIKE 'cost-val-%'"
+                            f"DELETE FROM {schema}.reporting_ocpusagelineitem_daily_summary WHERE cluster_id LIKE '%cost-val-%'"
                         )
                     except Exception:
                         pass  # Table might not exist in all schemas
