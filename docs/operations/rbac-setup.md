@@ -636,51 +636,34 @@ kubectl exec -it $RBAC_POD -n <namespace> -- \
 
 ```mermaid
 flowchart LR
-    A[Create user<br/>in Keycloak] --> B[User makes first<br/>API request]
-    B --> C[Koku creates<br/>Tenant record]
-    C --> D[Run<br/>bootstrap_tenants]
-    D --> E[Create admin_default<br/>Group for tenant]
-    E --> F[Add user Principals<br/>to Groups]
+    A["Create org group<br/>in Keycloak"] --> B["Add users to<br/>org group"]
+    B --> C["CronJob discovers<br/>group on next run"]
+    C --> D["Sync creates Tenant,<br/>Principals, admin group"]
+    D --> E["bootstrap_tenants<br/>for TenantMapping"]
 
     style A fill:#e1f5fe
-    style F fill:#c8e6c9
+    style E fill:#c8e6c9
 ```
 
-When a new org is created in Keycloak:
+The Keycloak-to-RBAC sync CronJob automatically discovers organizations from Keycloak groups. To add a new org:
 
-> **Note:** `bootstrap_tenants --all` runs **automatically** on every `helm install` and `helm upgrade` via the RBAC migration Job (pre-install/pre-upgrade hook, weight -5). The manual command below is only needed for **new orgs created between Helm releases** — when a user's first API request creates a tenant that didn't exist at the last upgrade. This is a **cluster administrator** responsibility.
+1. **Create the org group in Keycloak** with the configured prefix (default: `org-`):
+   - Group name: `org-<orgId>` (e.g., `org-neworg999`)
+   - Group attributes: `org_id` = `<orgId>`, `account_number` = `<accountNumber>`
+   - Sub-group: `org-admin` (members get Cost Administrator access)
 
-1. The user's first request to a Koku endpoint triggers tenant creation
-2. Run `bootstrap_tenants` to create the TenantMapping (if not covered by the next `helm upgrade`):
+2. **Add users to the group**:
+   - Add users as members of the org group
+   - Add admin users to the `org-admin` sub-group
+
+3. **Wait for the next CronJob run** (default: every 15 minutes), or trigger manually:
    ```bash
-   kubectl exec -it $RBAC_POD -n <namespace> -- \
-     python manage.py bootstrap_tenants --all -v 2
+   kubectl create job --from=cronjob/<release>-rbac-keycloak-sync manual-sync -n <namespace>
    ```
-3. Create the admin_default group for the new tenant (if admin access is needed):
-   ```bash
-   kubectl exec -it $RBAC_POD -n <namespace> -- python manage.py shell <<'EOF'
-   from api.models import Tenant
-   from management.models import Group, Policy, Role
 
-   public = Tenant.objects.get(tenant_name='public')
-   tenant = Tenant.objects.get(org_id='<new-org-id>')
-   admin_role = Role.objects.get(name='Cost Administrator', tenant=public)
+The sync CronJob handles Tenant creation, Principal upsert, admin group management, orphan pruning, and `bootstrap_tenants` per-org automatically.
 
-   group, _ = Group.objects.get_or_create(
-       name='Cost Admin Default', tenant=tenant,
-       defaults={'admin_default': True, 'system': True,
-                 'description': 'Admin default: Cost Administrator'}
-   )
-   group.admin_default = True
-   group.save()
-
-   policy, _ = Policy.objects.get_or_create(
-       name='Cost Admin Default Policy', tenant=tenant, group=group
-   )
-   policy.roles.add(admin_role)
-   print(f"Admin default group created for org {tenant.org_id}")
-   EOF
-   ```
+> **Note**: If using `deploy-rhbk.sh`, add users to `jwtAuth.realmUsers` with the new `orgId` and re-run `deploy-rhbk.sh -f values.yaml`. The script provisions users and org groups automatically.
 
 ### Listing All Users and Their Access
 

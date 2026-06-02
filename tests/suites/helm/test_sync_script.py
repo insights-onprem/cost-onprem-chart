@@ -100,7 +100,7 @@ class TestKeycloakClient:
 
         assert mock_open.call_count == 1, "Should only authenticate once when token is fresh"
 
-    def test_list_all_users_pagination(self, sync_module):
+    def test_list_groups(self, sync_module):
         kc = sync_module.KeycloakClient(
             "https://keycloak.example.com", "testrealm",
             "client-id", "client-secret",
@@ -109,16 +109,35 @@ class TestKeycloakClient:
         kc._token_acquired_at = __import__("time").monotonic()
         kc._token_expires_in = 300
 
-        page1 = [{"username": f"user{i}"} for i in range(100)]
-        page2 = [{"username": f"user{i}"} for i in range(100, 130)]
+        groups = [
+            {"id": "g1", "name": "org-org123", "attributes": {"org_id": ["org123"]}},
+            {"id": "g2", "name": "org-org456", "attributes": {"org_id": ["org456"]}},
+        ]
+        with mock.patch("urllib.request.urlopen", return_value=_make_http_response(groups)):
+            result = kc.list_groups(search="org-")
+
+        assert len(result) == 2
+        assert result[0]["name"] == "org-org123"
+
+    def test_list_groups_pagination(self, sync_module):
+        kc = sync_module.KeycloakClient(
+            "https://keycloak.example.com", "testrealm",
+            "client-id", "client-secret",
+        )
+        kc._access_token = "test-token"
+        kc._token_acquired_at = __import__("time").monotonic()
+        kc._token_expires_in = 300
+
+        page1 = [{"id": f"g{i}", "name": f"org-org{i}"} for i in range(100)]
+        page2 = [{"id": f"g{i}", "name": f"org-org{i}"} for i in range(100, 110)]
 
         responses = [_make_http_response(page1), _make_http_response(page2)]
         with mock.patch("urllib.request.urlopen", side_effect=responses):
-            users = kc.list_all_users()
+            result = kc.list_groups()
 
-        assert len(users) == 130
+        assert len(result) == 110
 
-    def test_list_all_users_single_page(self, sync_module):
+    def test_get_group_members(self, sync_module):
         kc = sync_module.KeycloakClient(
             "https://keycloak.example.com", "testrealm",
             "client-id", "client-secret",
@@ -127,30 +146,14 @@ class TestKeycloakClient:
         kc._token_acquired_at = __import__("time").monotonic()
         kc._token_expires_in = 300
 
-        page = [{"username": f"user{i}"} for i in range(5)]
-
-        with mock.patch("urllib.request.urlopen", return_value=_make_http_response(page)):
-            users = kc.list_all_users()
-
-        assert len(users) == 5
-
-    def test_get_role_members(self, sync_module):
-        kc = sync_module.KeycloakClient(
-            "https://keycloak.example.com", "testrealm",
-            "client-id", "client-secret",
-        )
-        kc._access_token = "test-token"
-        kc._token_acquired_at = __import__("time").monotonic()
-        kc._token_expires_in = 300
-
-        members = [{"username": "admin1"}, {"username": "admin2"}]
+        members = [{"username": "user1"}, {"username": "user2"}]
         with mock.patch("urllib.request.urlopen", return_value=_make_http_response(members)):
-            result = kc.get_role_members("org-admin")
+            result = kc.get_group_members("group-id-123")
 
         assert len(result) == 2
-        assert result[0]["username"] == "admin1"
+        assert result[0]["username"] == "user1"
 
-    def test_get_role_members_404(self, sync_module):
+    def test_get_subgroups(self, sync_module):
         kc = sync_module.KeycloakClient(
             "https://keycloak.example.com", "testrealm",
             "client-id", "client-secret",
@@ -159,14 +162,12 @@ class TestKeycloakClient:
         kc._token_acquired_at = __import__("time").monotonic()
         kc._token_expires_in = 300
 
-        error = urllib.error.HTTPError(
-            "https://keycloak.example.com/admin/realms/testrealm/roles/missing/users",
-            404, "Not Found", {}, BytesIO(b""),
-        )
-        with mock.patch("urllib.request.urlopen", side_effect=error):
-            with pytest.raises(urllib.error.HTTPError) as exc_info:
-                kc.get_role_members("missing-role")
-            assert exc_info.value.code == 404
+        children = [{"id": "sg1", "name": "org-admin"}]
+        with mock.patch("urllib.request.urlopen", return_value=_make_http_response(children)):
+            result = kc.get_subgroups("parent-group-id")
+
+        assert len(result) == 1
+        assert result[0]["name"] == "org-admin"
 
     def test_ssl_verification_disabled(self, sync_module):
         kc = sync_module.KeycloakClient(
@@ -193,8 +194,6 @@ class TestMainValidation:
             "KEYCLOAK_URL": "",
             "KEYCLOAK_CLIENT_ID": "",
             "KEYCLOAK_CLIENT_SECRET": "",
-            "SYNC_ORG_ID": "",
-            "SYNC_ACCOUNT_NUMBER": "",
         }
         with mock.patch.dict(os.environ, env, clear=False):
             with pytest.raises(SystemExit) as exc_info:
@@ -206,8 +205,6 @@ class TestMainValidation:
             "KEYCLOAK_URL": "https://keycloak.example.com",
             "KEYCLOAK_CLIENT_ID": "my-client",
             "KEYCLOAK_CLIENT_SECRET": "",
-            "SYNC_ORG_ID": "org123",
-            "SYNC_ACCOUNT_NUMBER": "",
         }
         with mock.patch.dict(os.environ, env, clear=False):
             with pytest.raises(SystemExit) as exc_info:
@@ -220,8 +217,6 @@ class TestMainValidation:
             "KEYCLOAK_REALM": "testrealm",
             "KEYCLOAK_CLIENT_ID": "my-client",
             "KEYCLOAK_CLIENT_SECRET": "my-secret",
-            "SYNC_ORG_ID": "org123",
-            "SYNC_ACCOUNT_NUMBER": "456",
         }
         with mock.patch.dict(os.environ, env, clear=False):
             with mock.patch("urllib.request.urlopen", side_effect=Exception("connection refused")):

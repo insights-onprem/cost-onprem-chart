@@ -120,8 +120,8 @@ class TestKeycloakSyncEnabled:
         required_envs = {
             "KEYCLOAK_URL", "KEYCLOAK_REALM", "KEYCLOAK_CLIENT_ID",
             "KEYCLOAK_CLIENT_SECRET", "KEYCLOAK_TLS_VERIFY",
-            "SYNC_ORG_ID", "SYNC_ACCOUNT_NUMBER",
-            "SYNC_ORG_ADMIN_ROLE", "SYNC_PRUNE_ORPHANS",
+            "SYNC_ORG_GROUP_PREFIX", "SYNC_ORG_ADMIN_SUBGROUP",
+            "SYNC_PRUNE_ORPHANS",
         }
         missing = required_envs - env_names
         assert not missing, f"Missing env vars in CronJob container: {missing}"
@@ -218,8 +218,8 @@ class TestKeycloakSyncGuardClauses:
         assert "clientSecretRef.name" in output.lower() or "required" in output.lower(), \
             f"Error should mention clientSecretRef.name, got:\n{output}"
 
-    def test_fails_without_org_admin_user(self, chart_path: str):
-        """Render fails when keycloakSync is enabled but no orgAdmin user exists."""
+    def test_renders_without_org_admin_user(self, chart_path: str):
+        """Render succeeds without orgAdmin users (multi-org discovers orgs from groups)."""
         values = {
             **OFFLINE_MOCK_VALUES,
             "rbac.keycloakSync.enabled": "true",
@@ -230,6 +230,67 @@ class TestKeycloakSyncGuardClauses:
             "jwtAuth.realmUsers[0].orgAdmin": "false",
         }
         success, output = helm_template(chart_path, set_values=values)
-        assert not success, "Template should fail when no orgAdmin:true user exists"
-        assert "orgAdmin" in output or "org_id" in output or "realmUsers" in output, \
-            f"Error should mention orgAdmin, got:\n{output}"
+        assert success, f"Template should render without orgAdmin users:\n{output}"
+
+
+@pytest.mark.helm
+@pytest.mark.component
+class TestKeycloakSyncMultiOrg:
+    """Tests for multi-org Keycloak group-based sync configuration."""
+
+    def test_org_group_prefix_env_var(self, chart_path: str):
+        """SYNC_ORG_GROUP_PREFIX is rendered from values."""
+        values = {
+            **SYNC_ENABLED_VALUES,
+            "rbac.keycloakSync.orgGroupPrefix": "myorg-",
+        }
+        success, output = helm_template(chart_path, set_values=values)
+        assert success, f"Template failed:\n{output}"
+
+        manifests = _parse_manifests(output)
+        cronjob = _find_by_kind_and_name(manifests, "CronJob", "rbac-keycloak-sync")
+        containers = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"]
+        sync_container = next(c for c in containers if c["name"] == "keycloak-sync")
+
+        prefix_env = next(e for e in sync_container["env"] if e["name"] == "SYNC_ORG_GROUP_PREFIX")
+        assert prefix_env["value"] == "myorg-", \
+            f"Expected orgGroupPrefix 'myorg-', got '{prefix_env['value']}'"
+
+    def test_default_org_group_prefix(self, chart_path: str):
+        """Default SYNC_ORG_GROUP_PREFIX is 'org-'."""
+        success, output = helm_template(chart_path, set_values=SYNC_ENABLED_VALUES)
+        assert success
+
+        manifests = _parse_manifests(output)
+        cronjob = _find_by_kind_and_name(manifests, "CronJob", "rbac-keycloak-sync")
+        containers = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"]
+        sync_container = next(c for c in containers if c["name"] == "keycloak-sync")
+
+        prefix_env = next(e for e in sync_container["env"] if e["name"] == "SYNC_ORG_GROUP_PREFIX")
+        assert prefix_env["value"] == "org-", \
+            f"Expected default orgGroupPrefix 'org-', got '{prefix_env['value']}'"
+
+    def test_no_sync_org_id_env(self, chart_path: str):
+        """SYNC_ORG_ID and SYNC_ACCOUNT_NUMBER are not rendered (removed)."""
+        success, output = helm_template(chart_path, set_values=SYNC_ENABLED_VALUES)
+        assert success
+
+        manifests = _parse_manifests(output)
+        cronjob = _find_by_kind_and_name(manifests, "CronJob", "rbac-keycloak-sync")
+        containers = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"]
+        sync_container = next(c for c in containers if c["name"] == "keycloak-sync")
+        env_names = {e["name"] for e in sync_container["env"] if isinstance(e, dict)}
+
+        assert "SYNC_ORG_ID" not in env_names, "SYNC_ORG_ID should not be present"
+        assert "SYNC_ACCOUNT_NUMBER" not in env_names, "SYNC_ACCOUNT_NUMBER should not be present"
+
+    def test_enhanced_org_admin_validation(self, chart_path: str):
+        """Render fails when ENHANCED_ORG_ADMIN is not False."""
+        values = {
+            **SYNC_ENABLED_VALUES,
+            "costManagement.api.env.ENHANCED_ORG_ADMIN": "True",
+        }
+        success, output = helm_template(chart_path, set_values=values)
+        assert not success, "Template should fail when ENHANCED_ORG_ADMIN is not False"
+        assert "ENHANCED_ORG_ADMIN" in output, \
+            f"Error should mention ENHANCED_ORG_ADMIN, got:\n{output}"
