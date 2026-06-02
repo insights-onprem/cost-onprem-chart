@@ -670,6 +670,19 @@ create_kubernetes_realm() {
         UI_BASE_URL=""  # Use empty string for now
     fi
 
+    # Derive operator client org_id from first orgAdmin realmUser entry
+    local OPERATOR_ORG_ID="org1234567"
+    local OPERATOR_ACCOUNT_NUMBER="7890123"
+    local _users_json
+    _users_json=$(get_realm_users_json 2>/dev/null) || _users_json='[]'
+    local _admin_entry
+    _admin_entry=$(echo "$_users_json" | jq -c '[.[] | select(.orgAdmin == true)] | .[0] // empty')
+    if [ -n "$_admin_entry" ]; then
+        OPERATOR_ORG_ID=$(echo "$_admin_entry" | jq -r '.orgId // "org1234567"')
+        OPERATOR_ACCOUNT_NUMBER=$(echo "$_admin_entry" | jq -r '.accountNumber // "7890123"')
+    fi
+    echo_info "Operator client identity: org_id=$OPERATOR_ORG_ID, account_number=$OPERATOR_ACCOUNT_NUMBER"
+
     # Check if realm import already exists
     if oc get keycloakrealmimport kubernetes-realm -n "$NAMESPACE" >/dev/null 2>&1; then
         echo_warning "KeycloakRealmImport 'kubernetes-realm' already exists"
@@ -891,7 +904,7 @@ spec:
             config:
               access.token.claim: "true"
               claim.name: org_id
-              claim.value: "org1234567"
+              claim.value: "$OPERATOR_ORG_ID"
               id.token.claim: "false"
               jsonType.label: String
               userinfo.token.claim: "false"
@@ -901,7 +914,7 @@ spec:
             config:
               access.token.claim: "true"
               claim.name: account_number
-              claim.value: "7890123"
+              claim.value: "$OPERATOR_ACCOUNT_NUMBER"
               id.token.claim: "false"
               jsonType.label: String
               userinfo.token.claim: "false"
@@ -1715,6 +1728,188 @@ create_realm_users() {
     echo ""
 }
 
+# Create organization groups for multi-org Keycloak-to-RBAC sync.
+# For each distinct orgId in realmUsers, creates:
+#   - A top-level group named {ORG_GROUP_PREFIX}{orgId}
+#     with attributes: org_id, account_number
+#   - A sub-group named "org-admin" under each org group
+# Then assigns users to their org group and orgAdmin users to the admin sub-group.
+create_org_groups() {
+    echo_header "CREATING ORGANIZATION GROUPS"
+
+    local KEYCLOAK_URL=$(oc get route keycloak -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+    if [ -z "$KEYCLOAK_URL" ]; then
+        echo_warning "Could not determine Keycloak URL, skipping org group creation"
+        return 1
+    fi
+    KEYCLOAK_URL="https://$KEYCLOAK_URL"
+
+    get_admin_credentials
+    if [ -z "$ADMIN_PASSWORD" ]; then
+        echo_error "Could not retrieve admin password"
+        return 1
+    fi
+
+    local ACCESS_TOKEN
+    ACCESS_TOKEN=$(_obtain_admin_token "$KEYCLOAK_URL" "$ADMIN_USERNAME" "$ADMIN_PASSWORD")
+    if [ -z "$ACCESS_TOKEN" ]; then
+        echo_warning "Could not obtain admin token, skipping org group creation"
+        return 1
+    fi
+
+    local ORG_GROUP_PREFIX="${ORG_GROUP_PREFIX:-org-}"
+    local ORG_ADMIN_SUBGROUP="${ORG_ADMIN_SUBGROUP:-org-admin}"
+
+    local USERS_JSON
+    USERS_JSON=$(get_realm_users_json)
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    # Discover distinct orgIds and their account numbers
+    local orgs_json
+    orgs_json=$(echo "$USERS_JSON" | jq -c '[group_by(.orgId // "org1234567") | .[] | {orgId: .[0].orgId // "org1234567", accountNumber: .[0].accountNumber // "7890123"}]')
+
+    local org_count
+    org_count=$(echo "$orgs_json" | jq 'length')
+    echo_info "Found $org_count distinct organization(s) in realmUsers"
+
+    local o=0
+    while [ $o -lt "$org_count" ]; do
+        ACCESS_TOKEN=$(_obtain_admin_token "$KEYCLOAK_URL" "$ADMIN_USERNAME" "$ADMIN_PASSWORD")
+        if [ -z "$ACCESS_TOKEN" ]; then
+            echo_error "Admin token expired and could not be renewed"
+            return 1
+        fi
+
+        local org_id account_number group_name
+        org_id=$(echo "$orgs_json" | jq -r ".[$o].orgId")
+        account_number=$(echo "$orgs_json" | jq -r ".[$o].accountNumber")
+        group_name="${ORG_GROUP_PREFIX}${org_id}"
+
+        echo_info "Creating org group '$group_name' (org_id=$org_id, account_number=$account_number)..."
+
+        # Create top-level org group with attributes
+        local group_payload
+        group_payload=$(jq -n \
+            --arg name "$group_name" \
+            --arg org "$org_id" \
+            --arg acct "$account_number" \
+            '{name: $name, attributes: {org_id: [$org], account_number: [$acct]}}')
+
+        local GROUP_HTTP_CODE
+        GROUP_HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" \
+            -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/groups" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$group_payload" 2>/dev/null)
+
+        if [ "$GROUP_HTTP_CODE" = "201" ]; then
+            echo_success "  ✓ Group '$group_name' created"
+        elif [ "$GROUP_HTTP_CODE" = "409" ]; then
+            echo_info "  Group '$group_name' already exists, updating attributes..."
+            # Find existing group and update
+            local existing_group
+            existing_group=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/groups?search=$group_name&exact=true" \
+                -H "Authorization: Bearer $ACCESS_TOKEN" 2>/dev/null)
+            local group_id
+            group_id=$(echo "$existing_group" | jq -r ".[0].id // empty")
+            if [ -n "$group_id" ]; then
+                curl -sk -X PUT "$KEYCLOAK_URL/admin/realms/$REALM_NAME/groups/$group_id" \
+                    -H "Authorization: Bearer $ACCESS_TOKEN" \
+                    -H "Content-Type: application/json" \
+                    -d "$group_payload" >/dev/null 2>&1
+                echo_success "  ✓ Group '$group_name' updated"
+            fi
+        else
+            echo_error "  Failed to create group '$group_name' (HTTP $GROUP_HTTP_CODE)"
+            o=$((o + 1))
+            continue
+        fi
+
+        # Find the group ID
+        local groups_response
+        groups_response=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/groups?search=$group_name&exact=true" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" 2>/dev/null)
+        local GROUP_ID
+        GROUP_ID=$(echo "$groups_response" | jq -r ".[0].id // empty")
+
+        if [ -z "$GROUP_ID" ]; then
+            echo_error "  Could not find group ID for '$group_name'"
+            o=$((o + 1))
+            continue
+        fi
+
+        # Create org-admin sub-group
+        local subgroup_payload
+        subgroup_payload=$(jq -n --arg name "$ORG_ADMIN_SUBGROUP" '{name: $name}')
+        local SUB_HTTP_CODE
+        SUB_HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" \
+            -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/groups/$GROUP_ID/children" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$subgroup_payload" 2>/dev/null)
+
+        if [ "$SUB_HTTP_CODE" = "201" ]; then
+            echo_success "  ✓ Sub-group '$ORG_ADMIN_SUBGROUP' created"
+        elif [ "$SUB_HTTP_CODE" = "409" ]; then
+            echo_info "  Sub-group '$ORG_ADMIN_SUBGROUP' already exists"
+        else
+            echo_warning "  Sub-group creation returned HTTP $SUB_HTTP_CODE (may already exist)"
+        fi
+
+        # Find the admin sub-group ID
+        local subgroups_response
+        subgroups_response=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/groups/$GROUP_ID/children" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" 2>/dev/null)
+        local ADMIN_SG_ID
+        ADMIN_SG_ID=$(echo "$subgroups_response" | jq -r ".[] | select(.name==\"$ORG_ADMIN_SUBGROUP\") | .id // empty")
+
+        # Assign users to this org group and admin sub-group
+        local user_count
+        user_count=$(echo "$USERS_JSON" | jq 'length')
+        local u=0
+        while [ $u -lt "$user_count" ]; do
+            local u_org u_name u_admin
+            u_org=$(echo "$USERS_JSON" | jq -r ".[$u].orgId // \"org1234567\"")
+            u_name=$(echo "$USERS_JSON" | jq -r ".[$u].username")
+            u_admin=$(echo "$USERS_JSON" | jq -r ".[$u].orgAdmin // false")
+
+            if [ "$u_org" = "$org_id" ]; then
+                # Find user ID
+                local user_response
+                user_response=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=$u_name&exact=true" \
+                    -H "Authorization: Bearer $ACCESS_TOKEN" 2>/dev/null)
+                local USER_ID
+                USER_ID=$(echo "$user_response" | jq -r ".[0].id // empty")
+
+                if [ -n "$USER_ID" ]; then
+                    # Add user to org group
+                    curl -sk -X PUT "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users/$USER_ID/groups/$GROUP_ID" \
+                        -H "Authorization: Bearer $ACCESS_TOKEN" >/dev/null 2>&1
+                    echo_info "  Added user '$u_name' to group '$group_name'"
+
+                    # Add orgAdmin users to admin sub-group
+                    if [ "$u_admin" = "true" ] && [ -n "$ADMIN_SG_ID" ]; then
+                        curl -sk -X PUT "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users/$USER_ID/groups/$ADMIN_SG_ID" \
+                            -H "Authorization: Bearer $ACCESS_TOKEN" >/dev/null 2>&1
+                        echo_info "  Added user '$u_name' to admin sub-group '$ORG_ADMIN_SUBGROUP'"
+                    fi
+                else
+                    echo_warning "  User '$u_name' not found in Keycloak, skipping group assignment"
+                fi
+            fi
+            u=$((u + 1))
+        done
+
+        echo_success "✓ Org group '$group_name' fully provisioned"
+        o=$((o + 1))
+    done
+
+    echo_success "✓ All $org_count organization group(s) provisioned"
+    echo ""
+}
+
 # Function to display deployment summary
 display_summary() {
     echo_header "DEPLOYMENT SUMMARY"
@@ -1785,13 +1980,22 @@ display_summary() {
         u=$((u + 1))
     done
     echo_info ""
+    echo_info "  Organization Groups (for multi-org RBAC sync):"
+    local ORG_GROUP_PREFIX="${ORG_GROUP_PREFIX:-org-}"
+    local orgs_json
+    orgs_json=$(echo "$USERS_JSON" | jq -c "[group_by(.orgId // \"org1234567\") | .[] | .[0].orgId // \"org1234567\"]" 2>/dev/null) || orgs_json='[]'
+    local org_list
+    org_list=$(echo "$orgs_json" | jq -r '.[]' 2>/dev/null)
+    for org_id in $org_list; do
+        echo_info "    ${ORG_GROUP_PREFIX}${org_id}  (org_id=$org_id, sub-group: org-admin)"
+    done
+    echo_info ""
     echo_info "  RBAC Permissions:"
-    echo_info "    To sync all Keycloak users to RBAC automatically (recommended):"
+    echo_info "    To sync Keycloak users to RBAC automatically (recommended):"
     echo_info "      rbac.keycloakSync.enabled=true"
     echo_info "      rbac.keycloakSync.clientSecretRef.name=keycloak-client-secret-rbac-sync"
-    echo_info ""
-    echo_info "    Or for single-user bootstrap on install/upgrade only:"
-    echo_info "      rbac.bootstrapAdmin.enabled=true"
+    echo_info "    Users are synced per-org from Keycloak groups matching prefix '${ORG_GROUP_PREFIX}'."
+    echo_info "    Admin access is determined by membership in the 'org-admin' sub-group."
     echo ""
 
     # Display admin credential retrieval
@@ -1879,6 +2083,7 @@ main() {
     extract_client_secret
     assign_sync_client_realm_roles
     create_realm_users
+    create_org_groups
 
     # Validate and summarize
     if validate_deployment; then

@@ -705,11 +705,22 @@ rbac:
   #   the bootstrap admin principal may be pruned if that user does not exist
   #   in Keycloak. Disable bootstrapAdmin once keycloakSync is managing users.
   #
-  # SINGLE-TENANT LIMITATION:
-  #   The sync targets a single org_id (derived from the first orgAdmin:true
-  #   entry in jwtAuth.realmUsers). All synced Keycloak users are placed under
-  #   this tenant. Multi-org deployments require one CronJob per org (not yet
-  #   supported). This matches the typical on-prem single-organization model.
+  # MULTI-ORG SYNC VIA KEYCLOAK GROUPS:
+  #   The sync discovers organizations from Keycloak groups matching the
+  #   orgGroupPrefix (default: "org-"). Each group must have:
+  #     - Group attributes: org_id, account_number
+  #     - A sub-group named per orgAdminSubgroup (default: "org-admin")
+  #       whose members receive Cost Administrator permissions
+  #   Users are synced per-org: each group's members become RBAC Principals
+  #   under the corresponding tenant. deploy-rhbk.sh provisions these groups
+  #   automatically from jwtAuth.realmUsers.
+  #
+  # ADMIN SCOPING DEPENDENCY:
+  #   Multi-org admin scoping requires ENHANCED_ORG_ADMIN=False in
+  #   costManagement.api.env (the default). This forces Koku to call RBAC
+  #   for every request, so admin permissions come from per-org RBAC group
+  #   membership rather than the realm-global is_org_admin JWT flag.
+  #   The CronJob template validates this at render time.
   #
   # MONITORING (FedRAMP SI-4):
   # The CronJob is a batch workload with no persistent metrics endpoint.
@@ -752,10 +763,12 @@ rbac:
     # Schedule interval. Maximum staleness for access data equals this value.
     # FedRAMP AC-2(4) recommendation: do not exceed "*/15 * * * *".
     schedule: "*/15 * * * *"
-    # Keycloak realm role that maps to is_org_admin / admin_default group.
-    orgAdminRole: "org-admin"
-    # Delete RBAC Principals that no longer exist in the Keycloak realm.
-    # Pruning is skipped automatically if the Keycloak user listing was incomplete.
+    # Keycloak group name prefix for org discovery.
+    # Groups matching "{prefix}{orgId}" are treated as organizations.
+    orgGroupPrefix: "org-"
+    # Sub-group name under each org group whose members get admin access.
+    orgAdminSubgroup: "org-admin"
+    # Delete RBAC Principals that no longer exist in the org's Keycloak group.
     pruneOrphans: true
     # Keycloak service-account client for Admin API access.
     clientId: "rbac-keycloak-sync"

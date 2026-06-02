@@ -1,11 +1,8 @@
 {{- if .Values.rbac.keycloakSync.enabled }}
 {{- $_ := required "rbac.keycloakSync.clientSecretRef.name is required when keycloakSync is enabled" .Values.rbac.keycloakSync.clientSecretRef.name -}}
-{{- $hasOrgAdmin := false -}}
-{{- range .Values.jwtAuth.realmUsers -}}
-  {{- if .orgAdmin -}}{{- $hasOrgAdmin = true -}}{{- end -}}
-{{- end -}}
-{{- if not $hasOrgAdmin -}}
-  {{- fail "rbac.keycloakSync.enabled is true but no orgAdmin:true entry found in jwtAuth.realmUsers. The sync CronJob requires an explicit org_id and account_number." -}}
+{{- $enhancedOrgAdmin := index .Values.costManagement.api.env "ENHANCED_ORG_ADMIN" | default "False" | toString -}}
+{{- if and (ne $enhancedOrgAdmin "False") (ne $enhancedOrgAdmin "false") -}}
+  {{- fail "rbac.keycloakSync requires ENHANCED_ORG_ADMIN=False in costManagement.api.env for correct per-org admin scoping. Multi-org admin permissions are managed by RBAC group membership, not the X-Rh-Identity header flag." -}}
 {{- end -}}
 apiVersion: batch/v1
 kind: CronJob
@@ -70,12 +67,10 @@ spec:
                   key: {{ .Values.rbac.keycloakSync.clientSecretRef.key | default "CLIENT_SECRET" | quote }}
             - name: KEYCLOAK_TLS_VERIFY
               value: {{ not (.Values.jwtAuth.keycloak.tls.insecureSkipVerify) | ternary "true" "false" | quote }}
-            - name: SYNC_ORG_ID
-              value: {{ include "cost-onprem.rbac.bootstrapAdmin.orgId" . | quote }}
-            - name: SYNC_ACCOUNT_NUMBER
-              value: {{ include "cost-onprem.rbac.bootstrapAdmin.accountNumber" . | quote }}
-            - name: SYNC_ORG_ADMIN_ROLE
-              value: {{ .Values.rbac.keycloakSync.orgAdminRole | quote }}
+            - name: SYNC_ORG_GROUP_PREFIX
+              value: {{ .Values.rbac.keycloakSync.orgGroupPrefix | quote }}
+            - name: SYNC_ORG_ADMIN_SUBGROUP
+              value: {{ .Values.rbac.keycloakSync.orgAdminSubgroup | default "org-admin" | quote }}
             - name: SYNC_PRUNE_ORPHANS
               value: {{ .Values.rbac.keycloakSync.pruneOrphans | ternary "true" "false" | quote }}
 
