@@ -1768,7 +1768,7 @@ create_org_groups() {
 
     # Discover distinct orgIds and their account numbers
     local orgs_json
-    orgs_json=$(echo "$USERS_JSON" | jq -c '[group_by(.orgId // "org1234567") | .[] | {orgId: .[0].orgId // "org1234567", accountNumber: .[0].accountNumber // "7890123"}]')
+    orgs_json=$(echo "$USERS_JSON" | jq -c '[group_by((.orgId // "org1234567")) | .[] | {orgId: (.[0].orgId // "org1234567"), accountNumber: (.[0].accountNumber // "7890123")}]')
 
     local org_count
     org_count=$(echo "$orgs_json" | jq 'length')
@@ -1983,7 +1983,7 @@ display_summary() {
     echo_info "  Organization Groups (for multi-org RBAC sync):"
     local ORG_GROUP_PREFIX="${ORG_GROUP_PREFIX:-org-}"
     local orgs_json
-    orgs_json=$(echo "$USERS_JSON" | jq -c "[group_by(.orgId // \"org1234567\") | .[] | .[0].orgId // \"org1234567\"]" 2>/dev/null) || orgs_json='[]'
+    orgs_json=$(echo "$USERS_JSON" | jq -c "[group_by((.orgId // \"org1234567\")) | .[] | (.[0].orgId // \"org1234567\")]" 2>/dev/null) || orgs_json='[]'
     local org_list
     org_list=$(echo "$orgs_json" | jq -r '.[]' 2>/dev/null)
     for org_id in $org_list; do
