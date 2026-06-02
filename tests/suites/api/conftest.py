@@ -8,7 +8,7 @@ the external API contract.
 import pytest
 import requests
 
-from conftest import ClusterConfig, JWTToken, obtain_jwt_token
+from conftest import create_authenticated_session
 from utils import run_oc_command
 
 
@@ -16,6 +16,7 @@ from utils import run_oc_command
 def ocp_source_type_id(
     gateway_url: str,
     keycloak_config,
+    cluster_config,
 ) -> int:
     """Get the OpenShift source type ID from the API.
     
@@ -28,14 +29,7 @@ def ocp_source_type_id(
     Skips:
         If the source types endpoint is not accessible or OCP type not found
     """
-    # Get a fresh token for this session-scoped fixture
-    token = obtain_jwt_token(keycloak_config)
-    
-    session = requests.Session()
-    session.headers.update({
-        "Authorization": f"Bearer {token.access_token}",
-    })
-    session.verify = False
+    session = create_authenticated_session(keycloak_config)
     
     try:
         response = session.get(

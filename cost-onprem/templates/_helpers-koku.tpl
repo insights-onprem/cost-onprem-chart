@@ -312,11 +312,25 @@ Common environment variables for Koku API and Celery
 {{- if not .Values.valkey.auth.secretName }}
   {{- fail "valkey.auth.enabled is true but valkey.auth.secretName is empty. Provide the name of a Secret containing key 'redis-password'." -}}
 {{- end }}
+- name: REDIS_USERNAME
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.valkey.auth.secretName }}
+      key: redis-username
+      optional: true
 - name: REDIS_PASSWORD
   valueFrom:
     secretKeyRef:
       name: {{ .Values.valkey.auth.secretName }}
       key: redis-password
+{{- end }}
+{{- if .Values.valkey.tls.enabled }}
+- name: REDIS_SSL
+  value: "True"
+{{- if .Values.valkey.tls.caCertSecretName }}
+- name: REDIS_SSL_CA_CERTS
+  value: "/etc/redis-tls/ca.crt"
+{{- end }}
 {{- end }}
 - name: CELERY_RESULT_EXPIRES
   value: {{ .Values.costManagement.celery.resultExpires | default "28800" | quote }}
@@ -363,6 +377,15 @@ Common environment variables for Koku API and Celery
   value: {{ .Values.costManagement.reportDownloadSchedule | default "*/5 * * * *" | quote }}
 - name: POLLING_TIMER
   value: {{ .Values.costManagement.celery.pollingTimer | default "86400" | quote }}
+# RBAC v1 authorization backend connection
+- name: RBAC_SERVICE_HOST
+  value: {{ include "cost-onprem.rbac.serviceHost" . | quote }}
+- name: RBAC_SERVICE_PORT
+  value: {{ include "cost-onprem.rbac.service.port" . | quote }}
+- name: RBAC_SERVICE_PATH
+  value: "/api/rbac/v1/access/"
+- name: RBAC_SERVICE_PROTOCOL
+  value: "http"
 {{- end -}}
 
 {{/*
@@ -407,6 +430,11 @@ Includes tmp mount and combined CA bundle
   mountPath: /etc/pki/ca-trust/combined
   readOnly: true
 {{- include "cost-onprem.kafka.tlsVolumeMount" . }}
+{{- if and .Values.valkey.tls.enabled .Values.valkey.tls.caCertSecretName }}
+- name: redis-tls-ca
+  mountPath: /etc/redis-tls
+  readOnly: true
+{{- end }}
 {{- end -}}
 
 {{/*
@@ -432,6 +460,14 @@ Includes tmp volume and CA bundle volumes
 - name: combined-ca-bundle
   emptyDir: {}
 {{- include "cost-onprem.kafka.tlsVolume" . }}
+{{- if and .Values.valkey.tls.enabled .Values.valkey.tls.caCertSecretName }}
+- name: redis-tls-ca
+  secret:
+    secretName: {{ .Values.valkey.tls.caCertSecretName }}
+    items:
+      - key: ca.crt
+        path: ca.crt
+{{- end }}
 {{- end -}}
 
 {{/*

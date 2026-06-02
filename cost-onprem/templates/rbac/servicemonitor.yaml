@@ -1,0 +1,18 @@
+{{- if .Values.monitoring.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "cost-onprem.rbac.api.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-onprem.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac-api
+spec:
+  selector:
+    matchLabels:
+      {{- include "cost-onprem.rbac.api.selectorLabels" . | nindent 6 }}
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: {{ .Values.monitoring.scrapeInterval | default "30s" }}
+{{- end }}

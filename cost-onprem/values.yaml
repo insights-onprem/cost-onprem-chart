@@ -4,6 +4,7 @@
 # This chart deploys the complete Cost Management on-premise solution:
 # - ROS (Resource Optimization Service)
 # - Cost Management Service (Koku and Sources API)
+# - RBAC v1 Authorization Service (insights-rbac)
 # - Shared infrastructure (PostgreSQL, Kafka, Valkey, S3 object storage)
 #
 # Naming conventions:
@@ -49,7 +50,7 @@ ros:
   image:
     repository: quay.io/redhat-services-prod/insights-management-tenant/insights-ocp-resource-optimization/ros-ocp-backend
     tag: "45e36af"
-    pullPolicy: Always
+    pullPolicy: IfNotPresent
 
   # Service Account
   serviceAccount:
@@ -62,8 +63,6 @@ ros:
     metricsPort: 9000
     pathPrefix: /api
 
-    # Service-specific configuration
-    rbacEnabled: false # RBAC is not supported yet
     dbPoolSize: 10
     dbMaxOverflow: 20
     serviceName: ros-api
@@ -147,8 +146,8 @@ costManagement:
 
     image:
       repository: quay.io/redhat-services-prod/cost-mgmt-dev-tenant/koku
-      tag: "72bbc6a"
-      pullPolicy: Always
+      tag: "7f697ee"
+      pullPolicy: IfNotPresent
 
     replicas: 1
     resources:
@@ -194,7 +193,7 @@ costManagement:
       CACHED_VIEWS_DISABLED: "False"
       RETAIN_NUM_MONTHS: "3"
       NOTIFICATION_CHECK_TIME: "24"
-      ENHANCED_ORG_ADMIN: "True"
+      ENHANCED_ORG_ADMIN: "False"
       RBAC_CACHE_TIMEOUT: "300"
       CACHE_TIMEOUT: "3600"
       TAG_ENABLED_LIMIT: "200"
@@ -498,9 +497,9 @@ kruize:
 # Uses insights-ingress-go which requires INGRESS_* prefixed environment variables
 ingress:
   image:
-    repository: quay.io/redhat-user-workloads/hcc-integrations-tenant/ingress
-    tag: "3a7a2cf"
-    pullPolicy: Always
+    repository: quay.io/iop/ingress
+    tag: "master"
+    pullPolicy: IfNotPresent
 
   # Server configuration
   server:
@@ -638,6 +637,60 @@ database:
     user: koku_user
     password: koku_password
 
+  # RBAC Database Configuration
+  rbac:
+    name: costonprem_rbac
+    user: rbac_user
+    password: rbac_password
+
+# -----------------------------------------------------------------------------
+# RBAC v1 Authorization Backend (insights-rbac)
+# -----------------------------------------------------------------------------
+# insights-rbac: RBAC v1 authorization backend for Koku.
+# Koku delegates all permission checks to this service via HTTP.
+# Deploys an API server (Gunicorn) and a Celery worker for async tasks.
+rbac:
+  image:
+    repository: quay.io/redhat-services-prod/hcc-accessmanagement-tenant/insights-rbac
+    tag: "b34eb9a"
+    pullPolicy: IfNotPresent
+
+  api:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+
+  # Comma-separated list of role names that non-admin users may create.
+  # Maps to ROLE_CREATE_ALLOW_LIST env var on the RBAC API.
+  # Leave empty to use the upstream default (no custom role creation).
+  roleCreateAllowList: ""
+
+  worker:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 2Gi
+
+  # Bootstrap an initial admin user with Cost Administrator permissions.
+  # A post-install/post-upgrade hook Job creates the RBAC Tenant, Principal,
+  # Group, and Policy so the user can access the API immediately.
+  # All operations are idempotent (safe to leave enabled across upgrades).
+  #
+  # The bootstrap user identity (username, orgId, accountNumber) is derived
+  # from the first orgAdmin:true entry in jwtAuth.realmUsers — no need to
+  # duplicate credentials here. Enable this toggle after running deploy-rhbk.sh.
+  bootstrapAdmin:
+    enabled: false
+
 # -----------------------------------------------------------------------------
 # Shared Infrastructure - Kafka
 # -----------------------------------------------------------------------------
@@ -694,9 +747,20 @@ valkey:
   # For password-protected Redis instances (e.g., ElastiCache, Redis Enterprise)
   auth:
     enabled: false
-    # Name of the Secret containing key: 'redis-password'
-    # Required when auth.enabled is true.
+    # Name of the Secret containing key 'redis-password' (required when auth.enabled is true).
+    # The Secret may also contain key 'redis-username' for Redis 6+ ACL authentication.
+    # When 'redis-username' is absent, the default Redis user is used.
     secretName: ""
+
+  # TLS configuration for external Redis/Valkey (only used when deploy is false)
+  # For TLS-encrypted Redis connections (e.g., ElastiCache in-transit encryption,
+  # Redis Enterprise TLS, Azure Cache for Redis)
+  tls:
+    enabled: false
+    # Name of the Secret containing key 'ca.crt' with the CA certificate.
+    # When set, certificate verification is enforced (ssl.CERT_REQUIRED).
+    # When empty, TLS is used but certificates are not verified (ssl.CERT_NONE).
+    caCertSecretName: ""
 
   # Persistence configuration for Celery chord callback reliability
   # Persistent storage is always enabled when deploying bundled Valkey.
@@ -797,6 +861,39 @@ jwtAuth:
       requests:
         cpu: 100m
         memory: 128Mi
+
+  # Keycloak realm users provisioned by deploy-rhbk.sh -f <this-file>.
+  # Each entry defines a user in the Keycloak realm with Cost Management attributes.
+  #
+  # WARNING: Change default passwords before deploying to production.
+  # These are initial development/test defaults only. FedRAMP and production
+  # environments require passwords that meet organizational complexity policy.
+  #
+  # orgAdmin: true assigns the Keycloak "org-admin" realm role to the user.
+  # The Envoy gateway reads this role from the JWT (realm_access.roles) and sets
+  # is_org_admin=true in X-Rh-Identity, triggering insights-rbac's admin_default
+  # group (Cost Administrator = cost-management:*:*).
+  #
+  # Keycloak is the single source of truth — after initial provisioning, admin
+  # status can also be managed directly in the Keycloak admin console by
+  # assigning/removing the "org-admin" realm role.
+  realmUsers:
+    - username: admin
+      password: admin
+      email: admin@test.com
+      firstName: Admin
+      lastName: User
+      orgId: "org1234567"
+      accountNumber: "7890123"
+      orgAdmin: true
+    - username: viewer
+      password: viewer
+      email: viewer@test.com
+      firstName: Viewer
+      lastName: User
+      orgId: "org1234567"
+      accountNumber: "7890123"
+      orgAdmin: false
 
   # Keycloak configuration for JWT validation
   # Supported operator: Red Hat Build of Keycloak (RHBK) v22+ - k8s.keycloak.org/v2alpha1

@@ -111,27 +111,25 @@ class TestPageNavigation:
         
         Parametrized for: Overview, OpenShift, Cost Explorer, Settings.
         """
-        # Navigate directly to the page
         authenticated_page.goto(f"{ui_url}{nav_page.path}")
         authenticated_page.wait_for_load_state("networkidle")
-        
-        # Check for common error indicators
-        error_indicators = [
-            "text=/error|failed|not found|500|503/i",
+
+        hard_error_selectors = [
             ".pf-v6-c-alert--danger",
             "[data-testid='error-state']",
         ]
-        
-        for indicator in error_indicators:
-            error_element = authenticated_page.locator(indicator)
-            # Allow for "No data" messages which are not errors
+        errors_found: list[str] = []
+        for selector in hard_error_selectors:
+            error_element = authenticated_page.locator(selector)
             if error_element.count() > 0:
-                # Check if it's actually an error vs just "no data"
-                text = error_element.first.text_content() or ""
-                if "no data" not in text.lower() and "empty" not in text.lower():
-                    # This might be a real error - log but don't fail
-                    # Some pages may legitimately show errors if not configured
-                    print(f"  ⚠️ Possible error on {nav_page.name}: {text[:100]}")
+                text = (error_element.first.text_content() or "").strip()
+                benign = ("no data" in text.lower() or "empty" in text.lower())
+                if not benign:
+                    errors_found.append(f"[{selector}] {text[:200]}")
+
+        assert not errors_found, (
+            f"Page {nav_page.name} has error indicators: {errors_found}"
+        )
 
 
 @pytest.mark.ui
@@ -343,3 +341,34 @@ class TestSettingsPage:
         # Should have some main content area
         main_content = authenticated_page.locator("main, [role='main'], .pf-v6-c-page__main")
         expect(main_content).to_be_visible()
+
+    def test_admin_settings_page_shows_settings_content(
+        self, authenticated_page: Page, ui_url: str,
+    ):
+        """Admin (org-admin role) must see actual settings, not access-denied."""
+        authenticated_page.goto(f"{ui_url}/openshift/cost-management/settings")
+        authenticated_page.wait_for_load_state("networkidle")
+
+        access_denied = authenticated_page.locator(
+            "text=You do not have access to Settings in cost management"
+        )
+        expect(access_denied).not_to_be_visible()
+
+        main_content = authenticated_page.locator(
+            "main, [role='main'], .pf-v6-c-page__main"
+        )
+        expect(main_content).to_be_visible()
+
+    def test_non_admin_settings_page_shows_access_denied(
+        self, non_admin_authenticated_page: Page, ui_url: str,
+    ):
+        """Non-admin (viewer, no org-admin role) must see the access-denied state."""
+        non_admin_authenticated_page.goto(
+            f"{ui_url}/openshift/cost-management/settings"
+        )
+        non_admin_authenticated_page.wait_for_load_state("networkidle")
+
+        access_denied = non_admin_authenticated_page.locator(
+            "text=You do not have access to Settings in cost management"
+        )
+        expect(access_denied).to_be_visible(timeout=10000)

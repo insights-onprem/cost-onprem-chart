@@ -182,17 +182,15 @@ class TestGatewayJWTAuthentication:
         )
 
     def test_sources_api_accessible(
-        self, gateway_url: str, jwt_token, http_session: requests.Session
+        self, gateway_url: str, user_jwt_token, http_session: requests.Session
     ):
         """Verify Sources API (now part of Koku) is accessible through gateway with valid JWT."""
-        # Sources API is now at /api/cost-management/v1/sources/ (merged into Koku)
         response = http_session.get(
             f"{gateway_url}/cost-management/v1/sources",
-            headers=jwt_token.authorization_header,
+            headers=user_jwt_token.authorization_header,
             timeout=10,
         )
 
-        # Koku sources endpoint returns 200 with list of sources (may be empty)
         assert response.status_code == 200, (
             f"Expected 200 for sources endpoint, got {response.status_code}"
         )

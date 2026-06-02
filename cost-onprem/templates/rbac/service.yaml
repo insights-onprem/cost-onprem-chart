@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cost-onprem.rbac.api.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cost-onprem.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac-api
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: {{ include "cost-onprem.rbac.service.port" . }}
+    targetPort: {{ include "cost-onprem.rbac.service.port" . }}
+    protocol: TCP
+  selector:
+    {{- include "cost-onprem.rbac.api.selectorLabels" . | nindent 4 }}

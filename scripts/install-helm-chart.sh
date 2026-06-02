@@ -22,6 +22,8 @@
 #   S3_BUCKET_INGRESS / S3_BUCKET_KOKU / S3_BUCKET_ROS - Override individual bucket names (override prefix)
 #   SKIP_S3_SETUP   - Skip S3 bucket creation entirely (default: false)
 #   S3_CLI_IMAGE    - Container image with AWS CLI for bucket creation (default: amazon/aws-cli:latest)
+#   HELM_FORCE_CONFLICTS - When true, pass --force-conflicts to helm upgrade (SSA field ownership;
+#                          use after kubectl set / oc set image on chart-managed resources)
 #
 # Examples:
 #   # Default (clean output with successes/warnings/errors only)
@@ -67,6 +69,7 @@ HELM_REPO_NAME="cost-onprem"
 HELM_REPO_URL="https://insights-onprem.github.io/cost-onprem-chart"
 CHART_VERSION=${CHART_VERSION:-}  # Empty = latest; set to pin a version (e.g., "0.2.9")
 USE_LOCAL_CHART=${USE_LOCAL_CHART:-false}  # Set to true to use local chart instead of Helm repository
+USE_HELM_DEVEL=${USE_HELM_DEVEL:-false}  # Set to true to include pre-release (rc) charts
 LOCAL_CHART_PATH=${LOCAL_CHART_PATH:-../cost-onprem}  # Path to local chart directory
 KAFKA_NAMESPACE=${KAFKA_NAMESPACE:-}  # If set, look for operator and Kafka cluster in this namespace
 
@@ -586,6 +589,8 @@ create_database_credentials_secret() {
     local ros_password=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)
     local kruize_password=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)
     local koku_password=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)
+    local rbac_password=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)
+    local rbac_django_secret=$(openssl rand -base64 50 | tr -d "=+/" | cut -c1-50)
 
     # Create the secret
     kubectl create secret generic "$secret_name" \
@@ -597,7 +602,10 @@ create_database_credentials_secret() {
         --from-literal=kruize-user=kruize_user \
         --from-literal=kruize-password="$kruize_password" \
         --from-literal=koku-user=koku_user \
-        --from-literal=koku-password="$koku_password"
+        --from-literal=koku-password="$koku_password" \
+        --from-literal=rbac-user=rbac_user \
+        --from-literal=rbac-password="$rbac_password" \
+        --from-literal=django-secret-key="$rbac_django_secret"
 
     if [ $? -eq 0 ]; then
         echo_success "Database credentials secret created successfully"
@@ -1156,6 +1164,12 @@ deploy_helm_chart() {
         echo_info "Pinning chart version: $CHART_VERSION"
     fi
 
+    # Include pre-release charts (e.g., rc versions) when --devel is enabled
+    if [ "$USE_HELM_DEVEL" = "true" ] && [ "$USE_LOCAL_CHART" != "true" ]; then
+        helm_cmd="$helm_cmd --devel"
+        echo_info "Including pre-release (--devel) charts"
+    fi
+
     # Add values file if specified
     if [ -n "$VALUES_FILE" ]; then
         if [ -f "$VALUES_FILE" ]; then
@@ -1290,6 +1304,12 @@ deploy_helm_chart() {
     if [ ${#HELM_EXTRA_ARGS[@]} -gt 0 ]; then
         echo_info "Adding additional Helm arguments: ${HELM_EXTRA_ARGS[*]}"
         helm_cmd="$helm_cmd ${HELM_EXTRA_ARGS[*]}"
+    fi
+
+    # Reconcile server-side apply conflicts (e.g. after oc set image on deployments)
+    if [ "${HELM_FORCE_CONFLICTS:-false}" = "true" ]; then
+        helm_cmd="$helm_cmd --force-conflicts"
+        echo_info "Helm upgrade: --force-conflicts (server-side apply)"
     fi
 
     echo_info "Executing: $helm_cmd"

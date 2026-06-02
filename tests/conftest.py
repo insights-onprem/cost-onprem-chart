@@ -14,7 +14,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import pytest
 import requests
@@ -24,10 +24,16 @@ import urllib3
 from utils import (
     check_pod_exists,
     exec_in_pod,
+    exec_in_pod_raw,
     get_pod_by_label,
     get_route_url,
     get_secret_value,
     run_oc_command,
+)
+from rbac_bootstrap_scripts import (
+    CLEANUP_SCRIPT,
+    render_bootstrap_script,
+    render_diag_script,
 )
 
 # Import shared fixtures from test suites
@@ -36,6 +42,29 @@ pytest_plugins = ["suites.cost_management.conftest", "suites.sources.conftest"]
 
 # Disable SSL warnings for self-signed certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Fallback identity values when Keycloak is unreachable.
+# Canonical source: jwtAuth.realmUsers in cost-onprem/values.yaml.
+_DEFAULT_ORG_ID = "org1234567"
+_DEFAULT_ACCOUNT_NUMBER = "7890123"
+
+# OAuth ``scope`` string for password grant. Do **not** include the literal token
+# ``roles`` here on many Keycloak builds: it is a *client scope name*, not an
+# OIDC scope, and triggers ``invalid_scope``. Realm roles still appear in JWTs
+# when the ``roles`` *client scope* is attached as a default scope on the UI
+# client (see ``ensure_password_grant_lab_users_with_org_admin``).
+OIDC_PASSWORD_GRANT_SCOPE = os.environ.get(
+    "OIDC_PASSWORD_GRANT_SCOPE", "openid profile email"
+)
+
+
+def decode_jwt_payload(access_token: str) -> dict:
+    """Decode the payload section of a JWT without signature verification."""
+    payload_b64 = access_token.split(".")[1]
+    padding = 4 - len(payload_b64) % 4
+    if padding != 4:
+        payload_b64 += "=" * padding
+    return json.loads(base64.urlsafe_b64decode(payload_b64))
 
 
 # =============================================================================
@@ -113,6 +142,21 @@ class S3Config:
 # =============================================================================
 # Session-Scoped Fixtures (shared across all tests)
 # =============================================================================
+
+
+@pytest.fixture(scope="session")
+def rbac_gateway_test_user_password() -> str:
+    """Password for synthetic RBAC gateway test users (Keycloak + password grant).
+
+    Uses ``RBAC_GATEWAY_TEST_USER_PASSWORD`` when set. Otherwise generates a
+    unique ephemeral secret per session (no hardcoded fallback on real clusters).
+    """
+    pw = os.environ.get("RBAC_GATEWAY_TEST_USER_PASSWORD", "").strip()
+    if pw:
+        return pw
+    import secrets
+
+    return secrets.token_urlsafe(24)
 
 
 @pytest.fixture(scope="session")
@@ -208,6 +252,91 @@ def obtain_jwt_token(keycloak_config: KeycloakConfig) -> JWTToken:
     )
 
 
+def get_fresh_auth_header(
+    keycloak_config: KeycloakConfig,
+    http_session: requests.Session,
+) -> Optional[Dict[str, str]]:
+    """Get a fresh JWT authorization header from Keycloak.
+    
+    This is a lightweight alternative to obtain_jwt_token() when you only need
+    the authorization header and don't need the full JWTToken object with
+    expiration tracking.
+    
+    Use this in tests that need to refresh tokens mid-execution or when you
+    already have an http_session available.
+    
+    Args:
+        keycloak_config: Keycloak configuration with URL and credentials
+        http_session: Existing requests session (used for the token request)
+        
+    Returns:
+        Dict with "Authorization" header, or None if token acquisition fails
+        
+    Example:
+        auth_header = get_fresh_auth_header(keycloak_config, http_session)
+        if not auth_header:
+            pytest.skip("Could not obtain fresh JWT token")
+        response = http_session.get(url, headers=auth_header)
+    """
+    try:
+        response = http_session.post(
+            keycloak_config.token_url,
+            data={
+                "grant_type": "client_credentials",
+                "client_id": keycloak_config.client_id,
+                "client_secret": keycloak_config.client_secret,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=30,
+        )
+        
+        if response.status_code != 200:
+            return None
+        
+        token = response.json().get("access_token")
+        return {"Authorization": f"Bearer {token}"} if token else None
+    except requests.RequestException:
+        return None
+
+
+def create_authenticated_session(
+    keycloak_config: KeycloakConfig,
+    content_type: Optional[str] = None,
+) -> requests.Session:
+    """Create a requests session pre-configured with JWT authentication.
+    
+    This is a factory function for creating authenticated sessions. Use this
+    when you need a fresh session with a new token, particularly for:
+    - Module-scoped fixtures that may outlive the token lifetime
+    - One-off API operations in test setup/teardown
+    - Tests that need isolated sessions
+    
+    Args:
+        keycloak_config: Keycloak configuration with URL and credentials
+        content_type: Optional Content-Type header (e.g., "application/json")
+        
+    Returns:
+        Configured requests.Session with:
+        - Authorization header with Bearer token
+        - SSL verification disabled (for self-signed certs)
+        - Optional Content-Type header
+        
+    Raises:
+        pytest.fail: If token acquisition fails
+        
+    Example:
+        session = create_authenticated_session(keycloak_config, content_type="application/json")
+        response = session.get(f"{gateway_url}/cost-management/v1/sources")
+    """
+    token = obtain_jwt_token(keycloak_config)
+    session = requests.Session()
+    session.headers["Authorization"] = f"Bearer {token.access_token}"
+    if content_type:
+        session.headers["Content-Type"] = content_type
+    session.verify = False
+    return session
+
+
 @pytest.fixture(scope="function")
 def jwt_token(keycloak_config: KeycloakConfig) -> JWTToken:
     """Obtain a JWT token from Keycloak using client credentials flow.
@@ -221,6 +350,101 @@ def jwt_token(keycloak_config: KeycloakConfig) -> JWTToken:
     obtain_jwt_token(keycloak_config) directly instead of depending on this fixture.
     """
     return obtain_jwt_token(keycloak_config)
+
+
+def obtain_password_grant_token(
+    username: str,
+    password: str,
+    keycloak_config: KeycloakConfig,
+    cluster_config: ClusterConfig,
+) -> JWTToken:
+    """Obtain a JWT via resource-owner password grant (confidential UI client).
+
+    Use for gateway calls where RBAC expects a normal ``User`` identity (not a
+    service-account ``preferred_username``).
+
+    Sends ``OIDC_PASSWORD_GRANT_SCOPE`` when non-empty (default ``openid profile
+    email``). The ``roles`` Keycloak *client scope* must be a **default** scope on
+    ``cost-management-ui`` so ``realm_access.roles`` is populated; requesting
+    ``roles`` in the OAuth ``scope`` parameter often returns ``invalid_scope``.
+    """
+    ui_client_id = "cost-management-ui"
+    ui_client_secret = get_secret_value(
+        cluster_config.keycloak_namespace,
+        f"keycloak-client-secret-{ui_client_id}",
+        "CLIENT_SECRET",
+    )
+    if not ui_client_secret:
+        pytest.fail("Could not find cost-management-ui client secret for password grant")
+
+    data: dict = {
+        "grant_type": "password",
+        "client_id": ui_client_id,
+        "client_secret": ui_client_secret,
+        "username": username,
+        "password": password,
+    }
+    _scope = OIDC_PASSWORD_GRANT_SCOPE.strip()
+    if _scope:
+        data["scope"] = _scope
+
+    response = requests.post(
+        keycloak_config.token_url,
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        verify=False,
+        timeout=30,
+    )
+
+    if response.status_code != 200:
+        pytest.fail(
+            f"Failed to obtain JWT token for {username!r} via password grant: "
+            f"{response.status_code} - {response.text}"
+        )
+
+    token_data = response.json()
+    expires_in = token_data.get("expires_in", 300)
+
+    return JWTToken(
+        access_token=token_data["access_token"],
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in),
+    )
+
+
+def obtain_user_jwt_token_for(
+    keycloak_config: KeycloakConfig,
+    cluster_config: ClusterConfig,
+    username: str = "admin",
+    password: str = "admin",
+) -> JWTToken:
+    """Obtain a JWT token via password grant for the given user."""
+    return obtain_password_grant_token(username, password, keycloak_config, cluster_config)
+
+
+def obtain_user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JWTToken:
+    """Obtain a JWT token via password grant for the admin user.
+
+    The cost-management-operator SA token has a ``service-account-*`` username
+    that RBAC rejects with 400 ("Invalid format for a Service Account username").
+    API tests that go through the gateway must use a regular user token instead.
+    """
+    return obtain_password_grant_token(
+        os.environ.get("TEST_USERNAME", "admin"),
+        os.environ.get("TEST_PASSWORD", "admin"),
+        keycloak_config,
+        cluster_config,
+    )
+
+
+@pytest.fixture(scope="function")
+def user_jwt_token(keycloak_config: KeycloakConfig, cluster_config) -> JWTToken:
+    """Obtain a user JWT token via password grant (admin/admin).
+
+    Use this for API tests that go through the gateway and hit RBAC-protected
+    endpoints.  The SA client-credentials token triggers a 400 in RBAC because
+    its ``service-account-*`` username is rejected.
+    """
+    return obtain_user_jwt_token(keycloak_config, cluster_config)
 
 
 @pytest.fixture(scope="session")
@@ -638,7 +862,19 @@ if failed:
 
 @pytest.fixture(scope="session")
 def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> str:
-    """Get org_id from Keycloak test user or use default."""
+    """Get org_id from Keycloak admin test user or use default.
+    
+    Looks up the admin user (configurable via TEST_USERNAME env var,
+    default: "admin") in Keycloak to retrieve the org_id attribute.
+    
+    Note: Currently uses "admin" user. More involved RBAC testing may require
+    different users with specific role assignments in the future.
+    
+    SECURITY NOTE: These credentials are ONLY valid in ephemeral CI test
+    environments. The test Keycloak user is provisioned by the test harness
+    bootstrap (see scripts/deploy-rhbk.sh). These credentials must never
+    match any staging or production credentials.
+    """
     try:
         # Get admin credentials
         admin_pass_result = run_oc_command([
@@ -647,7 +883,7 @@ def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> st
         ], check=False)
         
         if not admin_pass_result.stdout.strip():
-            return "org1234567"
+            return _DEFAULT_ORG_ID
         
         admin_password = base64.b64decode(admin_pass_result.stdout.strip()).decode("utf-8")
         
@@ -665,14 +901,17 @@ def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> st
         )
         
         if token_response.status_code != 200:
-            return "org1234567"
+            return _DEFAULT_ORG_ID
         
         admin_token = token_response.json().get("access_token")
         
-        # Get test user's org_id
+        # Get admin user's org_id (username configurable via TEST_USERNAME)
+        # Note: Currently uses "admin" user. More involved RBAC testing may
+        # require different users with specific role assignments in the future.
+        admin_username = os.environ.get("TEST_USERNAME", "admin")
         users_response = requests.get(
             f"{keycloak_config.url}/admin/realms/kubernetes/users",
-            params={"username": "test", "exact": "true"},
+            params={"username": admin_username, "exact": "true"},
             headers={"Authorization": f"Bearer {admin_token}"},
             verify=False,
             timeout=30,
@@ -685,9 +924,182 @@ def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> st
                 if org_id_value:
                     return org_id_value
         
-        return "org1234567"
+        return _DEFAULT_ORG_ID
     except Exception:
-        return "org1234567"
+        return _DEFAULT_ORG_ID
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _ensure_keycloak_password_grant_lab_users(
+    cluster_config: ClusterConfig,
+    keycloak_config: KeycloakConfig,
+    org_id: str,
+) -> None:
+    """Keep ``admin`` / ``viewer`` and the ``org-admin`` realm role aligned with tests.
+
+    Ephemeral lab clusters can drift (missing realm role on admin, wrong viewer
+    password). Provisioning runs once per session after ``org_id`` is resolved.
+    """
+    log = logging.getLogger(__name__)
+    try:
+        from rbac_keycloak_users import ensure_password_grant_lab_users_with_org_admin
+
+        ensure_password_grant_lab_users_with_org_admin(
+            keycloak_base_url=keycloak_config.url,
+            keycloak_namespace=cluster_config.keycloak_namespace,
+            realm=keycloak_config.realm,
+            org_id=org_id,
+            account_number=os.environ.get("TEST_ACCOUNT_NUMBER", _DEFAULT_ACCOUNT_NUMBER),
+            admin_username=os.environ.get("TEST_USERNAME", "admin"),
+            admin_password=os.environ.get("TEST_PASSWORD", "admin"),
+            viewer_username=os.environ.get("VIEWER_USERNAME", "viewer"),
+            viewer_password=os.environ.get("VIEWER_PASSWORD", "viewer"),
+        )
+    except Exception as exc:
+        log.warning(
+            "Keycloak lab user sync failed (org-admin / viewer tests may fail): %s",
+            exc,
+        )
+
+
+# =============================================================================
+# RBAC Bootstrap (ensures CI service account has permissions)
+# =============================================================================
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _rbac_bootstrap(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig, gateway_url: str):
+    """Bootstrap RBAC permissions for the CI service account.
+
+    With is_org_admin=false in the Envoy gateway, the CI service account needs
+    explicit RBAC group membership. This fixture:
+    1. Triggers tenant creation by making a request through the gateway
+    2. Creates a "CI Test Admin" group and adds the service account principal
+       to it with Cost Administrator role
+
+    Only the service account principal is added to the admin group — individual
+    test users (alice, bob, carol) are NOT affected, preserving granular RBAC
+    test coverage in test_rbac_access.py.
+    """
+    logger = logging.getLogger(__name__)
+
+    # Step 1: Get a token and trigger tenant creation
+    try:
+        token = obtain_jwt_token(keycloak_config)
+    except Exception as e:
+        logger.warning(f"RBAC bootstrap: could not obtain JWT token: {e}")
+        return
+
+    # Decode the token to get the service account username.
+    # The Keycloak client has a preferred-username-override mapper that sets
+    # preferred_username to "cost-mgmt-operator", but due to a race condition
+    # the mapper may not be active when this first token is issued. Register
+    # both the decoded username AND the expected mapper value so RBAC lookups
+    # succeed regardless of timing.
+    sa_default = f"service-account-{keycloak_config.client_id}"
+    sa_mapper_override = "cost-mgmt-operator"
+    try:
+        claims = decode_jwt_payload(token.access_token)
+        sa_username = claims.get("preferred_username") or claims.get("sub", sa_default)
+    except Exception:
+        sa_username = sa_default
+
+    sa_usernames = list(dict.fromkeys([sa_username, sa_mapper_override, sa_default]))
+    logger.warning(f"RBAC bootstrap: SA usernames to register = {sa_usernames}")
+
+    try:
+        resp = requests.get(
+            f"{gateway_url}/cost-management/v1/status/",
+            headers={"Authorization": f"Bearer {token.access_token}"},
+            verify=False,
+            timeout=30,
+        )
+        logger.warning(f"RBAC bootstrap: tenant trigger response: {resp.status_code}")
+    except Exception as e:
+        logger.warning(f"RBAC bootstrap: gateway request failed: {e}")
+
+    # Give RBAC a moment to process the tenant creation
+    time.sleep(3)
+
+    # Step 2: Exec into RBAC pod and grant Cost Administrator to the SA principal
+    rbac_pod = get_pod_by_label(
+        cluster_config.namespace, "app.kubernetes.io/component=rbac-api"
+    )
+    if not rbac_pod:
+        logger.warning("RBAC bootstrap: rbac-api pod not found, skipping")
+        return
+
+    # Resolve org_id from the token claims or fall back to default
+    org_id_value = claims.get("org_id") or _DEFAULT_ORG_ID
+    acct_number = claims.get("account_number") or _DEFAULT_ACCOUNT_NUMBER
+
+    bootstrap_script = render_bootstrap_script(sa_usernames, org_id_value, acct_number)
+
+    result = exec_in_pod_raw(
+        cluster_config.namespace,
+        rbac_pod,
+        ["python", "/opt/rbac/rbac/manage.py", "shell", "-c", bootstrap_script],
+        timeout=120,
+    )
+    logger.warning(f"RBAC bootstrap ORM stdout: {result.stdout.strip() if result.stdout else 'none'}")
+    if result.returncode != 0:
+        logger.error(f"RBAC bootstrap ORM FAILED (rc={result.returncode}): {result.stderr.strip()}")
+    else:
+        logger.warning("RBAC bootstrap ORM: success")
+
+    # Run V2 tenant bootstrap so that TenantMapping, workspaces, and role
+    # bindings are created — without this RBAC returns 400 on /access/ queries.
+    v2_result = exec_in_pod_raw(
+        cluster_config.namespace,
+        rbac_pod,
+        [
+            "python", "/opt/rbac/rbac/manage.py",
+            "bootstrap_tenants", "--org-id", org_id_value, "--force",
+        ],
+        timeout=120,
+    )
+    logger.warning(f"RBAC bootstrap V2 stdout: {v2_result.stdout.strip() if v2_result.stdout else 'none'}")
+    if v2_result.returncode != 0:
+        logger.error(f"RBAC bootstrap V2 FAILED (rc={v2_result.returncode}): {v2_result.stderr.strip()}")
+    else:
+        logger.warning("RBAC bootstrap V2: success")
+
+    # =========================================================================
+    # Cleanup: strip cost-management from RBAC's seeded platform defaults
+    # =========================================================================
+    # RBAC seeds "Cost Cloud Viewer Local Test" and "Cost OpenShift Viewer
+    # Local Test" roles with platform_default=True at startup. This grants
+    # every user cost-management read access, defeating granular RBAC tests.
+    # Fix both vectors: group-level associations AND role-level flag.
+    cleanup_result = exec_in_pod_raw(
+        cluster_config.namespace,
+        rbac_pod,
+        ["python", "/opt/rbac/rbac/manage.py", "shell", "-c", CLEANUP_SCRIPT],
+        timeout=60,
+    )
+    if cleanup_result.stdout:
+        logger.warning(f"RBAC bootstrap cleanup: {cleanup_result.stdout.strip()}")
+    if cleanup_result.returncode != 0:
+        logger.warning(f"RBAC cleanup stderr: {cleanup_result.stderr.strip()[:300] if cleanup_result.stderr else 'none'}")
+
+    # =========================================================================
+    # Diagnostic: check RBAC state and Koku accessibility after bootstrap
+    # =========================================================================
+    koku_svc_host = f"{cluster_config.helm_release_name}-koku-api.{cluster_config.namespace}.svc"
+    diag_script = render_diag_script(sa_username, org_id_value, acct_number, koku_svc_host)
+
+    diag_result = exec_in_pod_raw(
+        cluster_config.namespace,
+        rbac_pod,
+        ["python", "/opt/rbac/rbac/manage.py", "shell", "-c", diag_script],
+        timeout=60,
+    )
+    if diag_result.stdout:
+        for line in diag_result.stdout.strip().split("\n"):
+            if "DIAG" in line:
+                logger.warning(line.strip())
+    if diag_result.returncode != 0:
+        logger.warning(f"RBAC diagnostics stderr: {diag_result.stderr.strip()[:500] if diag_result.stderr else 'none'}")
 
 
 # =============================================================================
@@ -767,22 +1179,20 @@ def http_session() -> requests.Session:
 
 
 @pytest.fixture(scope="function")
-def authenticated_session(jwt_token: JWTToken) -> requests.Session:
-    """Pre-configured requests session with JWT authentication.
-    
-    Scope: function - Matches jwt_token scope to ensure fresh auth per test.
-    
-    Use this fixture for external API tests that go through the gateway.
-    The session includes:
-    - Authorization header with Bearer token
-    - SSL verification disabled (for self-signed certs)
-    
+def authenticated_session(user_jwt_token: JWTToken) -> requests.Session:
+    """Pre-configured requests session with user JWT authentication.
+
+    Uses a password-grant user token (admin/admin) instead of the SA client-
+    credentials token.  RBAC rejects the SA's ``service-account-*`` username
+    with 400 when queried via ``type: User`` identity, so all gateway API
+    tests must authenticate as a real user.
+
     Note: Content-Type is NOT set by default to allow multipart/form-data
     uploads to work correctly. Set it explicitly in tests that need JSON.
     """
     session = requests.Session()
     session.headers.update({
-        "Authorization": f"Bearer {jwt_token.access_token}",
+        "Authorization": f"Bearer {user_jwt_token.access_token}",
     })
     session.verify = False
     return session

@@ -27,6 +27,9 @@ test-logs/
 # CI artifacts (downloaded from Prow/GCS)
 ci-artifacts-*/
 
+# CI failure analysis (ephemeral, date-specific)
+**/ci-failure-analysis-*.md
+
 # Temporary files
 *.tmp
 *.temp
@@ -39,3 +42,9 @@ version_info.json
 reports/junit.xml
 **/*.json.gz
 debug-exports/**/*
+
+# Test reports and Playwright artifacts
+tests/reports/report.html
+tests/reports/screenshots/
+tests/reports/videos/
+tests/reports/traces/

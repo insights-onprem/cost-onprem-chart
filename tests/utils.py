@@ -449,6 +449,10 @@ def create_rh_identity_header(org_id: str, account_number: str = None) -> str:
 
     The X-Rh-Identity header is a base64-encoded JSON structure required by
     Koku middleware for tenant identification and authorization.
+    
+    NOTE: The "username" field in the identity JSON is NOT a Keycloak credential.
+    It's a placeholder value in the identity claim structure used for internal
+    API testing. It doesn't need to match any real user.
 
     Args:
         org_id: Organization ID for the tenant
@@ -467,8 +471,8 @@ def create_rh_identity_header(org_id: str, account_number: str = None) -> str:
             "account_number": account_number,
             "type": "User",
             "user": {
-                "username": "test",
-                "email": "test@example.com",
+                "username": "admin",
+                "email": "admin@test.com",
                 "is_org_admin": True,
             },
         },
@@ -482,10 +486,14 @@ def create_rh_identity_header(org_id: str, account_number: str = None) -> str:
     return base64.b64encode(json.dumps(identity_json).encode()).decode()
 
 
+_UNSET = object()
+
+
 def create_identity_header_custom(
     org_id: str,
     is_org_admin: bool = True,
-    email: Optional[str] = "test@example.com",
+    username: str = "admin",
+    email: object = _UNSET,
     entitlements: Optional[dict] = None,
     account_number: Optional[str] = None,
 ) -> str:
@@ -493,11 +501,16 @@ def create_identity_header_custom(
 
     This function allows creating identity headers with various configurations
     to test authentication error scenarios.
+    
+    NOTE: The "username" field in the identity JSON is NOT a Keycloak credential.
+    It's a placeholder value in the identity claim structure used for internal
+    API testing. It doesn't need to match any real user.
 
     Args:
         org_id: Organization ID for the tenant
         is_org_admin: Whether the user is an org admin (default: True)
-        email: User email address (set to None to omit the field)
+        username: Username for the identity (must match RBAC principal for per-user tests)
+        email: User email (default: {username}@example.com). Pass None to omit.
         entitlements: Custom entitlements dict (default: cost_management is_entitled=True)
         account_number: Account number (defaults to org_id if not provided)
 
@@ -507,6 +520,9 @@ def create_identity_header_custom(
     if account_number is None:
         account_number = org_id
 
+    if email is _UNSET:
+        email = f"{username}@example.com"
+
     if entitlements is None:
         entitlements = {
             "cost_management": {
@@ -515,7 +531,7 @@ def create_identity_header_custom(
         }
 
     user_dict: dict[str, Any] = {
-        "username": "test",
+        "username": username,
         "is_org_admin": is_org_admin,
     }
     if email is not None:
@@ -837,21 +853,436 @@ def wait_for_condition(
     description: str = "condition",
 ) -> bool:
     """Wait for a condition to become true.
-    
+
     Args:
         check_func: Callable that returns True when condition is met
         timeout: Maximum wait time in seconds
         interval: Check interval in seconds
         description: Description for logging
-    
+
     Returns:
         True if condition was met, False if timeout
     """
     import time
-    
+
     start_time = time.time()
     while time.time() - start_time < timeout:
         if check_func():
             return True
         time.sleep(interval)
+    return False
+
+
+# =============================================================================
+# Log Validation Utilities
+# =============================================================================
+
+
+class LogSearchResult:
+    """Result of a log search operation.
+    
+    Attributes:
+        found: Whether the pattern was found
+        matches: List of matching log lines
+        line_count: Total number of lines searched
+        pattern: The pattern that was searched for
+    """
+    
+    def __init__(
+        self,
+        found: bool,
+        matches: list[str],
+        line_count: int,
+        pattern: str,
+    ):
+        self.found = found
+        self.matches = matches
+        self.line_count = line_count
+        self.pattern = pattern
+    
+    def __bool__(self) -> bool:
+        return self.found
+    
+    def __repr__(self) -> str:
+        return f"LogSearchResult(found={self.found}, matches={len(self.matches)}, pattern={self.pattern!r})"
+
+
+def get_pod_logs(
+    namespace: str,
+    pod_name: Optional[str] = None,
+    label: Optional[str] = None,
+    container: Optional[str] = None,
+    since: Optional[str] = None,
+    tail: Optional[int] = None,
+    previous: bool = False,
+) -> Optional[str]:
+    """Get logs from a pod.
+    
+    Args:
+        namespace: Kubernetes namespace
+        pod_name: Name of the pod (mutually exclusive with label)
+        label: Label selector to find pod (mutually exclusive with pod_name)
+        container: Container name (required if pod has multiple containers)
+        since: Only return logs newer than a relative duration (e.g., "5m", "1h")
+        tail: Number of lines from the end of logs to show
+        previous: Get logs from previous container instance
+    
+    Returns:
+        Log content as string, or None if failed
+    
+    Example:
+        # Get last 100 lines from koku-api pod
+        logs = get_pod_logs("cost-onprem", label="app.kubernetes.io/component=cost-management-api", tail=100)
+        
+        # Get logs from specific container in last 5 minutes
+        logs = get_pod_logs("cost-onprem", pod_name="koku-migrate-xyz", container="migrate", since="5m")
+    """
+    # Resolve pod name from label if needed
+    if pod_name is None and label is not None:
+        pod_name = get_pod_by_label(namespace, label)
+        if pod_name is None:
+            return None
+    elif pod_name is None:
+        raise ValueError("Either pod_name or label must be provided")
+    
+    args = ["logs", "-n", namespace, pod_name]
+    
+    if container:
+        args.extend(["-c", container])
+    if since:
+        args.extend(["--since", since])
+    if tail:
+        args.extend(["--tail", str(tail)])
+    if previous:
+        args.append("--previous")
+    
+    try:
+        result = run_oc_command(args, check=False, timeout=120)
+        if result.returncode == 0:
+            return result.stdout
+        return None
+    except subprocess.TimeoutExpired:
+        return None
+
+
+def get_job_logs(
+    namespace: str,
+    job_name: str,
+    container: Optional[str] = None,
+    since: Optional[str] = None,
+    tail: Optional[int] = None,
+) -> Optional[str]:
+    """Get logs from a Kubernetes Job's pod.
+    
+    This is a convenience function that finds the pod created by a Job
+    and retrieves its logs.
+    
+    Args:
+        namespace: Kubernetes namespace
+        job_name: Name of the Job
+        container: Container name (if job pod has multiple containers)
+        since: Only return logs newer than a relative duration
+        tail: Number of lines from the end of logs to show
+    
+    Returns:
+        Log content as string, or None if failed
+    
+    Example:
+        # Get migration job logs
+        logs = get_job_logs("cost-onprem", "cost-onprem-koku-migrate", container="migrate")
+    """
+    # Find pod created by the job
+    label = f"job-name={job_name}"
+    return get_pod_logs(
+        namespace,
+        label=label,
+        container=container,
+        since=since,
+        tail=tail,
+    )
+
+
+def search_logs(
+    logs: str,
+    pattern: str,
+    case_sensitive: bool = True,
+    regex: bool = False,
+) -> LogSearchResult:
+    """Search for a pattern in log content.
+    
+    Args:
+        logs: Log content to search
+        pattern: Pattern to search for (string or regex)
+        case_sensitive: Whether search is case-sensitive
+        regex: Whether pattern is a regular expression
+    
+    Returns:
+        LogSearchResult with match information
+    
+    Example:
+        logs = get_pod_logs("cost-onprem", label="app.kubernetes.io/component=cost-management-api")
+        result = search_logs(logs, "Skipping hive database creation")
+        assert result.found, "Expected log message not found"
+    """
+    if not logs:
+        return LogSearchResult(found=False, matches=[], line_count=0, pattern=pattern)
+    
+    lines = logs.split("\n")
+    matches = []
+    
+    if regex:
+        flags = 0 if case_sensitive else re.IGNORECASE
+        compiled = re.compile(pattern, flags)
+        for line in lines:
+            if compiled.search(line):
+                matches.append(line)
+    else:
+        search_pattern = pattern if case_sensitive else pattern.lower()
+        for line in lines:
+            search_line = line if case_sensitive else line.lower()
+            if search_pattern in search_line:
+                matches.append(line)
+    
+    return LogSearchResult(
+        found=len(matches) > 0,
+        matches=matches,
+        line_count=len(lines),
+        pattern=pattern,
+    )
+
+
+def assert_log_contains(
+    logs: str,
+    pattern: str,
+    message: Optional[str] = None,
+    case_sensitive: bool = True,
+    regex: bool = False,
+) -> LogSearchResult:
+    """Assert that logs contain a pattern.
+    
+    Args:
+        logs: Log content to search
+        pattern: Pattern that must be present
+        message: Custom assertion message
+        case_sensitive: Whether search is case-sensitive
+        regex: Whether pattern is a regular expression
+    
+    Returns:
+        LogSearchResult for further inspection
+    
+    Raises:
+        AssertionError: If pattern is not found
+    
+    Example:
+        logs = get_job_logs("cost-onprem", "cost-onprem-koku-migrate", container="migrate")
+        assert_log_contains(logs, "Migrations completed successfully")
+    """
+    result = search_logs(logs, pattern, case_sensitive=case_sensitive, regex=regex)
+    
+    if not result.found:
+        error_msg = message or f"Expected pattern not found in logs: {pattern!r}"
+        raise AssertionError(error_msg)
+    
+    return result
+
+
+def assert_log_not_contains(
+    logs: str,
+    pattern: str,
+    message: Optional[str] = None,
+    case_sensitive: bool = True,
+    regex: bool = False,
+) -> LogSearchResult:
+    """Assert that logs do NOT contain a pattern.
+    
+    Args:
+        logs: Log content to search
+        pattern: Pattern that must NOT be present
+        message: Custom assertion message
+        case_sensitive: Whether search is case-sensitive
+        regex: Whether pattern is a regular expression
+    
+    Returns:
+        LogSearchResult for further inspection
+    
+    Raises:
+        AssertionError: If pattern is found
+    
+    Example:
+        logs = get_job_logs("cost-onprem", "cost-onprem-koku-migrate", container="migrate")
+        assert_log_not_contains(logs, "Migration failed")
+    """
+    result = search_logs(logs, pattern, case_sensitive=case_sensitive, regex=regex)
+    
+    if result.found:
+        error_msg = message or f"Unexpected pattern found in logs: {pattern!r}"
+        if result.matches:
+            error_msg += f"\nMatching lines:\n" + "\n".join(f"  {m}" for m in result.matches[:5])
+            if len(result.matches) > 5:
+                error_msg += f"\n  ... and {len(result.matches) - 5} more"
+        raise AssertionError(error_msg)
+    
+    return result
+
+
+def validate_logs(
+    logs: str,
+    must_contain: Optional[list[str]] = None,
+    must_not_contain: Optional[list[str]] = None,
+    case_sensitive: bool = True,
+) -> dict[str, LogSearchResult]:
+    """Validate logs against multiple patterns.
+    
+    This is a convenience function for validating multiple conditions at once.
+    
+    Args:
+        logs: Log content to validate
+        must_contain: List of patterns that must be present
+        must_not_contain: List of patterns that must NOT be present
+        case_sensitive: Whether searches are case-sensitive
+    
+    Returns:
+        Dict mapping pattern to LogSearchResult
+    
+    Raises:
+        AssertionError: If any validation fails (with all failures listed)
+    
+    Example:
+        logs = get_job_logs("cost-onprem", "cost-onprem-koku-migrate", container="migrate")
+        validate_logs(
+            logs,
+            must_contain=["Migrations completed successfully", "Migration lock"],
+            must_not_contain=["Migration failed", "ERROR", "Traceback"],
+        )
+    """
+    results = {}
+    failures = []
+    
+    for pattern in (must_contain or []):
+        result = search_logs(logs, pattern, case_sensitive=case_sensitive)
+        results[pattern] = result
+        if not result.found:
+            failures.append(f"Missing required pattern: {pattern!r}")
+    
+    for pattern in (must_not_contain or []):
+        result = search_logs(logs, pattern, case_sensitive=case_sensitive)
+        results[pattern] = result
+        if result.found:
+            failures.append(f"Found forbidden pattern: {pattern!r}")
+            if result.matches:
+                failures.append(f"  First match: {result.matches[0][:200]}")
+    
+    if failures:
+        raise AssertionError("Log validation failed:\n" + "\n".join(failures))
+    
+    return results
+
+
+def get_deployment_logs(
+    namespace: str,
+    deployment_name: str,
+    container: Optional[str] = None,
+    since: Optional[str] = None,
+    tail: Optional[int] = None,
+) -> Optional[str]:
+    """Get logs from pods in a Deployment.
+    
+    Args:
+        namespace: Kubernetes namespace
+        deployment_name: Name of the Deployment
+        container: Container name (if pods have multiple containers)
+        since: Only return logs newer than a relative duration
+        tail: Number of lines from the end of logs to show
+    
+    Returns:
+        Log content as string, or None if failed
+    
+    Example:
+        logs = get_deployment_logs("cost-onprem", "cost-onprem-koku-api", tail=500)
+    """
+    # Get the deployment's selector labels as JSON
+    try:
+        result = run_oc_command([
+            "get", "deployment", deployment_name, "-n", namespace,
+            "-o", "json"
+        ], check=False)
+        
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+        
+        # Parse the full deployment JSON and extract matchLabels
+        deployment = json.loads(result.stdout)
+        labels = deployment.get("spec", {}).get("selector", {}).get("matchLabels", {})
+        
+        if not labels:
+            return None
+        
+        label_selector = ",".join(f"{k}={v}" for k, v in labels.items())
+        
+        return get_pod_logs(
+            namespace,
+            label=label_selector,
+            container=container,
+            since=since,
+            tail=tail,
+        )
+    except (subprocess.CalledProcessError, json.JSONDecodeError):
+        return None
+
+
+def wait_for_deployment_replicas(
+    namespace: str,
+    label_selector: str,
+    expected_replicas: int,
+    timeout: int = 60,
+    interval: int = 2,
+) -> bool:
+    """Wait for a deployment to reach the expected replica count.
+
+    Args:
+        namespace: Kubernetes namespace
+        label_selector: Label selector (e.g., "app.kubernetes.io/component=rbac-api")
+        expected_replicas: Expected number of ready replicas
+        timeout: Maximum wait time in seconds
+        interval: Check interval in seconds
+
+    Returns:
+        True if replicas reached expected count, False if timeout
+
+    Example:
+        # Wait for scale-down to 0
+        wait_for_deployment_replicas(ns, "app=rbac", 0, timeout=30)
+
+        # Wait for scale-up to 1
+        wait_for_deployment_replicas(ns, "app=rbac", 1, timeout=60)
+    """
+    import time
+
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            # Check ready replicas via deployment status
+            result = run_oc_command(
+                [
+                    "get", "deployment",
+                    "-n", namespace,
+                    "-l", label_selector,
+                    "-o", "jsonpath={.items[0].status.readyReplicas}",
+                ],
+                check=False,
+            )
+
+            ready_str = result.stdout.strip()
+            # If no readyReplicas field (deployment scaled to 0), treat as 0
+            ready_count = int(ready_str) if ready_str else 0
+
+            if ready_count == expected_replicas:
+                return True
+
+        except (subprocess.CalledProcessError, ValueError):
+            # Transient errors or missing deployment - keep polling
+            pass
+
+        time.sleep(interval)
+
     return False

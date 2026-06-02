@@ -13,27 +13,9 @@ Coverage:
 import pytest
 import requests
 
+from conftest import get_fresh_auth_header
 from utils import check_pod_ready, run_oc_command
 
-
-def get_fresh_token(keycloak_config, http_session: requests.Session) -> dict:
-    """Get a fresh JWT token (avoids session-scoped token expiry issues)."""
-    response = http_session.post(
-        keycloak_config.token_url,
-        data={
-            "grant_type": "client_credentials",
-            "client_id": keycloak_config.client_id,
-            "client_secret": keycloak_config.client_secret,
-        },
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        timeout=30,
-    )
-    
-    if response.status_code != 200:
-        return None
-    
-    token = response.json().get("access_token")
-    return {"Authorization": f"Bearer {token}"} if token else None
 
 
 def get_recommendations_endpoint(ros_api_url: str) -> str:
@@ -55,13 +37,13 @@ class TestRecommendationsAPI:
         ), "ROS API pod is not ready"
 
     def test_recommendations_endpoint_accessible(
-        self, ros_api_url: str, keycloak_config, http_session: requests.Session
+        self, ros_api_url: str, keycloak_config, cluster_config, http_session: requests.Session
     ):
         """Verify recommendations endpoint is accessible with JWT.
         
         Covers: FLPATH-3094
         """
-        auth_header = get_fresh_token(keycloak_config, http_session)
+        auth_header = get_fresh_auth_header(keycloak_config, http_session)
         if not auth_header:
             pytest.skip("Could not obtain fresh JWT token")
 
@@ -85,7 +67,7 @@ class TestRecommendationsAPI:
         ("container", "test-container"),
     ])
     def test_recommendations_accept_filter_parameters(
-        self, ros_api_url: str, keycloak_config, http_session: requests.Session,
+        self, ros_api_url: str, keycloak_config, cluster_config, http_session: requests.Session,
         filter_param: str, filter_value: str
     ):
         """Verify recommendations endpoint accepts filter query parameters.
@@ -94,7 +76,7 @@ class TestRecommendationsAPI:
         
         Expected: 200 OK with valid JSON response (data may be empty if no matches).
         """
-        auth_header = get_fresh_token(keycloak_config, http_session)
+        auth_header = get_fresh_auth_header(keycloak_config, http_session)
         if not auth_header:
             pytest.skip("Could not obtain fresh JWT token")
 
@@ -119,7 +101,7 @@ class TestRecommendationsAPI:
         )
 
     def test_recommendations_accept_multiple_filters(
-        self, ros_api_url: str, keycloak_config, http_session: requests.Session
+        self, ros_api_url: str, keycloak_config, cluster_config, http_session: requests.Session
     ):
         """Verify recommendations endpoint accepts multiple filter parameters.
         
@@ -127,7 +109,7 @@ class TestRecommendationsAPI:
         
         Expected: 200 OK with valid JSON response.
         """
-        auth_header = get_fresh_token(keycloak_config, http_session)
+        auth_header = get_fresh_auth_header(keycloak_config, http_session)
         if not auth_header:
             pytest.skip("Could not obtain fresh JWT token")
 
@@ -150,7 +132,7 @@ class TestRecommendationsAPI:
 
     @pytest.mark.parametrize("limit", [1, 5, 10, 50])
     def test_recommendations_pagination_limit(
-        self, ros_api_url: str, keycloak_config, http_session: requests.Session,
+        self, ros_api_url: str, keycloak_config, cluster_config, http_session: requests.Session,
         limit: int
     ):
         """Verify recommendations endpoint accepts limit parameter for pagination.
@@ -159,7 +141,7 @@ class TestRecommendationsAPI:
         
         Expected: 200 with data respecting limit, or 200 with empty data if no recommendations.
         """
-        auth_header = get_fresh_token(keycloak_config, http_session)
+        auth_header = get_fresh_auth_header(keycloak_config, http_session)
         if not auth_header:
             pytest.skip("Could not obtain fresh JWT token")
 
@@ -189,7 +171,7 @@ class TestRecommendationsAPI:
 
     @pytest.mark.parametrize("offset", [0, 5, 10])
     def test_recommendations_pagination_offset(
-        self, ros_api_url: str, keycloak_config, http_session: requests.Session,
+        self, ros_api_url: str, keycloak_config, cluster_config, http_session: requests.Session,
         offset: int
     ):
         """Verify recommendations endpoint accepts offset parameter for pagination.
@@ -198,7 +180,7 @@ class TestRecommendationsAPI:
         
         Expected: 200 with data (possibly empty if offset exceeds total count).
         """
-        auth_header = get_fresh_token(keycloak_config, http_session)
+        auth_header = get_fresh_auth_header(keycloak_config, http_session)
         if not auth_header:
             pytest.skip("Could not obtain fresh JWT token")
 
@@ -219,7 +201,7 @@ class TestRecommendationsAPI:
         )
 
     def test_recommendations_pagination_limit_and_offset(
-        self, ros_api_url: str, keycloak_config, http_session: requests.Session
+        self, ros_api_url: str, keycloak_config, cluster_config, http_session: requests.Session
     ):
         """Verify recommendations endpoint accepts both limit and offset for pagination.
         
@@ -227,7 +209,7 @@ class TestRecommendationsAPI:
         
         Expected: 200 with proper pagination metadata.
         """
-        auth_header = get_fresh_token(keycloak_config, http_session)
+        auth_header = get_fresh_auth_header(keycloak_config, http_session)
         if not auth_header:
             pytest.skip("Could not obtain fresh JWT token")
 
@@ -260,7 +242,7 @@ class TestRecommendationsAPI:
             )
 
     def test_recommendations_response_structure(
-        self, ros_api_url: str, keycloak_config, http_session: requests.Session
+        self, ros_api_url: str, keycloak_config, cluster_config, http_session: requests.Session
     ):
         """Verify recommendations response has expected structure.
         
@@ -268,7 +250,7 @@ class TestRecommendationsAPI:
         
         Expected: 200 OK with JSON containing data array and pagination metadata.
         """
-        auth_header = get_fresh_token(keycloak_config, http_session)
+        auth_header = get_fresh_auth_header(keycloak_config, http_session)
         if not auth_header:
             pytest.skip("Could not obtain fresh JWT token")
 

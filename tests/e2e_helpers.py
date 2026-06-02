@@ -465,6 +465,18 @@ def get_application_type_id(
     return None
 
 
+def _is_transient_rbac_dependency_error(response_body: str) -> bool:
+    """True when Koku returns 424 because RBAC was briefly unreachable (rollout, etc.)."""
+    lower = response_body.lower()
+    return (
+        "rbac unavailable" in lower
+        or "failed dependency" in lower
+        or "cost-onprem-rbac-api" in lower
+        or "connection refused" in lower
+        or "max retries exceeded" in lower
+    )
+
+
 def register_source(
     namespace: str,
     pod: str,
@@ -475,7 +487,7 @@ def register_source(
     source_name: Optional[str] = None,
     bucket: str = DEFAULT_S3_BUCKET,
     container: str = "ingress",
-    max_retries: int = 5,
+    max_retries: int = 8,
     initial_retry_delay: int = 5,
 ) -> SourceRegistration:
     """Register a source in Koku Sources API.
@@ -497,7 +509,7 @@ def register_source(
         source_name: Optional custom source name (defaults to e2e-source-{cluster_id[-8:]})
         bucket: S3 bucket name
         container: Container name in the pod (default: "ingress")
-        max_retries: Maximum number of retry attempts (default: 5)
+        max_retries: Maximum number of retry attempts (default: 8)
         initial_retry_delay: Initial delay between retries in seconds (default: 5)
     
     Returns:
@@ -565,7 +577,10 @@ def register_source(
             # 5xx errors might be transient, retry
             if http_code.startswith("5"):
                 continue
-            # 4xx errors are not retryable - break and fail
+            # 424 Failed Dependency (e.g. RBAC pod restarting) is transient in lab CI.
+            if http_code == "424" and _is_transient_rbac_dependency_error(result):
+                continue
+            # Other 4xx errors are not retryable - break and fail
             break
         
         try:
@@ -662,9 +677,10 @@ def upload_with_retry(
     auth_header: Dict[str, str],
     max_retries: int = 3,
     retry_delay: int = 5,
+    timeout: int = 180,
 ) -> requests.Response:
     """Upload file with retry logic for transient errors.
-    
+
     Args:
         session: Requests session (should have verify=False for self-signed certs)
         url: Upload URL
@@ -672,10 +688,11 @@ def upload_with_retry(
         auth_header: Authorization header dict
         max_retries: Maximum number of retry attempts
         retry_delay: Base delay between retries (exponential backoff)
-    
+        timeout: Request timeout in seconds (default 180s for large files)
+
     Returns:
         Response object
-    
+
     Raises:
         RuntimeError: If all retries fail
     """
@@ -688,7 +705,7 @@ def upload_with_retry(
                     url,
                     files={"file": ("cost-mgmt.tar.gz", f, UPLOAD_CONTENT_TYPE)},
                     headers=auth_header,
-                    timeout=60,
+                    timeout=timeout,
                 )
             
             if response.status_code in [200, 201, 202]:

@@ -50,6 +50,15 @@ data:
     END
     \$\$;
 
+    -- RBAC User
+    DO \$\$
+    BEGIN
+      IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '$RBAC_USER') THEN
+        EXECUTE 'CREATE USER $RBAC_USER WITH PASSWORD ' || quote_literal('$RBAC_PASSWORD');
+      END IF;
+    END
+    \$\$;
+
     -- Koku User
     DO \$\$
     BEGIN
@@ -89,6 +98,15 @@ data:
     -- Kruize Database - owned by $KRUIZE_USER
     GRANT ALL PRIVILEGES ON DATABASE {{ .Values.database.kruize.name }} TO $KRUIZE_USER;
     ALTER DATABASE {{ .Values.database.kruize.name }} OWNER TO $KRUIZE_USER;
+
+    -- RBAC Database
+    SELECT 'CREATE DATABASE {{ .Values.database.rbac.name }}'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{{ .Values.database.rbac.name }}')
+    \gexec
+
+    -- RBAC Database - owned by $RBAC_USER
+    GRANT ALL PRIVILEGES ON DATABASE {{ .Values.database.rbac.name }} TO $RBAC_USER;
+    ALTER DATABASE {{ .Values.database.rbac.name }} OWNER TO $RBAC_USER;
 
     -- Koku Database - owned by $KOKU_USER
     GRANT ALL PRIVILEGES ON DATABASE {{ .Values.database.koku.name }} TO $KOKU_USER;

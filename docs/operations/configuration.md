@@ -7,6 +7,7 @@ Complete configuration reference for resource requirements, storage, and access 
 - [Storage Configuration](#storage-configuration)
 - [Access Points](#access-points)
 - [Configuration Values](#configuration-values)
+  - [RBAC Configuration](#rbac-configuration)
 - [Platform-Specific Configuration](#platform-specific-configuration)
 - [External Infrastructure (BYOI)](#external-infrastructure-byoi)
 - [Security Configuration](#security-configuration)
@@ -307,10 +308,11 @@ oc get route cost-onprem-ui -n cost-onprem         # UI (web interface)
 |-------|------|---------|---------|
 | `cost-onprem-main` | `/` | ROS API | ROS status and recommendations |
 | `cost-onprem-api` | `/api/cost-management` | Envoy → Koku API | Cost Management reports and Sources API (JWT validated) |
+| `cost-onprem-api` | `/api/rbac` | Envoy → RBAC API | IAM role/group management (JWT validated) |
 | `cost-onprem-ingress` | `/api/ingress` | Envoy → Ingress | File uploads (JWT validated) |
 | `cost-onprem-ui` | (default) | UI | Web interface (reencrypt TLS) |
 
-> **Note**: The `cost-onprem-api` and `cost-onprem-ingress` routes pass through the Envoy ingress proxy for JWT authentication. Sources API is accessible via `/api/cost-management/v1/sources/` through the `cost-onprem-api` route.
+> **Note**: The `cost-onprem-api` and `cost-onprem-ingress` routes pass through the Envoy ingress proxy for JWT authentication. Sources API is accessible via `/api/cost-management/v1/sources/` and RBAC management via `/api/rbac/v1/` through the `cost-onprem-api` route.
 
 **Access Pattern:**
 ```bash
@@ -521,7 +523,6 @@ ros:
     port: 8000
     metricsPort: 9000
     pathPrefix: /api
-    rbacEnable: false
     logLevel: INFO
   processor:
     metricsPort: 9000
@@ -582,6 +583,89 @@ ui:
         cpu: "50m"
         memory: "64Mi"
 ```
+
+### RBAC Configuration
+
+```yaml
+# insights-rbac: RBAC v1 authorization backend for Koku.
+# Koku delegates all permission checks to this service via HTTP.
+# Deploys an API server (Gunicorn) and a Celery worker for async tasks.
+rbac:
+  image:
+    repository: quay.io/cloudservices/rbac
+    tag: "c2b9ccf"
+    pullPolicy: IfNotPresent
+
+  # API server
+  api:
+    replicas: 1             # Increase for HA (recommended: 2+)
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+
+  # Celery worker (async tasks)
+  worker:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 2Gi
+```
+
+> **Note**: RBAC environment variables (e.g. `PGSSLMODE`, `BYPASS_BOP_VERIFICATION`,
+> `ACCESS_CACHE_ENABLED`) are hardcoded in the `_helpers-rbac.tpl` commonEnv helper
+> and are not user-configurable via `values.yaml`. `PGSSLMODE` tracks
+> `database.server.sslMode` automatically.
+
+#### Koku RBAC Integration Variables
+
+These are set automatically by the Helm chart in `_helpers-koku.tpl`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RBAC_SERVICE_HOST` | `cost-onprem-rbac-api` | RBAC API service hostname |
+| `RBAC_SERVICE_PORT` | `8000` | RBAC API port |
+| `RBAC_SERVICE_PATH` | `/api/rbac/v1/` | RBAC API base path |
+| `RBAC_SERVICE_PROTOCOL` | `http` | Protocol (http/https) |
+| `ENHANCED_ORG_ADMIN` | `False` | **Must be False** — disables Koku's admin bypass so all auth flows through RBAC |
+
+> **Important**: `ENHANCED_ORG_ADMIN` must remain `False`. Setting it to `True` causes Koku to bypass RBAC entirely for users with `is_org_admin: true` in their identity header, which defeats the purpose of RBAC enforcement.
+
+#### ROS RBAC Integration Variables
+
+RBAC is **always enabled** on the ROS API — there is no `values.yaml` toggle. The following environment variables are hardcoded in the ROS API deployment template:
+
+| Variable | Value | Description |
+|----------|-------|-------------|
+| `RBAC_ENABLE` | `true` (hardcoded) | Activates the RBAC middleware in the ROS Go backend |
+| `RBACHOST` | `<release>-rbac-api.<namespace>.svc.cluster.local` | RBAC API service hostname (from `cost-onprem.rbac.serviceHost` helper) |
+| `RBACPORT` | `8000` | RBAC API port (from `cost-onprem.rbac.service.port` helper) |
+| `RBACPROTOCOL` | `http` | Protocol for RBAC communication |
+
+The ROS API pod includes a `wait-for-rbac` init container that blocks startup until the RBAC service is accepting TCP connections, preventing authorization errors during the startup race.
+
+> **Note**: Unlike Koku (which uses `RBAC_SERVICE_*` prefixed variables), ROS uses uppercase unprefixed names (`RBACHOST`, `RBACPORT`, `RBACPROTOCOL`) due to how the Go Viper configuration library maps struct fields to environment variables via `AutomaticEnv()`.
+
+#### RBAC Internal Variables (set automatically)
+
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `V2_BOOTSTRAP_TENANT` | `True` | Enables TenantMapping creation for V1/V2 compatibility |
+| `SYSTEM_DEFAULT_ROOT_WORKSPACE_ROLE_UUID` | Placeholder UUID | Required by V2 bootstrap code path (Kessel) |
+| `SYSTEM_DEFAULT_TENANT_ROLE_UUID` | Placeholder UUID | Required by V2 bootstrap code path |
+| `SYSTEM_ADMIN_ROOT_WORKSPACE_ROLE_UUID` | Placeholder UUID | Required by V2 bootstrap code path |
+| `SYSTEM_ADMIN_TENANT_ROLE_UUID` | Placeholder UUID | Required by V2 bootstrap code path |
+
+These placeholder UUIDs are required to prevent `ValueError` during tenant bootstrap. They will be removable once the Kessel code path is gated in upstream `insights-rbac`.
+
+For detailed RBAC setup, user management, and troubleshooting, see the [RBAC Setup and Operations Guide](rbac-setup.md).
 
 ### Environment-Specific Values Files
 
@@ -744,24 +828,80 @@ Use an existing Redis-compatible cache instead of the bundled Valkey Deployment.
 
 1. A Redis 7+ or Valkey 8+ instance accessible from the OpenShift cluster
 2. (Optional) Authentication credentials if the instance is password-protected
+3. (Optional) TLS certificate if the instance uses encrypted connections
+
+**Required Redis configuration:**
+- `maxmemory-policy`: `allkeys-lru` (recommended) — Koku uses Redis for caching and as a Celery broker; LRU eviction prevents OOM
+- Persistence: Recommended for Celery result backend reliability (RDB snapshots or AOF), but not strictly required
+- Redis 7+ or Valkey 8+ for compatibility with the redis-py client
 
 **Configuration:**
 
 ```yaml
-# values.yaml
+# values.yaml — Basic external Redis with password auth
 valkey:
   deploy: false
   host: "my-redis.example.com"
   port: 6379
   auth:
     enabled: true
-    secretName: "my-redis-credentials"  # Secret with key: redis-password
+    secretName: "my-redis-credentials"  # Secret with keys: redis-password, redis-username (optional)
+```
+
+```yaml
+# values.yaml — External Redis with password auth + TLS
+valkey:
+  deploy: false
+  host: "my-redis.example.com"
+  port: 6380
+  auth:
+    enabled: true
+    secretName: "my-redis-credentials"  # Secret with keys: redis-password, redis-username (optional)
+  tls:
+    enabled: true
+    caCertSecretName: "my-redis-ca"     # Secret with key: ca.crt
+```
+
+```yaml
+# values.yaml — External Redis with TLS only (no password)
+valkey:
+  deploy: false
+  host: "my-redis.example.com"
+  port: 6380
+  tls:
+    enabled: true
+    caCertSecretName: ""  # Empty = TLS without certificate verification
 ```
 
 When `valkey.deploy: false`:
 - The chart skips the Valkey Deployment, Service, and PVC
 - Koku and Celery components connect to the external Redis host
-- If `auth.enabled`, a `REDIS_PASSWORD` environment variable is injected into all consumers (requires `auth.secretName`)
+- If `auth.enabled`, `REDIS_PASSWORD` (and optionally `REDIS_USERNAME`) environment variables are injected into all consumers (requires `auth.secretName`)
+- If `tls.enabled`, `REDIS_SSL=True` is set and the connection uses `rediss://` scheme
+- If `tls.caCertSecretName` is provided, the CA certificate is mounted at `/etc/redis-tls/ca.crt` and certificate verification is enforced (`ssl.CERT_REQUIRED`); without it, TLS is used but certificates are not verified (`ssl.CERT_NONE`)
+
+**Creating the auth Secret:**
+
+```bash
+# Password only (default Redis user):
+kubectl create secret generic my-redis-credentials \
+  --from-literal=redis-password='YOUR_REDIS_PASSWORD' \
+  -n cost-onprem
+
+# Password + username (Redis 6+ ACL authentication):
+kubectl create secret generic my-redis-credentials \
+  --from-literal=redis-password='YOUR_REDIS_PASSWORD' \
+  --from-literal=redis-username='YOUR_REDIS_USERNAME' \
+  -n cost-onprem
+```
+
+**Creating the TLS CA cert Secret:**
+
+```bash
+kubectl create secret generic my-redis-ca \
+  --from-file=ca.crt=/path/to/redis-ca.crt \
+  -n cost-onprem
+```
 
 **Consumers:** Koku API, MASU, Kafka Listener, Migration Job, Celery Beat, and all Celery Workers. ROS components do not use Valkey.
 

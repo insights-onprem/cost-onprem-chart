@@ -25,6 +25,7 @@ spec:
 
       initContainers:
       {{- include "cost-onprem.koku.initContainer.combineCA" . | nindent 6 }}
+      {{- include "cost-onprem.initContainer.waitForValkey" . | nindent 6 }}
       # NOTE: Migrations are now handled by a pre-upgrade/pre-install Helm Job
       # See: templates/cost-management/jobs/migration.yaml
 

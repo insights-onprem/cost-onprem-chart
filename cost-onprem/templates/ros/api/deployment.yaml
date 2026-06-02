@@ -28,6 +28,7 @@ spec:
         {{- if .Values.kafka.bootstrapServers }}
         {{- include "cost-onprem.initContainer.waitForKafka" . | nindent 8 }}
         {{- end }}
+        {{- include "cost-onprem.initContainer.waitForRbac" . | nindent 8 }}
       containers:
         # ROS API - receives pre-authenticated traffic from centralized gateway
         # Gateway validates JWT and injects X-Rh-Identity header
@@ -55,7 +56,13 @@ spec:
             - name: CLOWDER_ENABLED
               value: "false"
             - name: RBAC_ENABLE
-              value: {{ .Values.ros.api.rbacEnabled | quote }}
+              value: "true"
+            - name: RBACHOST
+              value: {{ include "cost-onprem.rbac.serviceHost" . | quote }}
+            - name: RBACPORT
+              value: {{ include "cost-onprem.rbac.service.port" . | quote }}
+            - name: RBACPROTOCOL
+              value: "http"
             - name: DB_POOL_SIZE
               value: {{ .Values.ros.api.dbPoolSize | quote }}
             - name: DB_MAX_OVERFLOW

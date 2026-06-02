@@ -10,6 +10,8 @@ Complete installation methods, prerequisites, and upgrade procedures for the Cos
 - [OpenShift Prerequisites](#openshift-prerequisites)
 - [Upgrade Procedures](#upgrade-procedures)
 - [Verification](#verification)
+  - [RBAC Verification](#rbac-verification)
+  - [Post-Install: RBAC User Setup](#post-install-rbac-user-setup)
 - [Resource Requirements by Component](#resource-requirements-by-component)
 - [E2E Validation (OCP Dataflow)](#e2e-validation-ocp-dataflow)
 - [Troubleshooting Installation](#troubleshooting-installation)
@@ -403,6 +405,147 @@ helm install cost-onprem ./cost-onprem \
 
 The chart requires S3-compatible object storage. ODF is **not required** — any S3 provider works. For full configuration details, see the [Storage Configuration](configuration.md#storage-configuration) section.
 
+#### AWS S3 Installation
+
+For production deployments using AWS S3, the install script provides comprehensive support with automatic configuration, security best practices, and enterprise-grade reliability features.
+
+**Prerequisites:**
+- AWS account with S3 access
+- IAM user with appropriate S3 permissions (see [IAM Policy Requirements](#aws-s3-iam-policy-requirements) below)
+- Pre-existing S3 buckets (optional - can be created automatically)
+
+**Installation Methods:**
+
+**Method 1: Automatic Bucket Creation (Recommended)**
+
+The install script can automatically create and configure S3 buckets:
+
+```bash
+# Set AWS credentials and region
+export S3_ENDPOINT=s3.us-east-1.amazonaws.com
+export S3_REGION=us-east-1
+export S3_ACCESS_KEY=AKIA...
+export S3_SECRET_KEY=wJal...
+
+# Optional: Use globally unique bucket prefixes
+export S3_BUCKET_PREFIX=mycompany-costonprem-prod
+
+# Install with automatic bucket setup
+./scripts/install-helm-chart.sh
+```
+
+The script will:
+- Validate AWS endpoint and region consistency
+- Create three buckets: `${PREFIX}-insights-upload-perma`, `${PREFIX}-koku-bucket`, `${PREFIX}-ros-data`
+- Configure bucket versioning and lifecycle policies
+- Generate secure Kubernetes secrets
+- Auto-enable SSL verification for AWS endpoints
+
+**Method 2: Pre-existing Buckets**
+
+If you have existing S3 buckets:
+
+```bash
+# Set AWS configuration
+export S3_ENDPOINT=s3.us-east-1.amazonaws.com
+export S3_REGION=us-east-1
+export S3_ACCESS_KEY=AKIA...
+export S3_SECRET_KEY=wJal...
+
+# Specify exact bucket names
+export S3_BUCKET_INGRESS=my-existing-upload-bucket
+export S3_BUCKET_KOKU=my-existing-cost-bucket
+export S3_BUCKET_ROS=my-existing-ros-bucket
+
+# Install
+./scripts/install-helm-chart.sh
+```
+
+**Environment Variables Reference:**
+
+| Variable | Description | Example | Required |
+|----------|-------------|---------|----------|
+| `S3_ENDPOINT` | AWS S3 endpoint | `s3.us-east-1.amazonaws.com` | Yes |
+| `S3_REGION` | AWS region for SigV4 auth | `us-east-1` | Yes |
+| `S3_ACCESS_KEY` | AWS access key ID | `AKIA...` | Yes |
+| `S3_SECRET_KEY` | AWS secret access key | `wJal...` | Yes |
+| `S3_BUCKET_PREFIX` | Prefix for auto-created buckets | `mycompany-prod` | No |
+| `S3_BUCKET_INGRESS` | Custom ingress bucket name | `my-upload-bucket` | No |
+| `S3_BUCKET_KOKU` | Custom cost data bucket name | `my-cost-bucket` | No |
+| `S3_BUCKET_ROS` | Custom ROS data bucket name | `my-ros-bucket` | No |
+| `S3_VERIFY_SSL` | Enable SSL verification | `true` (auto-enabled) | No |
+
+**AWS S3 IAM Policy Requirements:**
+
+Your IAM user needs the following permissions:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CostOnPremS3Access",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:DeleteBucket",
+        "s3:ListBucket",
+        "s3:GetBucketLocation",
+        "s3:GetBucketVersioning",
+        "s3:PutBucketVersioning",
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:GetObjectVersion",
+        "s3:DeleteObjectVersion"
+      ],
+      "Resource": [
+        "arn:aws:s3:::${bucket-prefix}*",
+        "arn:aws:s3:::${bucket-prefix}*/*"
+      ]
+    }
+  ]
+}
+```
+
+Replace `${bucket-prefix}` with your actual bucket prefix or specific bucket names.
+
+**Security Best Practices:**
+
+1. **IAM User**: Create a dedicated IAM user for Cost Management (don't use root or admin credentials)
+2. **Least Privilege**: Use the minimal IAM policy shown above
+3. **Bucket Prefixes**: Use unique prefixes to avoid naming conflicts (`S3_BUCKET_PREFIX=myorg-costonprem-prod`)
+4. **SSL Verification**: Always enabled by default for AWS endpoints
+5. **Credential Management**: Store credentials in external secret managers (Vault, Sealed Secrets) for production
+
+**Regional Considerations:**
+
+- Use regional endpoints for better performance: `s3.us-east-1.amazonaws.com`
+- Ensure your S3 buckets and OpenShift cluster are in the same AWS region when possible
+- The chart supports all AWS regions including GovCloud and China regions
+
+**Troubleshooting AWS S3:**
+
+```bash
+# Verify AWS credentials and region
+aws s3 ls --region us-east-1
+
+# Test bucket access
+aws s3 ls s3://your-bucket-name --region us-east-1
+
+# Check endpoint connectivity
+curl -I https://s3.us-east-1.amazonaws.com
+
+# Validate bucket names (DNS compliance)
+echo "my-bucket-name" | grep -E '^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$'
+```
+
+Common issues:
+- **SigV4 Authentication Failures**: Ensure `S3_REGION` matches your bucket region
+- **Bucket Naming**: AWS S3 buckets must be DNS-compliant (lowercase, no underscores)
+- **Access Denied**: Verify IAM permissions and bucket policies
+- **SSL Verification**: Automatically enabled for AWS endpoints, disable with `S3_VERIFY_SSL=false` if needed
+
 **Supported backends:**
 
 | Backend | Use Case | Auto-Detected |
@@ -739,6 +882,80 @@ oc rsh -n cost-onprem deployment/cost-onprem-ingress -- \
   aws s3 ls --endpoint-url https://<your-s3-endpoint>
 ```
 
+### RBAC Verification
+
+```bash
+# Verify RBAC migration job completed successfully
+kubectl get jobs -n cost-onprem | grep rbac-migration
+
+# Check RBAC API is running
+kubectl get pods -l app.kubernetes.io/component=rbac-api -n cost-onprem
+
+# Verify seeded roles exist
+RBAC_POD=$(kubectl get pod -l app.kubernetes.io/component=rbac-api -n cost-onprem -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -it $RBAC_POD -n cost-onprem -- \
+  python manage.py shell -c "from management.models import Role; roles = Role.objects.filter(name__startswith='Cost'); print(f'Cost roles: {[r.name for r in roles]}')"
+
+# Test RBAC API status endpoint
+kubectl exec -it $RBAC_POD -n cost-onprem -- \
+  curl -s http://localhost:8000/api/rbac/v1/status/ | python3 -m json.tool
+
+# Verify Koku can reach RBAC
+KOKU_POD=$(kubectl get pod -l app.kubernetes.io/component=koku-api -n cost-onprem -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -it $KOKU_POD -n cost-onprem -- \
+  curl -s http://cost-onprem-rbac-api:8000/api/rbac/v1/status/
+
+# Verify ROS API started with RBAC enabled (wait-for-rbac init container should have completed)
+kubectl get pods -l app.kubernetes.io/component=ros-api -n cost-onprem -o jsonpath='{.items[0].status.initContainerStatuses[*].name}'
+# Expected output includes: wait-for-database wait-for-kafka wait-for-rbac
+
+# Verify ROS API has RBAC env vars injected
+ROS_POD=$(kubectl get pod -l app.kubernetes.io/component=ros-api -n cost-onprem -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -it $ROS_POD -n cost-onprem -- env | grep -E 'RBAC_ENABLE|RBACHOST|RBACPORT|RBACPROTOCOL'
+# Expected: RBAC_ENABLE=true, RBACHOST=..., RBACPORT=8000, RBACPROTOCOL=http
+```
+
+### Post-Install: RBAC User Setup
+
+After verifying the deployment, configure user access so that API calls are authorized (without RBAC permissions, authenticated users receive 403 on all endpoints):
+
+**Option A: Automatic bootstrap via Helm (recommended)**
+
+If you created a Keycloak user with `deploy-rhbk.sh` (or manually with matching `org_id` / `account_number` attributes), enable the bootstrap hook to grant Cost Administrator automatically:
+
+```bash
+helm upgrade cost-onprem ./cost-onprem -n cost-onprem \
+  --set rbac.bootstrapAdmin.enabled=true
+```
+
+The defaults (`username=admin`, `orgId=org1234567`, `accountNumber=7890123`) match the user created by `deploy-rhbk.sh`. Override them if your Keycloak user has different attributes:
+
+```bash
+helm upgrade cost-onprem ./cost-onprem -n cost-onprem \
+  --set rbac.bootstrapAdmin.enabled=true \
+  --set rbac.bootstrapAdmin.username=alice \
+  --set rbac.bootstrapAdmin.orgId=myorg123 \
+  --set rbac.bootstrapAdmin.accountNumber=9999999
+```
+
+The hook is idempotent — safe to leave enabled across upgrades.
+
+**Option B: Manual sync script**
+
+```bash
+NAMESPACE=cost-onprem ./scripts/sync-rbac-admin.sh
+```
+
+See `./scripts/sync-rbac-admin.sh --help` for custom username/org options.
+
+**Next steps:**
+
+1. **Create additional users in Keycloak** with `org_id` and `account_number` attributes
+2. **Assign roles via RBAC groups** — see the [RBAC Setup Guide](rbac-setup.md) for detailed instructions
+3. **Flush caches** after making permission changes for immediate effect
+
+For a complete walkthrough of RBAC configuration, user management, and troubleshooting, see the [RBAC Setup and Operations Guide](rbac-setup.md).
+
 ---
 
 ## Resource Requirements by Component
@@ -753,7 +970,9 @@ oc rsh -n cost-onprem deployment/cost-onprem-ingress -- \
 |-----------|------|-------------|-----------|----------------|--------------|
 | **PostgreSQL** | 1 | 500m | 1000m | 1Gi | 2Gi |
 | **Valkey** | 1 | 100m | 500m | 256Mi | 512Mi |
-| **Subtotal** | **2** | **600m** | **1.5 cores** | **1.25 GB** | **2.5 GB** |
+| **RBAC API** | 1 | 200m | 500m | 512Mi | 1Gi |
+| **RBAC Worker** | 1 | 100m | 500m | 512Mi | 2Gi |
+| **Subtotal** | **4** | **900m** | **2.5 cores** | **2.25 GB** | **5.5 GB** |
 
 ### Application Components
 

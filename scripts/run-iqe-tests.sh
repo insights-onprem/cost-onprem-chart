@@ -295,6 +295,18 @@ else
     S3_USE_SSL="true"
 fi
 
+# Get Kafka bootstrap servers from Kafka CR (Strimzi)
+# The container runs inside the cluster so it can use the internal service name
+KAFKA_NAMESPACE=${KAFKA_NAMESPACE:-kafka}
+KAFKA_BOOTSTRAP=$(kubectl get kafka -n "$KAFKA_NAMESPACE" -o jsonpath='{.items[0].status.listeners[?(@.name=="plain")].bootstrapServers}' 2>/dev/null || echo "")
+if [ -z "$KAFKA_BOOTSTRAP" ]; then
+    # Fallback to service name
+    KAFKA_BOOTSTRAP="cost-onprem-kafka-kafka-bootstrap.${KAFKA_NAMESPACE}.svc:9092"
+fi
+# Parse hostname and port
+KAFKA_HOSTNAME="${KAFKA_BOOTSTRAP%%:*}"
+KAFKA_PORT="${KAFKA_BOOTSTRAP##*:}"
+
 # Get Keycloak credentials from the auth secret
 # Try uppercase keys first (keycloak-client-secret-*), then lowercase (cost-management-auth-secret)
 KEYCLOAK_CLIENT_ID=$(kubectl get secret "$KEYCLOAK_SECRET_NAME" -n "$KEYCLOAK_SECRET_NS" -o jsonpath='{.data.CLIENT_ID}' 2>/dev/null | base64 -d || \
@@ -308,15 +320,16 @@ KEYCLOAK_CLIENT_SECRET=$(kubectl get secret "$KEYCLOAK_SECRET_NAME" -n "$KEYCLOA
 KEYCLOAK_HOST=$(kubectl get route keycloak -n keycloak -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
 OAUTH_URL="https://${KEYCLOAK_HOST}/realms/kubernetes/protocol/openid-connect"
 
-# Get org_id from Keycloak test user (or use default)
-ORG_ID="org1234567"  # Default value
+# Get org_id and account_number from Keycloak admin user.
+# Canonical source of truth: jwtAuth.realmUsers in values.yaml — these values
+# are provisioned into Keycloak by deploy-rhbk.sh and read back here dynamically.
+ORG_ID="org1234567"
+ACCOUNT_NUMBER="7890123"
 if [ -n "$KEYCLOAK_HOST" ]; then
-    # Get admin credentials
     KEYCLOAK_ADMIN_USER=$(kubectl get secret keycloak-initial-admin -n keycloak -o jsonpath='{.data.username}' 2>/dev/null | base64 -d || echo "")
     KEYCLOAK_ADMIN_USER="${KEYCLOAK_ADMIN_USER:-admin}"
     KEYCLOAK_ADMIN_PASS=$(kubectl get secret keycloak-initial-admin -n keycloak -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || echo "")
     if [ -n "$KEYCLOAK_ADMIN_PASS" ]; then
-        # Get admin token
         ADMIN_TOKEN=$(curl -sk -X POST "https://${KEYCLOAK_HOST}/realms/master/protocol/openid-connect/token" \
             -d "client_id=admin-cli" \
             -d "grant_type=password" \
@@ -324,14 +337,109 @@ if [ -n "$KEYCLOAK_HOST" ]; then
             -d "password=${KEYCLOAK_ADMIN_PASS}" 2>/dev/null | jq -r '.access_token // empty')
         
         if [ -n "$ADMIN_TOKEN" ]; then
-            # Get test user's org_id
-            USER_ORG_ID=$(curl -sk "https://${KEYCLOAK_HOST}/admin/realms/kubernetes/users?username=test&exact=true" \
-                -H "Authorization: Bearer ${ADMIN_TOKEN}" 2>/dev/null | jq -r '.[0].attributes.org_id[0] // empty')
-            if [ -n "$USER_ORG_ID" ]; then
-                ORG_ID="$USER_ORG_ID"
-            fi
+            # Find the first user with the org-admin realm role
+            admin_username="admin"
+            role_members=$(curl -sk "https://${KEYCLOAK_HOST}/admin/realms/kubernetes/roles/org-admin/users" \
+                -H "Authorization: Bearer ${ADMIN_TOKEN}" 2>/dev/null)
+            detected_admin=$(echo "$role_members" | jq -r '.[0].username // empty')
+            [ -n "$detected_admin" ] && admin_username="$detected_admin"
+
+            USER_JSON=$(curl -sk "https://${KEYCLOAK_HOST}/admin/realms/kubernetes/users?username=${admin_username}&exact=true" \
+                -H "Authorization: Bearer ${ADMIN_TOKEN}" 2>/dev/null)
+            USER_ORG_ID=$(echo "$USER_JSON" | jq -r '.[0].attributes.org_id[0] // empty')
+            USER_ACCT=$(echo "$USER_JSON" | jq -r '.[0].attributes.account_number[0] // empty')
+            [ -n "$USER_ORG_ID" ] && ORG_ID="$USER_ORG_ID"
+            [ -n "$USER_ACCT" ] && ACCOUNT_NUMBER="$USER_ACCT"
         fi
     fi
+fi
+
+# Ensure the IQE public Keycloak client exists (created via admin API, not realm import).
+# IQE's iqe_jwt OIDCAuth.from_basic() does not send client_secret, so password-grant
+# requires a public client.
+ensure_iqe_keycloak_client() {
+    local kc_host="$1"
+    local token="$2"
+    local realm="${REALM_NAME:-kubernetes}"
+    local client_id="cost-management-iqe"
+    local ui_client_id="${COST_MGMT_UI_CLIENT_ID:-cost-management-ui}"
+
+    # Check if client already exists
+    local existing
+    existing=$(curl -sk "https://${kc_host}/admin/realms/${realm}/clients?clientId=${client_id}" \
+        -H "Authorization: Bearer ${token}" 2>/dev/null | jq -r '.[0].id // empty')
+    if [ -n "$existing" ]; then
+        echo "✓ IQE Keycloak client '${client_id}' already exists (id: ${existing})"
+        return 0
+    fi
+
+    echo "Creating IQE public Keycloak client '${client_id}'..."
+    local http_code
+    http_code=$(curl -sk -o /dev/null -w "%{http_code}" -X POST \
+        "https://${kc_host}/admin/realms/${realm}/clients" \
+        -H "Authorization: Bearer ${token}" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "clientId": "'"${client_id}"'",
+            "name": "Cost Management IQE Test Client",
+            "description": "Public client for IQE password-grant authentication",
+            "enabled": true,
+            "serviceAccountsEnabled": false,
+            "standardFlowEnabled": false,
+            "directAccessGrantsEnabled": true,
+            "implicitFlowEnabled": false,
+            "publicClient": true,
+            "protocol": "openid-connect",
+            "defaultClientScopes": ["openid", "api.console", "profile", "email"],
+            "protocolMappers": [
+                {
+                    "name": "aud-mapper-cost-management-ui",
+                    "protocol": "openid-connect",
+                    "protocolMapper": "oidc-audience-mapper",
+                    "config": {
+                        "included.client.audience": "'"${ui_client_id}"'",
+                        "id.token.claim": "true",
+                        "access.token.claim": "true"
+                    }
+                },
+                {
+                    "name": "org-id-mapper",
+                    "protocol": "openid-connect",
+                    "protocolMapper": "oidc-usermodel-attribute-mapper",
+                    "config": {
+                        "user.attribute": "org_id",
+                        "claim.name": "org_id",
+                        "access.token.claim": "true",
+                        "id.token.claim": "true",
+                        "jsonType.label": "String",
+                        "userinfo.token.claim": "false"
+                    }
+                },
+                {
+                    "name": "account-number-mapper",
+                    "protocol": "openid-connect",
+                    "protocolMapper": "oidc-usermodel-attribute-mapper",
+                    "config": {
+                        "user.attribute": "account_number",
+                        "claim.name": "account_number",
+                        "access.token.claim": "true",
+                        "id.token.claim": "true",
+                        "jsonType.label": "String",
+                        "userinfo.token.claim": "false"
+                    }
+                }
+            ]
+        }' 2>/dev/null)
+
+    if [ "$http_code" = "201" ]; then
+        echo "✓ IQE Keycloak client '${client_id}' created"
+    else
+        echo "WARNING: Failed to create IQE client (HTTP ${http_code}). IQE password-grant tests may fail."
+    fi
+}
+
+if [ -n "${ADMIN_TOKEN:-}" ] && [ -n "${KEYCLOAK_HOST:-}" ]; then
+    ensure_iqe_keycloak_client "$KEYCLOAK_HOST" "$ADMIN_TOKEN"
 fi
 
 # Get Koku API route hostname (external access)
@@ -349,6 +457,7 @@ echo "  MASU (in-cluster): ${MASU_HOSTNAME}:${MASU_PORT}"
 echo "  S3 Endpoint: ${S3_ENDPOINT}"
 echo "  S3 Port: ${S3_PORT} (SSL: ${S3_USE_SSL})"
 echo "  S3 Buckets: koku=${S3_BUCKET_NAME}, ros=${S3_ROS_BUCKET}"
+echo "  Kafka: ${KAFKA_BOOTSTRAP}"
 echo "  OAuth URL: ${OAUTH_URL}"
 echo "  Keycloak Client ID: ${KEYCLOAK_CLIENT_ID}"
 
@@ -359,7 +468,7 @@ if [ -z "$KOKU_HOSTNAME" ]; then
 fi
 
 if [ -z "$KEYCLOAK_CLIENT_SECRET" ]; then
-    echo "WARNING: Could not extract Keycloak client secret. Authentication may fail."
+    echo "WARNING: Could not extract Keycloak operator client secret. Authentication may fail."
 fi
 
 # Check if cluster has pull secret for the IQE image registry
@@ -615,6 +724,7 @@ spec:
           -k "\${IQE_FILTER}" \
           -vv \
           --junitxml=/results/junit.xml \
+          -o junit_suite_name=iqe-cost-management-onprem \
           2>&1 | tee /results/test-output.log
       else
         iqe tests plugin cost_management \
@@ -622,6 +732,7 @@ spec:
           -m "${IQE_MARKER}" \
           -vv \
           --junitxml=/results/junit.xml \
+          -o junit_suite_name=iqe-cost-management-onprem \
           2>&1 | tee /results/test-output.log
       fi
       
@@ -709,9 +820,9 @@ spec:
     - name: DYNACONF_DEFAULT_USER
       value: "cost_onprem_user"
     - name: DYNACONF_users__cost_onprem_user__auth__username
-      value: "test"
+      value: "admin"
     - name: DYNACONF_users__cost_onprem_user__auth__password
-      value: "test"
+      value: "admin"
     - name: DYNACONF_users__cost_onprem_user__auth__jwt_grant_type
       value: "client_credentials"
     - name: DYNACONF_users__cost_onprem_user__auth__client_id
@@ -723,7 +834,7 @@ spec:
           key: CLIENT_SECRET
           optional: true
     - name: DYNACONF_users__cost_onprem_user__identity__account_number
-      value: "7890123"
+      value: "${ACCOUNT_NUMBER}"
     - name: DYNACONF_users__cost_onprem_user__identity__org_id
       value: "${ORG_ID}"
     
@@ -752,6 +863,16 @@ spec:
       value: "${S3_BUCKET_NAME}"
     - name: S3_ROS_BUCKET
       value: "${S3_ROS_BUCKET}"
+
+    # Kafka Configuration (for MQ plugin - ROS Kafka tests)
+    # DYNACONF reads these env vars to configure the broker for cost_onprem environment
+    # Note: lowercase after DYNACONF_BROKER__ preserves case in the config dict
+    - name: DYNACONF_BROKER__hostname
+      value: "${KAFKA_HOSTNAME}"
+    - name: DYNACONF_BROKER__port
+      value: "${KAFKA_PORT}"
+    - name: DYNACONF_BROKER__securityProtocol
+      value: "PLAINTEXT"
 ${NISE_VERSION_ENV}
     imagePullPolicy: Always
     resources:
