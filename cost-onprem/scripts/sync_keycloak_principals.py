@@ -129,9 +129,10 @@ class KeycloakClient:
         return members
 
     def get_subgroups(self, group_id):
-        """Fetch child groups of a parent group."""
+        """Fetch child groups of a parent group via the group representation."""
         self.ensure_authenticated()
-        return self._get(f"/groups/{urllib.parse.quote(group_id)}/children")
+        group = self._get(f"/groups/{urllib.parse.quote(group_id)}")
+        return group.get("subGroups", [])
 
 
 def sync(org_id, account_number, kc_users, admin_usernames, prune_orphans):

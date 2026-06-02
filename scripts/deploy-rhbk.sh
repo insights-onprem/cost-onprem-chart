@@ -1858,12 +1858,13 @@ create_org_groups() {
             echo_warning "  Sub-group creation returned HTTP $SUB_HTTP_CODE (may already exist)"
         fi
 
-        # Find the admin sub-group ID
-        local subgroups_response
-        subgroups_response=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/groups/$GROUP_ID/children" \
+        # Find the admin sub-group ID via the parent group representation
+        # (GET /groups/{id}/children is not supported in all RHBK versions)
+        local group_detail
+        group_detail=$(curl -sk -X GET "$KEYCLOAK_URL/admin/realms/$REALM_NAME/groups/$GROUP_ID" \
             -H "Authorization: Bearer $ACCESS_TOKEN" 2>/dev/null)
         local ADMIN_SG_ID
-        ADMIN_SG_ID=$(echo "$subgroups_response" | jq -r ".[] | select(.name==\"$ORG_ADMIN_SUBGROUP\") | .id // empty")
+        ADMIN_SG_ID=$(echo "$group_detail" | jq -r ".subGroups[] | select(.name==\"$ORG_ADMIN_SUBGROUP\") | .id // empty")
 
         # Assign users to this org group and admin sub-group
         local user_count

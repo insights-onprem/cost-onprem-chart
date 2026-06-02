@@ -162,8 +162,8 @@ class TestKeycloakClient:
         kc._token_acquired_at = __import__("time").monotonic()
         kc._token_expires_in = 300
 
-        children = [{"id": "sg1", "name": "org-admin"}]
-        with mock.patch("urllib.request.urlopen", return_value=_make_http_response(children)):
+        group_repr = {"id": "parent-group-id", "name": "org-org1", "subGroups": [{"id": "sg1", "name": "org-admin"}]}
+        with mock.patch("urllib.request.urlopen", return_value=_make_http_response(group_repr)):
             result = kc.get_subgroups("parent-group-id")
 
         assert len(result) == 1
