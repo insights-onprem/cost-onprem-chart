@@ -244,6 +244,10 @@ was not added.
 - Virtual machines report (1): Calculation mismatch
 - Date range negative tests (3): These actually pass consistently
 
+**Failures added (2026-06-02)** (timing-dependent, cost data processing):
+- Price list intervals (1): `assert 0.0 != 0` — cost data not yet processed
+- Price list recalc logic (1): Recalculation mismatch — `supplied=600.0, expected=0.0`
+
 **Filter**: `test_api_ocp_network_endpoint_date_range_end_negative or test_api_ocp_volume_endpoint_date_range_end_negative or test_api_ocp_tagging_endpoint_date_range_end_negative or test_api_ocp_virtual_machines_report_content or test_api_ocp_volume_deltas_monthly or test_api_ocp_currency_report_param or test_api_ocp_currency_compute or test_api_ocp_currency_memory or test_api_ocp_currency_volume or test_api_ocp_forecast_values or test_api_ocp_forecast_data_other_params or test_api_ocp_forecast_prediction_days`
 
 ---
@@ -410,7 +414,7 @@ SKIP_GPU_TESTS=false ./scripts/run-iqe-tests.sh --filter "test_api_ocp_gpu"
 | `SKIP_ROS_TESTS` | 3 | ✅ Resolved | — |
 | `SKIP_SOURCE_CRUD_TESTS` | 1 | ❌ Blocked | FLPATH-3423 |
 | `SKIP_TAG_RATES_TESTS` | 1 | ❌ Blocked | COST-7179 |
-| `SKIP_UNSTABLE_TESTS` | ~20 | ⚠️ Reclassified | COST-7179 |
+| `SKIP_UNSTABLE_TESTS` | ~22 | ⚠️ Reclassified | COST-7179 + timing |
 
 ---
 
