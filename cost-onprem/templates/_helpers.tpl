@@ -416,6 +416,92 @@ Kafka security protocol resolver (supports both internal and external Kafka)
 {{- end }}
 
 {{/*
+Kafka SASL environment variables (reusable across all Kafka-consuming deployments)
+Renders env var block for SASL authentication; no-op when kafka.sasl.mechanism is empty.
+Usage: {{ include "cost-onprem.kafka.saslEnv" . | nindent 12 }}
+*/}}
+{{- define "cost-onprem.kafka.saslEnv" -}}
+{{- if .Values.kafka.sasl.mechanism }}
+- name: KAFKA_SECURITY_PROTOCOL
+  value: {{ include "cost-onprem.kafka.securityProtocol" . | quote }}
+- name: KAFKA_SASL_MECHANISM
+  value: {{ .Values.kafka.sasl.mechanism | quote }}
+{{- if .Values.kafka.sasl.existingSecret }}
+- name: KAFKA_SASL_USERNAME
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.kafka.sasl.existingSecret | quote }}
+      key: username
+- name: KAFKA_SASL_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.kafka.sasl.existingSecret | quote }}
+      key: password
+{{- end }}
+{{- if .Values.kafka.tls.enabled }}
+- name: KAFKA_SSL_CA_LOCATION
+  value: "/etc/kafka/certs/ca.crt"
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+Kafka SASL environment variables for Ingress (uses INGRESS_* prefix)
+Usage: {{ include "cost-onprem.kafka.ingressSaslEnv" . | nindent 12 }}
+*/}}
+{{- define "cost-onprem.kafka.ingressSaslEnv" -}}
+{{- if .Values.kafka.sasl.mechanism }}
+- name: INGRESS_KAFKASECURITYPROTOCOL
+  value: {{ include "cost-onprem.kafka.securityProtocol" . | quote }}
+- name: INGRESS_SASLMECHANISM
+  value: {{ .Values.kafka.sasl.mechanism | quote }}
+{{- if .Values.kafka.sasl.existingSecret }}
+- name: INGRESS_KAFKAUSERNAME
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.kafka.sasl.existingSecret | quote }}
+      key: username
+- name: INGRESS_KAFKAPASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.kafka.sasl.existingSecret | quote }}
+      key: password
+{{- end }}
+{{- if .Values.kafka.tls.enabled }}
+- name: INGRESS_KAFKACA
+  value: "/etc/kafka/certs/ca.crt"
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+Kafka TLS CA certificate volume (mounts ca.crt from the referenced Secret)
+Usage: {{ include "cost-onprem.kafka.tlsVolume" . | nindent 8 }}
+*/}}
+{{- define "cost-onprem.kafka.tlsVolume" -}}
+{{- if and .Values.kafka.tls.enabled .Values.kafka.tls.caCertSecret }}
+- name: kafka-ca-cert
+  secret:
+    secretName: {{ .Values.kafka.tls.caCertSecret | quote }}
+    items:
+      - key: ca.crt
+        path: ca.crt
+{{- end }}
+{{- end }}
+
+{{/*
+Kafka TLS CA certificate volume mount
+Usage: {{ include "cost-onprem.kafka.tlsVolumeMount" . | nindent 12 }}
+*/}}
+{{- define "cost-onprem.kafka.tlsVolumeMount" -}}
+{{- if and .Values.kafka.tls.enabled .Values.kafka.tls.caCertSecret }}
+- name: kafka-ca-cert
+  mountPath: /etc/kafka/certs
+  readOnly: true
+{{- end }}
+{{- end }}
+
+{{/*
 Valkey fsGroup from values (install script sets valkey.securityContext.fsGroup on OpenShift from namespace annotations)
 */}}
 {{- define "cost-onprem.valkey.fsGroup" -}}

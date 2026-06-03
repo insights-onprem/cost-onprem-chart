@@ -49,6 +49,7 @@ spec:
             - name: cdapp-config
               mountPath: /cdapp
               readOnly: true
+            {{- include "cost-onprem.kafka.tlsVolumeMount" . | nindent 12 }}
           env:
             - name: CLOWDER_ENABLED
               value: "false"
@@ -84,6 +85,7 @@ spec:
               value: {{ include "cost-onprem.kafka.bootstrapServers" . | quote }}
             - name: KAFKA_SECURITY_PROTOCOL
               value: {{ include "cost-onprem.kafka.securityProtocol" . | quote }}
+            {{- include "cost-onprem.kafka.saslEnv" . | nindent 12 }}
             - name: KAFKA_CONSUMER_GROUP_ID
               value: {{ .Values.ros.recommendationPoller.kafkaConsumerGroupId | quote }}
             - name: KAFKA_AUTO_COMMIT
@@ -115,3 +117,4 @@ spec:
         - name: cdapp-config
           configMap:
             name: {{ include "cost-onprem.fullname" . }}-cdapp-config
+        {{- include "cost-onprem.kafka.tlsVolume" . | nindent 8 }}
