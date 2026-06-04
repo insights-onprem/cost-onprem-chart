@@ -296,8 +296,8 @@ def discover_and_sync(kc, org_group_prefix, org_admin_subgroup, prune_orphans):
 
         org_id_list = attrs.get("org_id", [])
         acct_list = attrs.get("account_number", [])
-        org_id = org_id_list[0] if org_id_list else ""
-        account_number = acct_list[0] if acct_list else ""
+        org_id = org_id_list[0] if org_id_list else None
+        account_number = acct_list[0] if acct_list else None
 
         if not org_id or not account_number:
             log.error("[%s] Group missing required attributes (org_id=%r, account_number=%r); skipping",

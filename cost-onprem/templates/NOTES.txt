@@ -82,7 +82,7 @@ Storage Classes:
 CronJob: {{ include "cost-onprem.rbac.keycloakSync.name" . }}
 Schedule: {{ .Values.rbac.keycloakSync.schedule }}
 Client ID: {{ .Values.rbac.keycloakSync.clientId }}
-Secret: {{ .Values.rbac.keycloakSync.clientSecretRef.name }}
+Client Secret K8s Secret: {{ .Values.rbac.keycloakSync.clientSecretRef.name }}
 
 Check sync status:
   oc get cronjob {{ include "cost-onprem.rbac.keycloakSync.name" . }} -n {{ $namespace }}
