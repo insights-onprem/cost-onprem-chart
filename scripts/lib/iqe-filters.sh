@@ -88,10 +88,8 @@ apply_profile() {
 #   SKIP_*_TESTS - Boolean to enable/disable the skip (default: true for blocked, false for optional)
 #   FILTER_* - Pytest -k expression to match tests in this group
 
-# --- GPU/MIG Tests (COST-7179) ---
-# Backend bug: completed_datetime never set when GPU data processing fails
-# ~90 tests affected
-SKIP_GPU_TESTS="${SKIP_GPU_TESTS:-true}"
+# --- GPU/MIG Tests ---
+SKIP_GPU_TESTS="${SKIP_GPU_TESTS:-false}"
 FILTER_GPU="ai_workloads or mig_workloads or distro or test_api_ocp_gpu or test_api_gpu or test_api_cost_model_ocp_gpu or test_api_cost_model_ocp_cost_gpu or test_api_ocp_resource_types_gpu or test_api_ocp_mig"
 
 # --- ROS Tests ---

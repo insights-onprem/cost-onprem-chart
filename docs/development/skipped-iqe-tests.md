@@ -104,7 +104,7 @@ comment on each test identifies the Jira ticket.
 
 | Blocker | Tests | Files |
 |---------|-------|-------|
-| COST-7179: GPU/MIG schema mismatch | ~27 functions | bucketing, cost reports, volume, VM, forecasting, currency, cost model, resource types, data ingest, source |
+| ~~COST-7179: GPU/MIG schema mismatch~~ | ~~~27 functions~~ | ~~bucketing, cost reports, volume, VM, forecasting, currency, cost model, resource types, data ingest, source~~ — **RESOLVED (Mar 2026)** |
 | COST-7179: `completed_datetime` timeout | ~3 functions | cost model (tag rates), order-by, cost distribution |
 | COST-7179: GPU/MIG data in `last-90-days` param | 2 param-level | `api_params.py` |
 | ~~FLPATH-3423: Source CRUD update~~ | ~~1 function~~ | ~~`test__i_source.py`~~ — **RESOLVED** |
@@ -133,29 +133,16 @@ Each group can be toggled independently with `SKIP_*` environment variables.
 
 ### GPU/MIG Tests (`SKIP_GPU_TESTS`)
 
-**Jira**: [COST-7179](https://issues.redhat.com/browse/COST-7179), [FLPATH-3429](https://redhat.atlassian.net/browse/FLPATH-3429)
-**Status**: Blocked — waiting for backend fix or FLPATH feature flag
-**Impact**: ~90 tests
+**Jira**: [COST-7179](https://issues.redhat.com/browse/COST-7179)
+**Status**: ✅ Resolved — COST-7179 closed March 2026, backend fix deployed
+**Impact**: ~90 tests (now enabled by default)
+**Validated**: 2026-06-08 — 187/187 tests passed
 
-**Problem**: Backend cannot process GPU/MIG data. NISE 5.3.6+ generates
-`mig_instance_uuid` column that the schema lacks, causing `ParquetReportProcessorError`
-in the listener. The Kafka offset is committed (no retry), making this a permanent failure.
+**History**: Backend previously could not process GPU/MIG data due to schema mismatch
+with `mig_instance_uuid` column. This was fixed in the backend (COST-7179 closed
+March 27, 2026).
 
-**Resolution path**: A FLPATH feature flag to gate GPU data generation/processing in
-on-prem environments may be more practical than a schema fix, since GPU/MIG is not
-a typical on-prem use case.
-
-**Mitigation (IQE plugin)**: `check_manifest_stalled()` and `check_processing_failed()`
-in `helpers.py` detect this within ~10s and call `pytest.fail()` with an actionable
-message. Without fail-fast, each stalled source blocks for 30+ min. With fail-fast
-enabled (branch `flpath-3369-updates-for-cost-onprem`), 17 stalled sources are
-handled in seconds rather than 8+ hours.
-
-**Filter**: `ai_workloads or mig_workloads or distro or test_api_ocp_gpu or test_api_gpu or test_api_cost_model_ocp_gpu or test_api_cost_model_ocp_cost_gpu or test_api_ocp_resource_types_gpu`
-
-> **Gap**: `test_api_ocp_mig_*` tests (MIG report endpoints) are not caught by
-> this filter. These return 404 since MIG reporting is not implemented. Consider
-> adding `test_api_ocp_mig` to the GPU filter.
+**Filter**: `ai_workloads or mig_workloads or distro or test_api_ocp_gpu or test_api_gpu or test_api_cost_model_ocp_gpu or test_api_cost_model_ocp_cost_gpu or test_api_ocp_resource_types_gpu or test_api_ocp_mig`
 
 ---
 
@@ -346,28 +333,23 @@ These groups were validated and are now included in profiles above `smoke`.
 
 | Ticket | Title | Impact | Status |
 |--------|-------|--------|--------|
-| [COST-7179](https://issues.redhat.com/browse/COST-7179) | GPU/MIG schema mismatch (`mig_instance_uuid`) | ~90 direct + ~100 cascade (order-by, cost-dist, unstable, data-intensive, 90-day) | Open — backend fix needed |
-| [FLPATH-3429](https://redhat.atlassian.net/browse/FLPATH-3429) | NISE GPU data feature flag for on-prem | Would unblock COST-7179 tests by gating GPU data generation | Open — proposed resolution |
+| [COST-7179](https://issues.redhat.com/browse/COST-7179) | GPU/MIG schema mismatch (`mig_instance_uuid`) | ~90 direct tests now passing | ✅ Resolved (Mar 2026) |
+| ~~[FLPATH-3429](https://redhat.atlassian.net/browse/FLPATH-3429)~~ | ~~NISE GPU data feature flag for on-prem~~ | ~~Would unblock COST-7179 tests~~ | N/A — COST-7179 fixed |
 | [FLPATH-3423](https://redhat.atlassian.net/browse/FLPATH-3423) | Source CRUD update: wrong API client + backend 500 | 1 test | ✅ Resolved (2026-04-29) |
 | [FLPATH-3369](https://redhat.atlassian.net/browse/FLPATH-3369) | IQE plugin updates for on-prem (fail-fast, fixtures, markers) | All on-prem tests benefit | In progress — branch active |
 | [FLPATH-2689](https://redhat.atlassian.net/browse/FLPATH-2689) | IQE unstable test investigation | ~20 tests — now reclassified as deterministic (COST-7179) | Resolved (2026-03-25) |
 
-### Key Insight: COST-7179 Is the Root Cause
+### Key Insight: COST-7179 Was the Root Cause (Now Resolved)
 
-The overwhelming majority of blocked/failing tests trace back to a single issue:
-**COST-7179** (GPU/MIG `mig_instance_uuid` schema mismatch). This cascades through:
+Many blocked/failing tests traced back to **COST-7179** (GPU/MIG `mig_instance_uuid`
+schema mismatch). This issue was **resolved in March 2026** when the backend fix
+was deployed.
 
-1. **Direct GPU/MIG tests** (~90): Tests that exercise GPU endpoints
-2. **Fixture cascade** (~2900 in full profile): Any source with GPU data stalls,
-   causing `completed_datetime` to never be set, which times out all dependent tests
-3. **Date-limited tests** (2 params): Extended data months expose the GPU failure
-   in additional manifests
-4. **Unstable tests** (~17): Were initially thought intermittent but are actually
-   deterministic failures from the GPU cascade
-5. **Data-intensive tests** (5): Large dataset tests include GPU data
-
-**Recommended resolution**: FLPATH feature flag to disable GPU/MIG data generation
-in NISE for on-prem environments, rather than requiring a backend schema migration.
+**Impact of resolution**:
+- **Direct GPU/MIG tests** (~90): Now enabled by default, validated 2026-06-08 (187/187 passed)
+- **Fixture cascade**: Sources with GPU data no longer stall
+- **Remaining blockers**: Some COST-7179-related tests (order-by, cost-distribution,
+  tag-rates) may still have issues and remain in separate skip groups pending validation
 
 ---
 
@@ -409,7 +391,7 @@ SKIP_GPU_TESTS=false ./scripts/run-iqe-tests.sh --filter "test_api_ocp_gpu"
 
 | Skip Group | Tests | Status | Blocked By |
 |------------|-------|--------|------------|
-| `SKIP_GPU_TESTS` | ~90 | ❌ Blocked | COST-7179 |
+| `SKIP_GPU_TESTS` | ~90 | ✅ Resolved | COST-7179 (closed Mar 2026) |
 | `SKIP_ORDER_BY_TESTS` | ~66 | ❌ Blocked | COST-7179 |
 | `SKIP_DATE_RANGE_TESTS` | ~228 | ❌ Data limit | — |
 | `SKIP_COST_DISTRIBUTION_TESTS` | 5 | ❌ Blocked | COST-7179 |
