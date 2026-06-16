@@ -199,7 +199,7 @@ cleanup_on_exit() {
     local exit_code=$?
     
     # Stop metrics collection if running
-    if [[ -n "${METRICS_COLLECTOR_PID}" ]]; then
+    if [[ -n "${METRICS_COLLECTOR_PID:-}" ]]; then
         echo ""
         echo -e "${YELLOW}[CLEANUP] Stopping metrics collection...${NC}"
         kill -TERM "${METRICS_COLLECTOR_PID}" 2>/dev/null || true
@@ -252,8 +252,8 @@ log_verbose() {
 ################################################################################
 
 source "${SCRIPT_DIR}/lib/listener-cpu.sh"
-source "${SCRIPT_DIR}/lib/perf-observability.sh"
-source "${SCRIPT_DIR}/lib/perf-testing.sh"
+[[ -f "${SCRIPT_DIR}/lib/perf-observability.sh" ]] && source "${SCRIPT_DIR}/lib/perf-observability.sh"
+[[ -f "${SCRIPT_DIR}/lib/perf-testing.sh" ]] && source "${SCRIPT_DIR}/lib/perf-testing.sh"
 
 ################################################################################
 # Utility functions
@@ -1179,7 +1179,9 @@ main() {
     setup_tls
     
     # Deploy observability after Helm chart so services exist for auto-detection
-    deploy_observability
+    if type deploy_observability &>/dev/null; then
+        deploy_observability
+    fi
     
     # Run tests and capture result (don't exit on failure)
     local test_result=0
