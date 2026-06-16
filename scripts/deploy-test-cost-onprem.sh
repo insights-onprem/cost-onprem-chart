@@ -39,9 +39,8 @@ set -euo pipefail
 #   Test options:
 #   --iqe-marker EXPR         Pytest marker for IQE tests (default: cost_ocp_on_prem)
 #   --iqe-profile PROFILE     IQE test profile: smoke, extended, stable, full (default: stable)
-#   --listener-cpu LIMIT      Temporarily set listener CPU limit (e.g., 500m, 1000m, 'max', or 'none' to disable).
-#                             Defaults to 'max' for --run-perf / --perf-only runs because the listener
-#                             is the principal processing bottleneck and 300m throttles all ingestion tests.
+#   --listener-cpu LIMIT      Temporarily set listener CPU limit (e.g., 500m, 1000m, 'max', or 'none' to skip).
+#                             Recommended: use 'max' for --run-perf / --perf-only runs.
 #   --include-ui              Include UI tests (requires Playwright system dependencies)
 #   --run-perf                Run performance tests after deployment (FLPATH-4036)
 #   --perf-profile PROFILE    Performance profile: baseline, small, medium, large (default: baseline)
@@ -673,7 +672,7 @@ setup_tls() {
 run_tests() {
     # Apply listener CPU boost early - benefits both chart tests and IQE tests
     # Note: CPU_BOOST_APPLIED is a global variable, cleanup is handled by trap
-    if [[ -n "${LISTENER_CPU_LIMIT}" ]]; then
+    if [[ -n "${LISTENER_CPU_LIMIT}" ]] && [[ "${LISTENER_CPU_LIMIT}" != "none" ]]; then
         if validate_cpu_limit "${LISTENER_CPU_LIMIT}"; then
             local effective_cpu_limit="${LISTENER_CPU_LIMIT}"
             if [[ "${LISTENER_CPU_LIMIT}" == "max" ]]; then
