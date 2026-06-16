@@ -243,9 +243,16 @@ run_pytest() {
 
     # Check if pytest-html is available and add HTML reporting if so
     local html_args=()
+    local html_report_path="reports/report.html"
+    
+    # For performance tests with unified output structure, use PERF_REPORTS_DIR
+    if [[ -n "${PERF_REPORTS_DIR:-}" ]]; then
+        html_report_path="${PERF_REPORTS_DIR}/report.html"
+    fi
+    
     if python -c "import pytest_html" 2>/dev/null; then
         log_info "pytest-html available, enabling HTML report"
-        html_args=("--html=reports/report.html" "--self-contained-html")
+        html_args=("--html=${html_report_path}" "--self-contained-html")
     else
         log_warning "pytest-html not available, skipping HTML report"
     fi
@@ -423,6 +430,8 @@ main() {
 
     # Build pytest arguments
     local pytest_args=()
+    local is_perf_test=false
+    local perf_reports_dir=""
 
     # Handle marker filtering
     # Performance tests are ALWAYS excluded unless explicitly requested via --performance flags
@@ -437,6 +446,7 @@ main() {
         if [[ "$marker_expr" == *"performance"* ]]; then
             # Performance tests - use marker as-is
             pytest_args+=("-m" "$marker_expr")
+            is_perf_test=true
         else
             # Non-performance tests - exclude performance marker
             pytest_args+=("-m" "($marker_expr) and not performance")
@@ -448,6 +458,24 @@ main() {
         # Default: run all tests EXCEPT performance tests
         # Performance tests must be explicitly requested via --performance flags
         pytest_args+=("-m" "not performance")
+    fi
+
+    # For performance tests with unified output structure, redirect reports to PERF_OUTPUT_DIR
+    if [[ "$is_perf_test" == "true" ]] && [[ -n "${PERF_OUTPUT_DIR:-}" ]] && [[ -n "${TEST_RUN_ID:-}" ]]; then
+        # PERF_OUTPUT_DIR should be an absolute path (set by deploy-test-cost-onprem.sh)
+        # If it's relative, make it absolute relative to PROJECT_ROOT
+        local perf_output_dir_resolved="${PERF_OUTPUT_DIR}"
+        if [[ "$perf_output_dir_resolved" != /* ]]; then
+            perf_output_dir_resolved="${PROJECT_ROOT}/${PERF_OUTPUT_DIR}"
+        fi
+        
+        perf_reports_dir="${perf_output_dir_resolved}/${TEST_RUN_ID}/reports"
+        mkdir -p "$perf_reports_dir"
+        # Override default junit-xml path from pytest.ini
+        pytest_args+=("--junit-xml=${perf_reports_dir}/junit.xml")
+        # Export for run_pytest to use for HTML report
+        export PERF_REPORTS_DIR="$perf_reports_dir"
+        log_info "Performance test reports will be saved to: ${perf_reports_dir}/"
     fi
 
     # Add any extra arguments
@@ -466,7 +494,12 @@ main() {
         log_error "Some tests failed (exit code: $exit_code)"
     fi
 
-    log_info "JUnit report: $REPORTS_DIR/junit.xml"
+    # Show appropriate reports location
+    if [[ -n "$perf_reports_dir" ]]; then
+        log_info "JUnit report: ${perf_reports_dir}/junit.xml"
+    else
+        log_info "JUnit report: $REPORTS_DIR/junit.xml"
+    fi
 
     exit $exit_code
 }

@@ -167,6 +167,12 @@ jobs:
           run_case         "--perf-only --perf-profile medium"         "--perf-only --perf-profile medium"        "Performance-only"      false   false  true   false
           run_case         "--perf-only --perf-profile large"          "--perf-only --perf-profile large"         "Performance-only"      false   false  true   false
 
+          # Performance suite selection
+          run_case         "--perf-only --perf-suite ros"              "--perf-only --perf-suite ros"              "Performance-only"      false   false  true   false
+          run_case         "--perf-only --perf-suite ros,ingestion"    "--perf-only --perf-suite ros,ingestion"    "Performance-only"      false   false  true   false
+          run_case         "--perf-only --perf-suite api"              "--perf-only --perf-suite api"              "Performance-only"      false   false  true   false
+          run_error_case   "--perf-only --perf-suite invalid"          "--perf-only --perf-suite invalid"          "Invalid --perf-suite value"
+
           # Chart version flags
           run_case         "--devel"                                   "--devel"                                  "Full deployment"       true    true   false  false
           run_case         "--chart-version 0.2.19"                    "--chart-version 0.2.19"                   "Full deployment"       true    true   false  false
