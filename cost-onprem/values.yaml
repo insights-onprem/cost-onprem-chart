@@ -241,6 +241,7 @@ costManagement:
   # ---------------------------------------------------------------------------
   listener:
     enabled: true
+    # On-prem: 1 replica to fit cluster constraints (SaaS uses 2)
     replicas: 1
     resources:
       # Aligned with SaaS Clowder configuration
@@ -947,7 +948,7 @@ jwtAuth:
       tag: "2.6"
       pullPolicy: IfNotPresent
 
-    replicas: 1
+    replicas: 2
     port: 9080
 
     # Route-level timeouts for the ingress (file upload) endpoint.
