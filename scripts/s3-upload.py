@@ -12,8 +12,8 @@ Usage:
 
 Environment:
     S3_ENDPOINT          – default --endpoint-url
-    S3_NO_VERIFY_SSL     – disable TLS verify (default: true)
-    S3_NO_SIGN_REQUEST   – anonymous access  (default: true)
+    S3_NO_VERIFY_SSL     – disable TLS verify (default: true for internal Minio/NooBaa)
+    S3_NO_SIGN_REQUEST   – anonymous access  (default: true for internal Minio/NooBaa)
     S3_UPLOAD_TIMEOUT    – per-file timeout in seconds (default: 60)
 """
 import os
@@ -129,6 +129,7 @@ def main():
     parser.add_argument("src", nargs="?")
     parser.add_argument("dst", nargs="?")
     parser.add_argument("--endpoint-url", default=os.environ.get("S3_ENDPOINT", ""))
+    # Defaults suit internal Minio/NooBaa; set to false for production S3
     parser.add_argument("--no-verify-ssl", action="store_true",
                         default=os.environ.get("S3_NO_VERIFY_SSL", "true").lower() == "true")
     parser.add_argument("--no-sign-request", action="store_true",

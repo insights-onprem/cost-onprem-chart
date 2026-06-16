@@ -39,7 +39,16 @@
 #   # Upload to S3-compatible storage (MinIO, Ceph, etc.)
 #   S3_BUCKET=perf-metrics S3_ENDPOINT=https://minio.example.com ./collect-metrics.sh --upload
 
-set -e
+set -euo pipefail
+
+# Cleanup background processes on exit
+PORTFORWARD_PID=""
+cleanup_on_exit() {
+    if [[ -n "$PORTFORWARD_PID" ]]; then
+        kill "$PORTFORWARD_PID" 2>/dev/null || true
+    fi
+}
+trap cleanup_on_exit EXIT
 
 # Configuration
 NAMESPACE=${NAMESPACE:-cost-onprem}
@@ -596,10 +605,7 @@ main() {
             ;;
     esac
     
-    # Cleanup port-forward if we started it
-    if [[ -n "$PORTFORWARD_PID" ]]; then
-        kill $PORTFORWARD_PID 2>/dev/null || true
-    fi
+    # Port-forward cleanup handled by EXIT trap
 }
 
 main "$@"

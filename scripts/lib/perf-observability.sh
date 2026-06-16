@@ -12,6 +12,8 @@
 [[ -n "${_PERF_OBSERVABILITY_SOURCED:-}" ]] && return 0
 _PERF_OBSERVABILITY_SOURCED=1
 
+set -euo pipefail
+
 METRICS_COLLECTOR_PID=""
 
 ################################################################################

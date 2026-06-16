@@ -48,7 +48,7 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 
 class GrafanaClient:
-    def __init__(self, base_url: str, user: str = "admin", password: str = "admin"):
+    def __init__(self, base_url: str, user: str = "admin", password: str = "admin"):  # noqa: S107 — dev defaults
         self.base_url = base_url.rstrip("/")
         self.user = user
         self.password = password
@@ -691,6 +691,7 @@ def main() -> None:
 
     # Resolve credentials
     grafana_url  = args.grafana_url  or os.environ.get("GRAFANA_URL")
+    # Dev convenience defaults — override via GRAFANA_USER / GRAFANA_PASSWORD in CI
     grafana_user = args.grafana_user or os.environ.get("GRAFANA_USER", "admin")
     grafana_pass = args.grafana_pass or os.environ.get("GRAFANA_PASSWORD", "admin")
 
