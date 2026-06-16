@@ -9,6 +9,7 @@ on:
     paths:
       - 'scripts/deploy-test-cost-onprem.sh'
       - 'scripts/setup-test-data.sh'
+      - 'scripts/lib/**'
       - '.github/workflows/validate-deploy-test-script.yml'
   workflow_dispatch:
 
@@ -172,6 +173,11 @@ jobs:
           run_case         "--perf-only --perf-suite ros,ingestion"    "--perf-only --perf-suite ros,ingestion"    "Performance-only"      false   false  true   false
           run_case         "--perf-only --perf-suite api"              "--perf-only --perf-suite api"              "Performance-only"      false   false  true   false
           run_error_case   "--perf-only --perf-suite invalid"          "--perf-only --perf-suite invalid"          "Invalid --perf-suite value"
+
+          # Observability flags
+          run_case         "--deploy-observability"                    "--deploy-observability"                    "Full deployment"       true    true   false  false
+          run_case         "--perf-only --deploy-observability"        "--perf-only --deploy-observability"        "Performance-only"      false   false  true   false
+          run_case         "--perf-only --collect-metrics"             "--perf-only --collect-metrics"             "Performance-only"      false   false  true   false
 
           # Chart version flags
           run_case         "--devel"                                   "--devel"                                  "Full deployment"       true    true   false  false
