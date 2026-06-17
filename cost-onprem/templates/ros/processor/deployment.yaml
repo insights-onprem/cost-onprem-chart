@@ -7,7 +7,7 @@ metadata:
     {{- include "cost-onprem.labels" . | nindent 4 }}
     app.kubernetes.io/component: ros-processor
 spec:
-  replicas: {{ .Values.ros.processor.replicas | default 1 }}
+  replicas: {{ .Values.ros.processor.replicas }}
   selector:
     matchLabels:
       {{- include "cost-onprem.selectorLabels" . | nindent 6 }}
