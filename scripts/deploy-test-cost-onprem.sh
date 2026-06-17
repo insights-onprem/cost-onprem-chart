@@ -708,6 +708,8 @@ run_tests() {
         if [[ "${RUN_PERF}" == "true" ]]; then
             if type run_performance_tests &>/dev/null; then
                 run_performance_tests
+            elif [[ "${DRY_RUN}" == "true" ]]; then
+                log_warning "Performance testing library not available (scripts/lib/perf-testing.sh)"
             else
                 log_error "Performance testing library not found (scripts/lib/perf-testing.sh)"
                 return 1
@@ -796,6 +798,8 @@ run_tests() {
             if ! run_performance_tests; then
                 perf_tests_failed=true
             fi
+        elif [[ "${DRY_RUN}" == "true" ]]; then
+            log_warning "Performance testing library not available (scripts/lib/perf-testing.sh)"
         else
             log_error "Performance testing library not found (scripts/lib/perf-testing.sh)"
             perf_tests_failed=true
