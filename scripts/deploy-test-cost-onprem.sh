@@ -706,7 +706,12 @@ run_tests() {
         fi
         # Still run performance tests if requested
         if [[ "${RUN_PERF}" == "true" ]]; then
-            run_performance_tests
+            if type run_performance_tests &>/dev/null; then
+                run_performance_tests
+            else
+                log_error "Performance testing library not found (scripts/lib/perf-testing.sh)"
+                return 1
+            fi
         fi
         cleanup_cpu_boost
         return 0
@@ -787,7 +792,12 @@ run_tests() {
     
     # Run performance tests if requested (continue even if other tests failed)
     if [[ "${RUN_PERF}" == "true" ]]; then
-        if ! run_performance_tests; then
+        if type run_performance_tests &>/dev/null; then
+            if ! run_performance_tests; then
+                perf_tests_failed=true
+            fi
+        else
+            log_error "Performance testing library not found (scripts/lib/perf-testing.sh)"
             perf_tests_failed=true
         fi
     fi
@@ -1178,8 +1188,12 @@ main() {
     setup_tls
     
     # Deploy observability after Helm chart so services exist for auto-detection
-    if type deploy_observability &>/dev/null; then
-        deploy_observability
+    if [[ "${DEPLOY_OBSERVABILITY}" == "true" ]]; then
+        if type deploy_observability &>/dev/null; then
+            deploy_observability
+        else
+            log_warning "--deploy-observability requested but perf-observability.sh not found; skipping"
+        fi
     fi
     
     # Run tests and capture result (don't exit on failure)
