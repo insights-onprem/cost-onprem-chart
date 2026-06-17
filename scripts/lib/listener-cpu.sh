@@ -2,7 +2,7 @@
 # scripts/lib/listener-cpu.sh — Listener CPU management for test runs
 #
 # Requires: log_info, log_success, log_warning, log_error, log_step,
-#           log_verbose, parse_cpu_to_millicores (all from parent script)
+#           log_verbose (all from parent script)
 # Globals:  NAMESPACE, HELM_RELEASE_NAME, DRY_RUN,
 #           ORIGINAL_LISTENER_CPU_LIMIT, ORIGINAL_LISTENER_CPU_REQUEST,
 #           MAX_LISTENER_CPU, CPU_BOOST_APPLIED
