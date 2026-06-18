@@ -26,6 +26,9 @@ spec:
       securityContext:
         {{- include "cost-onprem.securityContext.pod" . | nindent 8 }}
 
+      initContainers:
+      {{- include "cost-onprem.koku.initContainer.combineCA" . | nindent 6 }}
+
       containers:
       - name: migrate
         image: "{{ include "cost-onprem.koku.image" . }}"
@@ -112,8 +115,7 @@ spec:
         {{- include "cost-onprem.koku.commonEnv" . | nindent 8 }}
 
         volumeMounts:
-        - name: tmp
-          mountPath: /tmp
+        {{- include "cost-onprem.koku.volumeMounts" . | nindent 8 }}
 
         securityContext:
           {{- include "cost-onprem.securityContext.container" . | nindent 10 }}
@@ -127,5 +129,4 @@ spec:
             memory: 1Gi
 
       volumes:
-      - name: tmp
-        emptyDir: {}
+      {{- include "cost-onprem.koku.volumes" . | nindent 6 }}
