@@ -173,10 +173,10 @@ valkey
 
 {{/*
 Resolve object storage config from .Values.objectStorage.
-Returns a dict with keys: endpoint, port, useSSL, secretName, s3Region
+Returns a dict with keys: endpoint, port, useSSL, secretName, s3Region, s3AddressingStyle
 */}}
 {{- define "cost-onprem.storage.config" -}}
-  {{- $os := dict "endpoint" "" "port" 443 "useSSL" true "secretName" "" "s3Region" "onprem" -}}
+  {{- $os := dict "endpoint" "" "port" 443 "useSSL" true "secretName" "" "s3Region" "onprem" "s3AddressingStyle" "path" -}}
   {{- if .Values.objectStorage -}}
     {{- if and .Values.objectStorage.endpoint (ne .Values.objectStorage.endpoint "") -}}
       {{- $_ := set $os "endpoint" .Values.objectStorage.endpoint -}}
@@ -192,6 +192,9 @@ Returns a dict with keys: endpoint, port, useSSL, secretName, s3Region
     {{- end -}}
     {{- if and .Values.objectStorage.s3 .Values.objectStorage.s3.region -}}
       {{- $_ := set $os "s3Region" .Values.objectStorage.s3.region -}}
+    {{- end -}}
+    {{- if and .Values.objectStorage.s3 .Values.objectStorage.s3.addressingStyle -}}
+      {{- $_ := set $os "s3AddressingStyle" .Values.objectStorage.s3.addressingStyle -}}
     {{- end -}}
   {{- end -}}
   {{- $os | toJson -}}
@@ -277,6 +280,14 @@ S3 region for signature generation
 {{- define "cost-onprem.storage.s3Region" -}}
 {{- $cfg := include "cost-onprem.storage.config" . | fromJson -}}
 {{- $cfg.s3Region -}}
+{{- end }}
+
+{{/*
+S3 addressing style for bucket URL resolution (path, auto, or virtual)
+*/}}
+{{- define "cost-onprem.storage.s3AddressingStyle" -}}
+{{- $cfg := include "cost-onprem.storage.config" . | fromJson -}}
+{{- $cfg.s3AddressingStyle -}}
 {{- end }}
 
 {{/*

@@ -1274,6 +1274,12 @@ deploy_helm_chart() {
             helm_cmd="$helm_cmd --set objectStorage.s3.region=\"${S3_REGION}\""
             echo_info "objectStorage.s3.region=${S3_REGION} (AWS S3 / SigV4)"
         fi
+        local deploy_s3_host
+        deploy_s3_host=$(parse_s3_host "${S3_ENDPOINT}")
+        if is_aws_s3_endpoint_host "$deploy_s3_host"; then
+            helm_cmd="$helm_cmd --set objectStorage.s3.addressingStyle=auto"
+            echo_info "objectStorage.s3.addressingStyle=auto (AWS S3 virtual-hosted style)"
+        fi
         echo_success "✓ S3 endpoint configured: ${S3_ENDPOINT} (port ${s3_port}, SSL=${s3_ssl})"
     elif kubectl get crd noobaas.noobaa.io >/dev/null 2>&1 && \
          kubectl get noobaa -n openshift-storage >/dev/null 2>&1; then

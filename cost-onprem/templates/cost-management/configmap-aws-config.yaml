@@ -10,4 +10,4 @@ data:
     region = {{ include "cost-onprem.storage.s3Region" . }}
     s3 =
       signature_version = s3v4
-      addressing_style = path
+      addressing_style = {{ include "cost-onprem.storage.s3AddressingStyle" . }}
