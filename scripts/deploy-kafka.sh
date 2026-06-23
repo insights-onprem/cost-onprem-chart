@@ -181,10 +181,24 @@ verify_existing_operator() {
     if [ -n "$operator_pod" ]; then
         local operator_image
         operator_image=$(kubectl get pod -n "$operator_namespace" "$operator_pod" -o jsonpath='{.spec.containers[0].image}')
+        echo_info "Found operator pod: $operator_pod"
         echo_info "Found operator image: $operator_image"
 
+        # Check version from multiple sources:
+        # 1. Image tag (e.g., :3.1.0 or :0.48.0)
+        # 2. Pod name (e.g., amq-streams-cluster-operator-v3.1.0-14-...)
+        # 3. Image path contains version (e.g., /amq-streams/ for Red Hat builds)
         if [[ "$operator_image" =~ :3\.1\. ]] || [[ "$operator_image" =~ :0\.48\. ]]; then
             echo_success "AMQ Streams operator version is compatible with Kafka $KAFKA_VERSION"
+            return 0
+        elif [[ "$operator_pod" =~ v3\.1\. ]] || [[ "$operator_pod" =~ v0\.48\. ]]; then
+            echo_success "AMQ Streams operator version is compatible with Kafka $KAFKA_VERSION (detected from pod name)"
+            return 0
+        elif [[ "$operator_image" =~ amq-streams ]] && [[ "$operator_image" =~ @sha256: ]]; then
+            # Red Hat AMQ Streams uses SHA digests; assume compatible if it's the AMQ Streams image
+            # The OLM subscription controls the version, so if it's installed it should be correct
+            echo_info "Red Hat AMQ Streams operator detected (SHA digest image)"
+            echo_success "Assuming AMQ Streams operator is compatible (managed by OLM)"
             return 0
         else
             echo_error "AMQ Streams operator version may not be compatible with Kafka $KAFKA_VERSION"

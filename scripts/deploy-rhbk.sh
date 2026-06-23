@@ -59,6 +59,45 @@ OAUTH_CALLBACK=""
 CONSOLE_URL=""
 UI_BASE_URL=${COST_MGMT_UI_BASE_URL:-}  # Can be set via COST_MGMT_UI_BASE_URL, otherwise auto-detected
 
+# Python interpreter with PyYAML (auto-detected)
+# Prefer test venv Python (has PyYAML) over system Python (may not have it on macOS)
+PYTHON_CMD=""
+
+find_python_with_yaml() {
+    # Already found?
+    if [[ -n "$PYTHON_CMD" ]]; then
+        echo "$PYTHON_CMD"
+        return 0
+    fi
+    
+    # Get script directory to find test venv
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local venv_python="${script_dir}/../tests/.venv/bin/python"
+    
+    # Check test venv first (it has PyYAML installed)
+    if [[ -x "$venv_python" ]]; then
+        if "$venv_python" -c "import yaml" 2>/dev/null; then
+            PYTHON_CMD="$venv_python"
+            echo "$PYTHON_CMD"
+            return 0
+        fi
+    fi
+    
+    # Fall back to system python3
+    if command -v python3 &>/dev/null; then
+        if python3 -c "import yaml" 2>/dev/null; then
+            PYTHON_CMD="python3"
+            echo "$PYTHON_CMD"
+            return 0
+        fi
+    fi
+    
+    # No suitable Python found
+    echo ""
+    return 1
+}
+
 # Logging functions with level-based filtering
 log_debug() {
     [[ "$LOG_LEVEL" == "DEBUG" ]] && echo -e "${BLUE}[DEBUG]${NC} $1"
@@ -1501,15 +1540,20 @@ assign_sync_client_realm_roles() {
 # Read realm users from values file (jwtAuth.realmUsers) or return default JSON
 get_realm_users_json() {
     if [ -n "$VALUES_FILE" ] && [ -f "$VALUES_FILE" ]; then
-        # Parse jwtAuth.realmUsers from the values file using python3
+        # Find a Python with PyYAML
+        local python_cmd
+        python_cmd=$(find_python_with_yaml)
+        if [[ -z "$python_cmd" ]]; then
+            echo_error "No Python with PyYAML found. Either:"
+            echo_error "  1. Run: ./scripts/run-pytest.sh --setup-only  (creates test venv with PyYAML)"
+            echo_error "  2. Or:  pip3 install pyyaml --user"
+            return 1
+        fi
+        
+        # Parse jwtAuth.realmUsers from the values file
         local users_json
-        users_json=$(python3 -c "
-import sys, json
-try:
-    import yaml
-except ImportError:
-    print('ERROR: PyYAML is required to parse values files. Install with: pip3 install pyyaml', file=sys.stderr)
-    sys.exit(1)
+        users_json=$("$python_cmd" -c "
+import sys, json, yaml
 with open(sys.argv[1]) as f:
     vals = yaml.safe_load(f)
 users = vals.get('jwtAuth', {}).get('realmUsers', [])
@@ -1518,7 +1562,7 @@ json.dump(users, sys.stdout)
 
         local parse_rc=$?
         if [ $parse_rc -ne 0 ]; then
-            echo_error "Failed to parse $VALUES_FILE (exit code $parse_rc). Ensure python3 and PyYAML are installed."
+            echo_error "Failed to parse $VALUES_FILE (exit code $parse_rc)."
             return 1
         fi
         if [ -n "$users_json" ] && [ "$users_json" != "[]" ]; then

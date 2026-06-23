@@ -127,6 +127,7 @@ if ! helm upgrade --install s4 "$S4_TMPDIR/charts/s4" \
     --set auth.enabled=false \
     --set route.enabled=false \
     --set storage.data.size="$STORAGE_SIZE" \
+    ${STORAGE_CLASS:+--set storage.data.storageClassName="$STORAGE_CLASS"} \
     --wait --timeout 300s; then
     echo_error "Failed to deploy S4"
     echo_info "Check pod status: kubectl get pods -n $NAMESPACE"

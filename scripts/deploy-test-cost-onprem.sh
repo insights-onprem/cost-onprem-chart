@@ -39,11 +39,22 @@ set -euo pipefail
 #   Test options:
 #   --iqe-marker EXPR         Pytest marker for IQE tests (default: cost_ocp_on_prem)
 #   --iqe-profile PROFILE     IQE test profile: smoke, extended, stable, full (default: stable)
-#   --listener-cpu LIMIT      Temporarily set listener CPU limit (e.g., 500m, 1000m, or 'max')
+#   --listener-cpu LIMIT      Temporarily set listener CPU limit (e.g., 500m, 1000m, 'max', or 'none' to skip).
+#                             Recommended: use 'max' for --run-perf / --perf-only runs.
 #   --include-ui              Include UI tests (requires Playwright system dependencies)
 #   --run-perf                Run performance tests after deployment (FLPATH-4036)
 #   --perf-profile PROFILE    Performance profile: baseline, small, medium, large (default: baseline)
+#   --perf-suite SUITES       Performance suite(s): all, api, ros, ingestion, scale, soak
+#                             Comma-separated for multiple (e.g., ros,ingestion). Default: all
 #   --perf-only               Run only performance tests (skip deployment and chart tests)
+#
+#   Observability options (FLPATH-4061):
+#   --deploy-observability    Deploy postgres_exporter, valkey-exporter, and celery-exporter for metrics
+#   --collect-metrics         Collect Prometheus metrics during performance tests
+#   --upload-metrics          Upload metrics to S3 after tests (requires S3_BUCKET to be set)
+#   --metrics-interval SECS   Metrics collection interval in seconds (default: 30)
+#   --grafana-links           Enable Grafana snapshot/dashboard links (disabled by default)
+#   --skip-grafana-links      Explicitly skip Grafana links (default behavior)
 #
 #   Other:
 #   --save-versions [FILE]    Save deployment version info to JSON file (default: version_info.json)
@@ -122,7 +133,19 @@ IQE_MARKER="${IQE_MARKER:-cost_ocp_on_prem}"
 IQE_PROFILE="${IQE_PROFILE:-stable}"
 RUN_PERF="${RUN_PERF:-false}"
 PERF_PROFILE="${PERF_PROFILE:-baseline}"
+PERF_SUITE="${PERF_SUITE:-all}"
 PERF_ONLY="${PERF_ONLY:-false}"
+DEPLOY_OBSERVABILITY="${DEPLOY_OBSERVABILITY:-false}"
+COLLECT_METRICS="${COLLECT_METRICS:-false}"
+UPLOAD_METRICS="${UPLOAD_METRICS:-false}"
+METRICS_INTERVAL="${METRICS_INTERVAL:-30}"
+
+# Performance output directory - unified structure for metrics + test results + reports
+# Format: {PERF_OUTPUT_DIR}/{TEST_RUN_ID}/ with subdirs: metrics/, results/, reports/
+# Default: PROJECT_ROOT/tests/perf-runs (absolute path to avoid issues when pytest runs from tests/)
+PERF_OUTPUT_DIR="${PERF_OUTPUT_DIR:-${PROJECT_ROOT}/tests/perf-runs}"
+# TEST_RUN_ID is auto-generated: {chart_version}-{perf_profile}-{epoch}
+TEST_RUN_ID="${TEST_RUN_ID:-}"
 SAVE_VERSIONS="${SAVE_VERSIONS:-false}"
 VERSION_INFO_FILE="${VERSION_INFO_FILE:-version_info.json}"
 LISTENER_CPU_LIMIT="${LISTENER_CPU_LIMIT:-}"
@@ -133,8 +156,6 @@ S4_NAMESPACE="${S4_NAMESPACE:-s4-test}"
 
 # CPU boost state tracking (for cleanup on exit)
 CPU_BOOST_APPLIED=false
-ORIGINAL_LISTENER_CPU_LIMIT=""
-ORIGINAL_LISTENER_CPU_REQUEST=""
 
 # OpenShift authentication
 KUBECONFIG="${KUBECONFIG:-${HOME}/.kube/config}"
@@ -159,6 +180,7 @@ SKIP_KAFKA=false
 SKIP_HELM=false
 SKIP_TLS=false
 SKIP_TEST=false
+SKIP_GRAFANA_LINKS=${SKIP_GRAFANA_LINKS:-true}  # Skip Grafana snapshot/links (default: skip, local Grafana rarely accessible)
 
 # Color codes for output
 RED='\033[0;31m'
@@ -174,6 +196,15 @@ NC='\033[0m' # No Color
 
 cleanup_on_exit() {
     local exit_code=$?
+    
+    # Stop metrics collection if running
+    if [[ -n "${METRICS_COLLECTOR_PID:-}" ]]; then
+        echo ""
+        echo -e "${YELLOW}[CLEANUP] Stopping metrics collection...${NC}"
+        kill -TERM "${METRICS_COLLECTOR_PID}" 2>/dev/null || true
+    fi
+    
+    # Reset CPU boost if applied
     if [[ "${CPU_BOOST_APPLIED}" == "true" ]] && [[ -n "${ORIGINAL_LISTENER_CPU_LIMIT}" ]]; then
         echo ""
         echo -e "${YELLOW}[CLEANUP] Resetting listener CPU to original values...${NC}"
@@ -214,6 +245,14 @@ log_verbose() {
         echo -e "${CYAN}[VERBOSE]${NC} $*" >&2
     fi
 }
+
+################################################################################
+# Sourced Libraries
+################################################################################
+
+[[ -f "${SCRIPT_DIR}/lib/listener-cpu.sh" ]] && source "${SCRIPT_DIR}/lib/listener-cpu.sh"
+[[ -f "${SCRIPT_DIR}/lib/perf-observability.sh" ]] && source "${SCRIPT_DIR}/lib/perf-observability.sh"
+[[ -f "${SCRIPT_DIR}/lib/perf-testing.sh" ]] && source "${SCRIPT_DIR}/lib/perf-testing.sh"
 
 ################################################################################
 # Utility functions
@@ -497,6 +536,7 @@ deploy_s4() {
     export S4_RELEASE_TAG="${S4_RELEASE_TAG:-}"
     export S4_REPO="${S4_REPO:-}"
     export STORAGE_SIZE="${STORAGE_SIZE:-}"
+    export STORAGE_CLASS="${STORAGE_CLASS:-}"
 
     if [[ "${VERBOSE}" == "true" ]]; then
         export VERBOSE="true"
@@ -632,7 +672,7 @@ setup_tls() {
 run_tests() {
     # Apply listener CPU boost early - benefits both chart tests and IQE tests
     # Note: CPU_BOOST_APPLIED is a global variable, cleanup is handled by trap
-    if [[ -n "${LISTENER_CPU_LIMIT}" ]]; then
+    if [[ -n "${LISTENER_CPU_LIMIT}" ]] && [[ "${LISTENER_CPU_LIMIT}" != "none" ]]; then
         if validate_cpu_limit "${LISTENER_CPU_LIMIT}"; then
             local effective_cpu_limit="${LISTENER_CPU_LIMIT}"
             if [[ "${LISTENER_CPU_LIMIT}" == "max" ]]; then
@@ -666,7 +706,14 @@ run_tests() {
         fi
         # Still run performance tests if requested
         if [[ "${RUN_PERF}" == "true" ]]; then
-            run_performance_tests
+            if type run_performance_tests &>/dev/null; then
+                run_performance_tests
+            elif [[ "${DRY_RUN}" == "true" ]]; then
+                log_warning "Performance testing library not available (scripts/lib/perf-testing.sh)"
+            else
+                log_error "Performance testing library not found (scripts/lib/perf-testing.sh)"
+                return 1
+            fi
         fi
         cleanup_cpu_boost
         return 0
@@ -747,7 +794,14 @@ run_tests() {
     
     # Run performance tests if requested (continue even if other tests failed)
     if [[ "${RUN_PERF}" == "true" ]]; then
-        if ! run_performance_tests; then
+        if type run_performance_tests &>/dev/null; then
+            if ! run_performance_tests; then
+                perf_tests_failed=true
+            fi
+        elif [[ "${DRY_RUN}" == "true" ]]; then
+            log_warning "Performance testing library not available (scripts/lib/perf-testing.sh)"
+        else
+            log_error "Performance testing library not found (scripts/lib/perf-testing.sh)"
             perf_tests_failed=true
         fi
     fi
@@ -764,256 +818,6 @@ run_tests() {
         [[ "${perf_tests_failed}" == "true" ]] && log_error "  - Performance tests failed"
         return 1
     fi
-}
-
-################################################################################
-# Resource Management for Test Runs
-################################################################################
-
-# Store original resource values for restoration
-ORIGINAL_LISTENER_CPU_LIMIT=""
-ORIGINAL_LISTENER_CPU_REQUEST=""
-
-# Parse CPU value to millicores (e.g., "500m" -> 500, "1" -> 1000)
-parse_cpu_to_millicores() {
-    local cpu_value="$1"
-    if [[ "${cpu_value}" =~ ^([0-9]+)m$ ]]; then
-        echo "${BASH_REMATCH[1]}"
-    elif [[ "${cpu_value}" =~ ^([0-9]+)$ ]]; then
-        echo "$((${BASH_REMATCH[1]} * 1000))"
-    else
-        echo "0"
-    fi
-}
-
-# Calculate maximum available CPU on the node where listener runs.
-# Sets MAX_LISTENER_CPU (millicores, no "m" suffix) as a global variable.
-calculate_max_listener_cpu() {
-    MAX_LISTENER_CPU=""
-    local release="${HELM_RELEASE_NAME:-cost-onprem}"
-    local listener_deploy="${release}-koku-listener"
-    
-    # Get the node where listener is running
-    local listener_node
-    listener_node=$(kubectl get pods -n "${NAMESPACE}" -l "app.kubernetes.io/component=listener" \
-        -o jsonpath='{.items[0].spec.nodeName}' 2>/dev/null)
-    
-    if [[ -z "${listener_node}" ]]; then
-        log_warning "Could not determine listener node, using default max of 2000m"
-        MAX_LISTENER_CPU="2000"
-        return
-    fi
-    
-    # Get node's allocatable CPU
-    local allocatable_cpu
-    allocatable_cpu=$(kubectl get node "${listener_node}" -o jsonpath='{.status.allocatable.cpu}' 2>/dev/null)
-    local allocatable_millicores
-    allocatable_millicores=$(parse_cpu_to_millicores "${allocatable_cpu}")
-    
-    # Get current CPU requests on the node
-    local used_requests
-    used_requests=$(kubectl describe node "${listener_node}" 2>/dev/null | grep -A5 "Allocated resources" | grep "cpu" | awk '{print $2}' | sed 's/[^0-9]//g')
-    
-    if [[ -z "${used_requests}" ]]; then
-        used_requests=0
-    fi
-    
-    # Get listener's current request
-    local listener_request
-    listener_request=$(kubectl get deploy "${listener_deploy}" -n "${NAMESPACE}" \
-        -o jsonpath='{.spec.template.spec.containers[0].resources.requests.cpu}' 2>/dev/null || echo "150m")
-    local listener_request_millicores
-    listener_request_millicores=$(parse_cpu_to_millicores "${listener_request}")
-    
-    # Calculate available: allocatable - used + listener's current (since we're replacing it)
-    # Leave 500m buffer for system overhead
-    local available=$((allocatable_millicores - used_requests + listener_request_millicores - 500))
-    
-    # Cap at 4000m (4 cores) as a reasonable maximum for a single pod
-    if [[ "${available}" -gt 4000 ]]; then
-        available=4000
-    fi
-    
-    # Minimum of 500m
-    if [[ "${available}" -lt 500 ]]; then
-        available=500
-    fi
-    
-    log_verbose "Node ${listener_node}: allocatable=${allocatable_millicores}m, used=${used_requests}m, listener=${listener_request_millicores}m, available=${available}m"
-    MAX_LISTENER_CPU="${available}"
-}
-
-# Validate CPU limit format and value
-validate_cpu_limit() {
-    local cpu_limit="$1"
-    
-    # Special case: "max" means calculate maximum available
-    if [[ "${cpu_limit}" == "max" ]]; then
-        return 0
-    fi
-    
-    # Check format (must be like "500m" or "1")
-    if [[ ! "${cpu_limit}" =~ ^[0-9]+m?$ ]]; then
-        log_error "Invalid CPU limit format: ${cpu_limit}"
-        log_error "Expected format: <number>m (e.g., 500m, 1000m), <number> (e.g., 1, 2), or 'max'"
-        return 1
-    fi
-    
-    local millicores
-    millicores=$(parse_cpu_to_millicores "${cpu_limit}")
-    
-    # Sanity check: must be at least 100m and at most 4000m (4 cores)
-    if [[ "${millicores}" -lt 100 ]]; then
-        log_error "CPU limit too low: ${cpu_limit} (minimum: 100m)"
-        return 1
-    fi
-    
-    if [[ "${millicores}" -gt 4000 ]]; then
-        log_error "CPU limit too high: ${cpu_limit} (maximum: 4000m / 4 cores)"
-        return 1
-    fi
-    
-    return 0
-}
-
-set_listener_cpu() {
-    local new_limit="$1"
-    
-    log_step "Setting listener CPU limit to ${new_limit}"
-    
-    local release="${HELM_RELEASE_NAME:-cost-onprem}"
-    local listener_deploy="${release}-koku-listener"
-    
-    # Get current values for restoration later
-    ORIGINAL_LISTENER_CPU_LIMIT=$(kubectl get deploy "${listener_deploy}" -n "${NAMESPACE}" \
-        -o jsonpath='{.spec.template.spec.containers[0].resources.limits.cpu}' 2>/dev/null || echo "")
-    ORIGINAL_LISTENER_CPU_REQUEST=$(kubectl get deploy "${listener_deploy}" -n "${NAMESPACE}" \
-        -o jsonpath='{.spec.template.spec.containers[0].resources.requests.cpu}' 2>/dev/null || echo "")
-    
-    if [[ -z "${ORIGINAL_LISTENER_CPU_LIMIT}" ]]; then
-        log_warning "Could not get current listener CPU limit"
-        return 1
-    fi
-    
-    # Parse values for comparison
-    local current_millicores new_millicores
-    current_millicores=$(parse_cpu_to_millicores "${ORIGINAL_LISTENER_CPU_LIMIT}")
-    new_millicores=$(parse_cpu_to_millicores "${new_limit}")
-    
-    log_info "Current listener CPU: limit=${ORIGINAL_LISTENER_CPU_LIMIT}, request=${ORIGINAL_LISTENER_CPU_REQUEST}"
-    
-    # Check if new limit is same as current
-    if [[ "${current_millicores}" -eq "${new_millicores}" ]]; then
-        log_info "Listener CPU limit already set to ${new_limit}, no change needed"
-        ORIGINAL_LISTENER_CPU_LIMIT=""  # Clear so we don't reset later
-        return 0
-    fi
-    
-    # Warn if decreasing CPU
-    if [[ "${new_millicores}" -lt "${current_millicores}" ]]; then
-        log_warning "Decreasing CPU limit from ${ORIGINAL_LISTENER_CPU_LIMIT} to ${new_limit}"
-    fi
-    
-    # Calculate request as half of limit (standard practice)
-    local new_request="$((new_millicores / 2))m"
-    
-    log_info "Setting listener CPU: limit=${new_limit}, request=${new_request}"
-    
-    if [[ "${DRY_RUN}" == "true" ]]; then
-        log_info "DRY RUN: Would patch ${listener_deploy} CPU to limit=${new_limit}, request=${new_request}"
-        return 0
-    fi
-    
-    # Patch listener deployment
-    if kubectl patch deploy "${listener_deploy}" -n "${NAMESPACE}" --type='json' \
-        -p="[{\"op\": \"replace\", \"path\": \"/spec/template/spec/containers/0/resources/limits/cpu\", \"value\": \"${new_limit}\"},
-             {\"op\": \"replace\", \"path\": \"/spec/template/spec/containers/0/resources/requests/cpu\", \"value\": \"${new_request}\"}]" \
-        &>/dev/null; then
-        log_success "Listener CPU set to ${new_limit}"
-        
-        # Wait for rollout
-        log_info "Waiting for listener rollout..."
-        if ! kubectl rollout status deploy/"${listener_deploy}" -n "${NAMESPACE}" --timeout=120s; then
-            log_warning "Rollout timed out, but continuing..."
-        fi
-    else
-        log_error "Failed to set listener CPU"
-        ORIGINAL_LISTENER_CPU_LIMIT=""  # Clear so we don't try to reset
-        return 1
-    fi
-}
-
-reset_listener_cpu() {
-    if [[ -z "${ORIGINAL_LISTENER_CPU_LIMIT}" ]]; then
-        return 0
-    fi
-    
-    log_step "Resetting listener CPU to original values"
-    
-    local release="${HELM_RELEASE_NAME:-cost-onprem}"
-    local listener_deploy="${release}-koku-listener"
-    
-    log_info "Resetting listener CPU: limit=${ORIGINAL_LISTENER_CPU_LIMIT}, request=${ORIGINAL_LISTENER_CPU_REQUEST}"
-    
-    if [[ "${DRY_RUN}" == "true" ]]; then
-        log_info "DRY RUN: Would reset ${listener_deploy} CPU"
-        return 0
-    fi
-    
-    if kubectl patch deploy "${listener_deploy}" -n "${NAMESPACE}" --type='json' \
-        -p="[{\"op\": \"replace\", \"path\": \"/spec/template/spec/containers/0/resources/limits/cpu\", \"value\": \"${ORIGINAL_LISTENER_CPU_LIMIT}\"},
-             {\"op\": \"replace\", \"path\": \"/spec/template/spec/containers/0/resources/requests/cpu\", \"value\": \"${ORIGINAL_LISTENER_CPU_REQUEST}\"}]" \
-        &>/dev/null; then
-        log_success "Listener CPU reset to ${ORIGINAL_LISTENER_CPU_LIMIT}"
-    else
-        log_warning "Failed to reset listener CPU - manual intervention may be needed"
-        log_warning "Expected values: limit=${ORIGINAL_LISTENER_CPU_LIMIT}, request=${ORIGINAL_LISTENER_CPU_REQUEST}"
-    fi
-}
-
-################################################################################
-# Performance Test Execution (FLPATH-4036)
-################################################################################
-
-run_performance_tests() {
-    log_step "Running performance tests (FLPATH-4036)"
-
-    local pytest_script="${LOCAL_SCRIPTS_DIR}/run-pytest.sh"
-    if [[ ! -x "${pytest_script}" ]]; then
-        log_error "Pytest runner not found at: ${pytest_script}"
-        return 1
-    fi
-
-    log_info "Running performance tests with profile: ${PERF_PROFILE}"
-
-    # Export performance profile for tests
-    export PERF_PROFILE="${PERF_PROFILE}"
-
-    # Build pytest arguments for performance tests
-    local perf_args=("--performance")
-    if [[ "${VERBOSE}" == "true" ]]; then
-        perf_args+=("-v")
-    fi
-    # Show stdout for visibility into long-running tests
-    perf_args+=("-s")
-
-    if [[ "${DRY_RUN}" == "true" ]]; then
-        log_info "DRY RUN: Would execute: ${pytest_script} ${perf_args[*]}"
-        return 0
-    fi
-
-    log_info "Performance test command: ${pytest_script} ${perf_args[*]}"
-    log_info "Performance reports will be saved to: tests/reports/performance/"
-
-    if ! "${pytest_script}" "${perf_args[@]}"; then
-        log_error "Performance tests failed"
-        log_info "Check tests/reports/performance/ for detailed results"
-        return 1
-    fi
-
-    log_success "Performance tests completed"
-    log_info "Performance reports: tests/reports/performance/"
-    return 0
 }
 
 ################################################################################
@@ -1127,8 +931,17 @@ print_summary() {
     [[ "${SKIP_HELM}" == "false" ]] && echo "  ✓ Deploy Cost On-Prem Helm Chart" || echo "  ✗ Deploy Cost On-Prem Helm Chart (SKIPPED)"
     [[ "${SKIP_TLS}" == "false" ]] && echo "  ✓ Setup TLS Certificates" || echo "  ✗ Setup TLS Certificates (SKIPPED)"
     [[ "${SKIP_TEST}" == "false" ]] && echo "  ✓ Run Chart Tests" || echo "  ✗ Run Chart Tests (SKIPPED)"
-    if [[ "${PERF_ONLY}" == "true" ]]; then
-        echo "  ✓ Run Performance Tests (profile: ${PERF_PROFILE})"
+    if [[ "${DEPLOY_OBSERVABILITY}" == "true" ]]; then
+        echo "  ✓ Deploy Observability (postgres_exporter, valkey-exporter, celery-exporter)"
+    else
+        echo "  ✗ Deploy Observability (OPTIONAL)"
+    fi
+    if [[ "${PERF_ONLY}" == "true" ]] || [[ "${RUN_PERF}" == "true" ]]; then
+        local perf_opts="profile: ${PERF_PROFILE}"
+        [[ "${PERF_SUITE}" != "all" ]] && perf_opts="${perf_opts}, suite: ${PERF_SUITE}"
+        [[ "${COLLECT_METRICS}" == "true" ]] && perf_opts="${perf_opts}, collect-metrics: ${METRICS_INTERVAL}s"
+        [[ "${UPLOAD_METRICS}" == "true" ]] && perf_opts="${perf_opts}, upload-to-s3"
+        echo "  ✓ Run Performance Tests (${perf_opts})"
     else
         echo "  ✗ Run Performance Tests (OPTIONAL)"
     fi
@@ -1235,6 +1048,10 @@ main() {
                 PERF_PROFILE="$2"
                 shift 2
                 ;;
+            --perf-suite)
+                PERF_SUITE="$2"
+                shift 2
+                ;;
             --perf-only)
                 PERF_ONLY=true
                 SKIP_RHBK=true
@@ -1244,6 +1061,22 @@ main() {
                 SKIP_TEST=true
                 RUN_PERF=true
                 shift
+                ;;
+            --deploy-observability)
+                DEPLOY_OBSERVABILITY=true
+                shift
+                ;;
+            --collect-metrics)
+                COLLECT_METRICS=true
+                shift
+                ;;
+            --upload-metrics)
+                UPLOAD_METRICS=true
+                shift
+                ;;
+            --metrics-interval)
+                METRICS_INTERVAL="$2"
+                shift 2
                 ;;
             --run-iqe)
                 RUN_IQE=true
@@ -1276,6 +1109,14 @@ main() {
                 fi
                 shift
                 ;;
+            --grafana-links)
+                SKIP_GRAFANA_LINKS=false
+                shift
+                ;;
+            --skip-grafana-links)
+                SKIP_GRAFANA_LINKS=true
+                shift
+                ;;
             --help|-h)
                 show_help
                 ;;
@@ -1297,6 +1138,18 @@ main() {
             log_error "Cannot use --chart-version with --use-local-chart"
             exit 1
         fi
+    fi
+
+    # Validate --perf-suite values
+    if [[ "${PERF_SUITE}" != "all" ]]; then
+        IFS=',' read -ra _suites <<< "${PERF_SUITE}"
+        for _s in "${_suites[@]}"; do
+            case "${_s}" in
+                api|ros|ingestion|scale|soak) ;;
+                *) log_error "Invalid --perf-suite value: ${_s} (valid: all, api, ros, ingestion, scale, soak)"
+                   exit 1 ;;
+            esac
+        done
     fi
 
     # In tests-only / skip-deploy mode, skip all deployment steps
@@ -1337,6 +1190,15 @@ main() {
 
     deploy_helm_chart
     setup_tls
+    
+    # Deploy observability after Helm chart so services exist for auto-detection
+    if [[ "${DEPLOY_OBSERVABILITY}" == "true" ]]; then
+        if type deploy_observability &>/dev/null; then
+            deploy_observability
+        else
+            log_warning "--deploy-observability requested but perf-observability.sh not found; skipping"
+        fi
+    fi
     
     # Run tests and capture result (don't exit on failure)
     local test_result=0
