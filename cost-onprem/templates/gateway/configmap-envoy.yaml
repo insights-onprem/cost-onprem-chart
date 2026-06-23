@@ -41,7 +41,6 @@ data:
               "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
               stat_prefix: gateway_http
               codec_type: AUTO
-              request_timeout: 60s
               stream_idle_timeout: 300s
               max_request_headers_kb: 96
               common_http_protocol_options:
@@ -158,11 +157,11 @@ data:
                       prefix: "/api/ingress/"
                     route:
                       cluster: ingress-backend
-                      timeout: 30s
+                      timeout: {{ .Values.jwtAuth.envoy.ingressTimeout | default "30s" }}
                       retry_policy:
                         retry_on: 5xx,reset,connect-failure,refused-stream
                         num_retries: 2
-                        per_try_timeout: 10s
+                        per_try_timeout: {{ .Values.jwtAuth.envoy.ingressPerTryTimeout | default "10s" }}
 
               http_filters:
               # JWT authentication filter

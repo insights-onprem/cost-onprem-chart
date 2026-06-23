@@ -70,6 +70,7 @@ ros:
 
   # Processor Component - Processes uploaded data
   processor:
+    replicas: 1
     metricsPort: 9000
     logLevel: INFO
     serviceName: ros-processor
@@ -438,6 +439,8 @@ costManagement:
 # -----------------------------------------------------------------------------
 # Kruize is used exclusively by ROS for workload optimization recommendations
 kruize:
+  replicas: 1
+
   image:
     repository: quay.io/redhat-services-prod/kruize-autotune-tenant/autotune
     tag: "5eeae99"
@@ -951,7 +954,12 @@ jwtAuth:
       tag: "2.6"
       pullPolicy: IfNotPresent
 
+    replicas: 2
     port: 9080
+
+    # Route-level timeouts for the ingress (file upload) endpoint.
+    ingressTimeout: "30s"
+    ingressPerTryTimeout: "10s"
     servicePort: 80  # Service port exposed to other components (nginx, etc.)
     adminPort: 9901
     logLevel: info
@@ -1111,9 +1119,18 @@ resources:
       memory: "512Mi"
       cpu: "500m"
 
-  # Standard application services (ROS API, Processor, Poller, Housekeeper)
+  # Standard application services (ROS API, Ingress, Poller, Housekeeper)
   # Aligned with SaaS Clowder configuration (ros-ocp-backend/clowdapp.yaml)
   application:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "1Gi"
+      cpu: "1"
+
+  # ROS Processor needs more memory than other application services.
+  rosProcessor:
     requests:
       memory: "1Gi"
       cpu: "500m"

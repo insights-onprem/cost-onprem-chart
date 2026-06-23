@@ -7,7 +7,7 @@ metadata:
     {{- include "cost-onprem.labels" . | nindent 4 }}
     app.kubernetes.io/component: ros-processor
 spec:
-  replicas: 1
+  replicas: {{ .Values.ros.processor.replicas }}
   selector:
     matchLabels:
       {{- include "cost-onprem.selectorLabels" . | nindent 6 }}
@@ -125,7 +125,7 @@ spec:
             timeoutSeconds: 10
             failureThreshold: 5
           resources:
-            {{- toYaml .Values.resources.application | nindent 12 }}
+            {{- toYaml .Values.resources.rosProcessor | nindent 12 }}
       volumes:
         - name: cdapp-config
           configMap:
