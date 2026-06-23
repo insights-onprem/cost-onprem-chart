@@ -500,14 +500,23 @@ EOF
 # Continuous collection mode
 continuous_collection() {
     local interval="$1"
-    
-    log_info "Starting continuous collection (interval: ${interval}s)"
+    local max_duration="${2:-14400}"
+    local start_time
+    start_time=$(date +%s)
+
+    log_info "Starting continuous collection (interval: ${interval}s, max duration: ${max_duration}s)"
     log_info "Test run ID: $TEST_RUN_ID"
     log_info "Press Ctrl+C to stop and upload results"
-    
+
     trap 'log_info "Stopping collection..."; create_test_summary; exit 0' INT TERM
-    
+
     while true; do
+        local elapsed=$(( $(date +%s) - start_time ))
+        if [[ ${elapsed} -ge ${max_duration} ]]; then
+            log_warning "Max duration reached (${max_duration}s), stopping collection"
+            create_test_summary
+            return 0
+        fi
         collect_metrics_snapshot
         sleep "$interval"
     done
@@ -517,6 +526,7 @@ continuous_collection() {
 main() {
     local mode="snapshot"
     local interval=30
+    local max_duration=14400
     local upload=false
     
     # Parse arguments
@@ -525,6 +535,10 @@ main() {
             --continuous)
                 mode="continuous"
                 interval="${2:-30}"
+                shift 2
+                ;;
+            --max-duration)
+                max_duration="${2:?--max-duration requires a value in seconds}"
                 shift 2
                 ;;
             --range)
@@ -548,6 +562,7 @@ main() {
                 echo ""
                 echo "Options:"
                 echo "  --continuous [INTERVAL]  Continuous collection mode (default: 30s)"
+                echo "  --max-duration SECONDS   Max duration for continuous mode (default: 14400 = 4h)"
                 echo "  --range                  Collect range data (requires --start, --end)"
                 echo "  --start TIME             Start time for range query (RFC3339)"
                 echo "  --end TIME               End time for range query (RFC3339)"
@@ -587,7 +602,7 @@ main() {
             fi
             ;;
         continuous)
-            continuous_collection "$interval"
+            continuous_collection "$interval" "$max_duration"
             if [[ "$upload" == "true" ]]; then
                 upload_test_run
             fi

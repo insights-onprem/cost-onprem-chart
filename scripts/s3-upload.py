@@ -129,11 +129,12 @@ def main():
     parser.add_argument("src", nargs="?")
     parser.add_argument("dst", nargs="?")
     parser.add_argument("--endpoint-url", default=os.environ.get("S3_ENDPOINT", ""))
-    # Defaults suit internal Minio/NooBaa; set to false for production S3
+    # Secure by default; set S3_NO_VERIFY_SSL=true / S3_NO_SIGN_REQUEST=true
+    # for internal Minio/NooBaa where TLS and auth are not configured
     parser.add_argument("--no-verify-ssl", action="store_true",
-                        default=os.environ.get("S3_NO_VERIFY_SSL", "true").lower() == "true")
+                        default=os.environ.get("S3_NO_VERIFY_SSL", "false").lower() == "true")
     parser.add_argument("--no-sign-request", action="store_true",
-                        default=os.environ.get("S3_NO_SIGN_REQUEST", "true").lower() == "true")
+                        default=os.environ.get("S3_NO_SIGN_REQUEST", "false").lower() == "true")
 
     args = parser.parse_args()
     client = _build_client(args.endpoint_url, not args.no_verify_ssl, not args.no_sign_request)

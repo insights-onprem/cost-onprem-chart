@@ -194,6 +194,8 @@ upload_perf_results_to_s3() {
 
     local endpoint_arg=""
     [[ -n "${S3_ENDPOINT:-}" ]] && endpoint_arg="--endpoint-url ${S3_ENDPOINT}"
+    [[ "${S3_NO_VERIFY_SSL:-false}" == "true" ]] && endpoint_arg="${endpoint_arg} --no-verify-ssl"
+    [[ "${S3_NO_SIGN_REQUEST:-false}" == "true" ]] && endpoint_arg="${endpoint_arg} --no-sign-request"
     local upload_timeout="${S3_UPLOAD_TIMEOUT:-120}"
 
     log_info "S3 preflight: checking s3://${S3_BUCKET}/..."

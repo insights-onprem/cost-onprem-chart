@@ -694,6 +694,10 @@ def main() -> None:
     # Dev convenience defaults — override via GRAFANA_USER / GRAFANA_PASSWORD in CI
     grafana_user = args.grafana_user or os.environ.get("GRAFANA_USER", "admin")
     grafana_pass = args.grafana_pass or os.environ.get("GRAFANA_PASSWORD", "admin")
+    if grafana_user == "admin" and grafana_pass == "admin":
+        print("WARNING: Using default Grafana credentials (admin/admin). "
+              "Set GRAFANA_USER / GRAFANA_PASSWORD for non-dev environments.",
+              file=sys.stderr)
 
     # Auto-detect if not provided
     if not grafana_url:
