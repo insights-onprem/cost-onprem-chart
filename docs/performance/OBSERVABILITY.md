@@ -499,23 +499,15 @@ curl -s "http://localhost:9091/api/v1/query?query=up{namespace='cost-onprem'}" |
 
 ## Dashboard Export
 
-Dashboard JSON files are stored in `scripts/observability/dashboards/`:
+> **Note:** Dashboard JSON provisioning is planned for a follow-up PR. The deploy script handles this gracefully — if `scripts/observability/dashboards/` does not exist, it creates a placeholder ConfigMap when Grafana is deployed.
 
-```
-scripts/observability/dashboards/
-├── overview.json
-├── ingress.json
-├── processing.json
-├── database.json
-├── ros.json
-└── infrastructure.json
-```
+When dashboard JSON files are added, they will be stored in `scripts/observability/dashboards/` and organized by type (e.g., `collected-metrics/`, `prometheus/`). The six dashboards described in the [Dashboards (Reference)](#dashboards-reference) section define which metrics to collect and can be recreated manually in any Grafana instance using the PromQL queries in the [Metrics Reference](#metrics-reference) section below.
 
-To update dashboards:
+To export dashboards from an existing Grafana instance:
 
 1. Edit in Grafana UI
 2. Export as JSON (Share → Export → Save to file)
-3. Replace the corresponding file in `scripts/observability/dashboards/`
+3. Place the file in `scripts/observability/dashboards/`
 4. Re-run the deployment script to update the ConfigMap
 
 ## Metrics Reference

@@ -92,17 +92,16 @@ single-run visual report (above).
 
 ## Dashboards (Reference)
 
-The dashboard JSON files define which metrics to collect and can be imported into any Grafana instance for real-time or historical visualization.
+The six dashboards below define which metrics to collect. Dashboard JSON provisioning is planned for a follow-up PR — until then, dashboards can be recreated manually using the PromQL queries documented in [OBSERVABILITY.md](../../docs/performance/OBSERVABILITY.md#metrics-reference).
 
-```
-dashboards/
-├── overview.json        # High-level health and KPIs
-├── ingress.json         # Upload latency, Kafka metrics
-├── processing.json      # Celery queues, task performance
-├── database.json        # PostgreSQL connections, queries, locks
-├── ros.json             # Kruize and ROS recommendation metrics
-└── infrastructure.json  # Node resources, Valkey cache
-```
+| Dashboard | Description |
+|-----------|-------------|
+| Overview | High-level health and KPIs |
+| Ingress | Upload latency, Kafka metrics |
+| Processing | Celery queues, task performance |
+| Database | PostgreSQL connections, queries, locks |
+| ROS | Kruize and ROS recommendation metrics |
+| Infrastructure | Node resources, Valkey cache |
 
 ## Grafana Integration
 
@@ -111,7 +110,7 @@ dashboards/
 `deploy-test-cost-onprem.sh --perf-only` automatically runs `push-grafana-snapshot.py` at
 the end of every run. If Grafana is reachable it will:
 
-1. **Import** the `dashboards/collected-metrics/*.json` files into Grafana (or `dashboards/prometheus/*.json` for legacy operational dashboards)
+1. **Import** dashboard JSON files into Grafana (when `dashboards/` directory is populated in a follow-up PR)
 2. **Create a permanent snapshot** of the run (static, no Prometheus required after creation)
 3. **Generate a live link** scoped to the run's exact time window
 4. **Patch** `reports/perf-run-report.html` with both links
@@ -193,7 +192,7 @@ To retain data across cluster rebuilds:
 #### Option C — Existing Grafana (import dashboards manually)
 
 1. Log in to your Grafana instance → **Dashboards → Import**
-2. Upload each file from `scripts/observability/dashboards/`
+2. Upload dashboard JSON files from `scripts/observability/dashboards/` (when available — see follow-up PR). Until then, create dashboards manually using the PromQL queries in [OBSERVABILITY.md](../../docs/performance/OBSERVABILITY.md#metrics-reference).
 3. Set the Prometheus datasource to your cluster's Thanos Querier URL:
    `https://thanos-querier.openshift-monitoring.svc.cluster.local:9091`
 4. Point `GRAFANA_URL` at the instance when running perf tests
@@ -229,7 +228,7 @@ Test Run
 
 Persistent Grafana (any instance, any location)
   └── Infinity datasource  →  S3/MinIO HTTP
-        └── dashboards/collected-metrics/perf-history.json
+        └── perf-history dashboard (follow-up PR)
               ├── Run selector (from index.json)
               ├── KPI stat panels
               ├── All test results table
@@ -251,7 +250,7 @@ AWS_SECRET_ACCESS_KEY=<minio-secret> \
 ```
 
 The Infinity datasource is provisioned automatically with MinIO credentials.
-The `perf-history.json` dashboard is loaded from the dashboards ConfigMap.
+The `perf-history.json` dashboard will be loaded from the dashboards ConfigMap when available (follow-up PR).
 
 **2. Import manually** (existing Grafana):
 
@@ -260,7 +259,7 @@ Grafana → Administration → Plugins → search "Infinity" → Install
 Grafana → Connections → Add datasource → Infinity
   → Set allowed hosts: https://minio-s3-...
   → Set auth: Basic Auth with MinIO access key/secret
-Grafana → Dashboards → Import → upload dashboards/collected-metrics/perf-history.json
+Grafana → Dashboards → Import → upload perf-history.json (when available)
 ```
 
 **3. What gets uploaded automatically:**
@@ -297,7 +296,7 @@ python3 scripts/observability/generate-perf-summary.py \
   --update-index
 ```
 
-### Dashboard: `dashboards/collected-metrics/perf-history.json`
+### Dashboard: `perf-history.json` (planned — follow-up PR)
 
 | Panel | Query |
 |-------|-------|

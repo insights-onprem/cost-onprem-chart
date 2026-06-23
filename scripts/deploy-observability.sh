@@ -72,7 +72,8 @@ VALKEY_PORT=${VALKEY_PORT:-6379}
 
 # Script directory for dashboard files
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Dashboard directories - collected-metrics has active dashboards, prometheus has legacy
+# Dashboard directories — JSON files planned for follow-up PR.
+# deploy_grafana() handles missing directories gracefully (creates placeholder ConfigMap).
 DASHBOARDS_DIR="${SCRIPT_DIR}/observability/dashboards/collected-metrics"
 DASHBOARDS_PROMETHEUS_DIR="${SCRIPT_DIR}/observability/dashboards/prometheus"
 
