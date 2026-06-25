@@ -14,7 +14,7 @@ The observability stack enables:
 4. **Snapshot export** to JSON during test runs
 5. **S3 publishing** for historical storage and comparison
 
-The Grafana dashboards serve as a **reference for which metrics to collect**. Real-time visualization is optional.
+All data is exported to JSON and self-contained HTML reports. The collected data can be used with any visualization tool.
 
 ## Quick Start
 
@@ -155,92 +155,17 @@ metrics-snapshots/{test_run_id}/
 └── summary.json
 ```
 
-### 5. Grafana (Optional)
+## Metrics Collected
 
-Grafana dashboards are provided as a **reference** for which metrics to collect. They can be imported into any Grafana instance if real-time visualization is needed.
+The following metrics are scraped by Prometheus and exported to JSON snapshots:
 
-| Dashboard | UID | Description |
-|-----------|-----|-------------|
-| **Overview** | `cost-onprem-overview` | High-level health and KPIs |
-| **Ingress** | `cost-onprem-ingress` | Upload latency, Kafka metrics |
-| **Processing** | `cost-onprem-processing` | Celery queues, task performance |
-| **Database** | `cost-onprem-database` | PostgreSQL connections, queries, locks |
-| **ROS** | `cost-onprem-ros` | Kruize and recommendation metrics |
-| **Infrastructure** | `cost-onprem-infrastructure` | Node resources, Valkey cache |
-
-**To deploy Grafana (optional):**
-
-```bash
-SKIP_GRAFANA=false ./scripts/deploy-observability.sh
-```
-
-## Dashboards (Reference)
-
-### Overview Dashboard
-
-High-level KPIs for quick health assessment:
-
-- Cluster CPU/Memory utilization
-- Celery queue depth
-- API latency P95
-- API request rate
-- Database connections
-- Pod resource usage
-
-### Ingress Dashboard
-
-Upload pipeline performance:
-
-- Upload rate and latency distribution
-- Payload sizes
-- Kafka consumer lag
-- Kafka throughput (bytes/sec)
-- Ingress/Listener CPU usage
-
-### Processing Dashboard
-
-Celery task execution:
-
-- Queue depths by queue (celery, ocp, summary, priority, cost_model, download)
-- Task throughput (received/succeeded/failed)
-- Task duration by type
-- Failure rate
-- Worker CPU/Memory usage
-
-### Database Dashboard
-
-PostgreSQL performance:
-
-- Connection states (active, idle, running)
-- Query latency distribution (P50/P95/P99)
-- Row operations (returned, fetched, inserted, updated, deleted)
-- Cache hit rate
-- Database sizes
-- WAL write rate
-- Lock types
-
-### ROS Dashboard
-
-Resource Optimization Service:
-
-- Recommendations generated/failed
-- CSV download latency
-- Kruize API latency
-- Aggregation time
-- Kruize JVM heap usage
-- ROS/Kruize CPU usage
-
-### Infrastructure Dashboard
-
-Cluster resources and Valkey:
-
-- Node CPU/Memory usage
-- Disk I/O
-- Network I/O
-- Valkey memory and max
-- Valkey operations (commands, hits, misses)
-- Valkey hit rate
-- Valkey client connections
+| Category | Key Metrics |
+|----------|-------------|
+| **Ingress** | Upload rate, latency, payload sizes, Kafka consumer lag, throughput |
+| **Processing** | Celery queue depths, task throughput/duration/failure rate, worker CPU/memory |
+| **Database** | Connection states, query latency (P50/P95/P99), cache hit rate, row ops, locks |
+| **ROS** | Recommendations generated/failed, CSV download latency, Kruize API latency |
+| **Infrastructure** | Node CPU/memory, disk/network I/O, Valkey memory/operations/hit rate |
 
 ## Enabling pg_stat_statements
 
@@ -482,33 +407,6 @@ curl -s "http://localhost:9091/api/v1/query?query=up{namespace='cost-onprem'}" |
    oc run pg-test --rm -it --image=postgres:15 --restart=Never -- \
      psql "postgresql://postgres:password@postgresql:5432/postgres"
    ```
-
-### Grafana Not Loading Dashboards
-
-1. Verify the ConfigMap exists:
-
-   ```bash
-   oc get configmap grafana-dashboards -n grafana
-   ```
-
-2. Restart Grafana to reload:
-
-   ```bash
-   oc rollout restart deployment/grafana -n grafana
-   ```
-
-## Dashboard Export
-
-> **Note:** Dashboard JSON provisioning is planned for a follow-up PR. The deploy script handles this gracefully — if `scripts/observability/dashboards/` does not exist, it creates a placeholder ConfigMap when Grafana is deployed.
-
-When dashboard JSON files are added, they will be stored in `scripts/observability/dashboards/` and organized by type (e.g., `collected-metrics/`, `prometheus/`). The six dashboards described in the [Dashboards (Reference)](#dashboards-reference) section define which metrics to collect and can be recreated manually in any Grafana instance using the PromQL queries in the [Metrics Reference](#metrics-reference) section below.
-
-To export dashboards from an existing Grafana instance:
-
-1. Edit in Grafana UI
-2. Export as JSON (Share → Export → Save to file)
-3. Place the file in `scripts/observability/dashboards/`
-4. Re-run the deployment script to update the ConfigMap
 
 ## Metrics Reference
 
