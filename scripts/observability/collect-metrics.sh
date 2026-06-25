@@ -17,14 +17,16 @@
 #   NAMESPACE          - Target namespace (default: cost-onprem)
 #   PROMETHEUS_URL     - Prometheus/Thanos URL (auto-detected if not set)
 #   OUTPUT_DIR         - Output directory (default: ./metrics-snapshots)
-#   S3_BUCKET          - S3 bucket for uploads (required for --upload)
-#   S3_PREFIX          - S3 key prefix (default: cost-onprem-performance/)
-#   S3_ENDPOINT        - S3 endpoint URL (for non-AWS S3-compatible storage)
-#   AWS_ACCESS_KEY_ID  - S3 access key (for authenticated uploads)
-#   AWS_SECRET_ACCESS_KEY - S3 secret key (for authenticated uploads)
+#   S3_BUCKET            - S3 bucket for uploads (required for --upload)
+#   S3_PREFIX            - S3 key prefix (default: cost-onprem-performance/)
+#   S3_ENDPOINT          - S3 endpoint URL (for non-AWS S3-compatible storage)
+#   S3_NO_VERIFY_SSL     - Skip TLS verification (default: true — MinIO uses untrusted certs)
+#   S3_NO_SIGN_REQUEST   - Use anonymous access  (default: true — bucket is public, no creds)
 #
-# Note: S3 variables are intentionally not defaulted to prevent accidental uploads
-# during local development. Set S3_BUCKET explicitly to enable uploads.
+# Note: The perf-results bucket (eco-bucket-perf-scale) is public/anonymous.
+# No AWS credentials are needed. S3 variables are intentionally not defaulted
+# to prevent accidental uploads during local development. Set S3_BUCKET
+# explicitly to enable uploads.
 #   PERF_PROFILE       - Performance profile name (default: baseline)
 #   HELM_RELEASE_NAME  - Helm release name for version detection (default: cost-onprem)
 #   TEST_RUN_ID        - Test run identifier (default: {chart_version}-{perf_profile}-{epoch})

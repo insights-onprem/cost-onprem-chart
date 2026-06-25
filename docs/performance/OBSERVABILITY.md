@@ -218,8 +218,8 @@ pg_stat_statements.track = all
 | `S3_BUCKET` | - | S3 bucket for uploads |
 | `S3_PREFIX` | `cost-onprem-performance/` | S3 key prefix |
 | `S3_ENDPOINT` | - | S3 endpoint URL (for MinIO, Ceph, etc.) |
-| `AWS_ACCESS_KEY_ID` | - | S3 access key (for authenticated uploads) |
-| `AWS_SECRET_ACCESS_KEY` | - | S3 secret key (for authenticated uploads) |
+| `S3_NO_VERIFY_SSL` | `true` | Skip TLS verification (MinIO uses untrusted certs) |
+| `S3_NO_SIGN_REQUEST` | `true` | Anonymous access (bucket is public, no credentials needed) |
 
 ### deploy-test-cost-onprem.sh (Observability Options)
 
@@ -250,31 +250,31 @@ For S3-compatible storage (MinIO, Ceph RGW, etc.):
 #   │   └── report.html
 #   └── metadata.json
 
-# Red Hat Ecosystem QE MinIO
+# Red Hat Ecosystem QE MinIO (public / anonymous bucket — no credentials needed)
 export S3_ENDPOINT="https://minio-s3-ecosystem-qe-ai--pipeline.apps.gpc.ocp-hub.prod.psi.redhat.com"
 export S3_BUCKET="eco-bucket-perf-scale"
-export AWS_ACCESS_KEY_ID="eco-qe"
-export AWS_SECRET_ACCESS_KEY="ecoqeminio"
 ./scripts/deploy-test-cost-onprem.sh --run-perf --collect-metrics --upload-metrics
+
+# The defaults (S3_NO_VERIFY_SSL=true, S3_NO_SIGN_REQUEST=true) are tuned
+# for the shared MinIO above: TLS verification is skipped (untrusted cert)
+# and requests are unsigned (public bucket, no credentials required).
 
 # Note: S3_BUCKET is intentionally not defaulted to prevent accidental uploads
 # during local development. All outputs are saved locally; S3 upload only
 # occurs when S3_BUCKET is explicitly set.
 
-# AWS S3
-export S3_BUCKET=my-perf-metrics
-./scripts/deploy-test-cost-onprem.sh --run-perf --collect-metrics --upload-metrics
-
-# With AWS CLI profile
-export AWS_PROFILE=minio
-./scripts/deploy-test-cost-onprem.sh --run-perf --collect-metrics --upload-metrics
+# To target a different S3 backend that requires TLS verification and/or
+# signed requests, override the defaults:
+S3_NO_VERIFY_SSL=false S3_NO_SIGN_REQUEST=false \
+  AWS_ACCESS_KEY_ID=mykey AWS_SECRET_ACCESS_KEY=mysecret \
+  S3_BUCKET=my-bucket ./scripts/deploy-test-cost-onprem.sh --run-perf --upload-metrics
 ```
 
 **TEST_RUN_ID format:** `{chart_version}-{perf_profile}-{epoch_time}`
 
 Example: `0-2-20-baseline-1716130800` for chart version 0.2.20, baseline profile.
 
-**Required tools:** Either `aws` CLI, `mc` (MinIO client), or `s3cmd`.
+**Required tools:** Python 3 with `boto3` (auto-discovered from the test venv).
 
 ## Metrics Export Format
 

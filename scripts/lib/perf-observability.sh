@@ -192,17 +192,25 @@ upload_perf_results_to_s3() {
             || log_warning "Could not generate perf-summary.json (non-fatal)"
     fi
 
+    # The perf-results bucket (eco-bucket-perf-scale) is public/anonymous and
+    # the MinIO ingress uses an untrusted cert.  Default to skip-verify and
+    # no-sign so uploads work without credentials or a custom CA bundle.
+    # Override with S3_NO_VERIFY_SSL=false / S3_NO_SIGN_REQUEST=false for a
+    # different S3 backend that requires TLS verification or signed requests.
     local endpoint_arg=""
     [[ -n "${S3_ENDPOINT:-}" ]] && endpoint_arg="--endpoint-url ${S3_ENDPOINT}"
-    [[ "${S3_NO_VERIFY_SSL:-false}" == "true" ]] && endpoint_arg="${endpoint_arg} --no-verify-ssl"
-    [[ "${S3_NO_SIGN_REQUEST:-false}" == "true" ]] && endpoint_arg="${endpoint_arg} --no-sign-request"
+    [[ "${S3_NO_VERIFY_SSL:-true}" == "true" ]] && endpoint_arg="${endpoint_arg} --no-verify-ssl"
+    [[ "${S3_NO_SIGN_REQUEST:-true}" == "true" ]] && endpoint_arg="${endpoint_arg} --no-sign-request"
     local upload_timeout="${S3_UPLOAD_TIMEOUT:-120}"
 
-    log_info "S3 preflight: checking s3://${S3_BUCKET}/..."
-    if timeout 30 "${_s3_python}" "${s3_upload_script}" ls "s3://${S3_BUCKET}/" ${endpoint_arg} &>/dev/null; then
-        log_info "S3 preflight OK"
+    local s3_display="${S3_ENDPOINT:+${S3_ENDPOINT}/}${S3_BUCKET}"
+    log_info "S3 preflight: checking ${s3_display} (verify_ssl=${S3_NO_VERIFY_SSL:-true}, sign=${S3_NO_SIGN_REQUEST:-true})"
+    local preflight_out
+    if preflight_out=$(timeout 30 "${_s3_python}" "${s3_upload_script}" ls "s3://${S3_BUCKET}/" ${endpoint_arg} 2>&1); then
+        log_info "S3 preflight OK — ${s3_display} reachable"
     else
-        log_error "S3 preflight FAILED: cannot access s3://${S3_BUCKET}/ (check S3_ENDPOINT, credentials, bucket name)"
+        log_error "S3 preflight FAILED — cannot reach ${s3_display}"
+        log_error "  output: ${preflight_out}"
         return 1
     fi
 
@@ -213,7 +221,7 @@ upload_perf_results_to_s3() {
     fi
 
     local tarball_s3_key="${S3_PREFIX:-cost-onprem-performance/}${TEST_RUN_ID}.tar.gz"
-    log_info "Uploading to s3://${S3_BUCKET}/${tarball_s3_key}"
+    log_info "Uploading ${tarball_path##*/} to ${s3_display}/${tarball_s3_key}"
 
     local upload_rc=0
     timeout "${upload_timeout}" \
@@ -226,7 +234,7 @@ upload_perf_results_to_s3() {
     elif [[ ${upload_rc} -ne 0 ]]; then
         log_warning "S3 upload failed (exit code ${upload_rc}, non-fatal)"
     else
-        log_success "Uploaded to s3://${S3_BUCKET}/${tarball_s3_key}"
+        log_success "Uploaded to ${s3_display}/${tarball_s3_key}"
     fi
 
     # Update the bucket-level index.json so Grafana can list all runs

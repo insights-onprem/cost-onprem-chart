@@ -5,6 +5,11 @@ Bypasses broken IPv6 in split-site labs by filtering AF_INET6 from
 socket.getaddrinfo before any connections are made.  SNI and Host
 headers remain correct because the original hostname is preserved.
 
+The target S3 bucket (eco-bucket-perf-scale on the shared MinIO) is
+**public / anonymous** — no AWS credentials are required.  TLS
+verification is skipped by default because the MinIO ingress uses a
+certificate that is not in the system trust store.
+
 Usage:
     python3 s3-upload.py sync  <local-dir> <s3-uri> [--endpoint-url URL]
     python3 s3-upload.py cp    <local-file> <s3-uri> [--endpoint-url URL]
@@ -12,8 +17,8 @@ Usage:
 
 Environment:
     S3_ENDPOINT          – default --endpoint-url
-    S3_NO_VERIFY_SSL     – disable TLS verify (default: true for internal Minio/NooBaa)
-    S3_NO_SIGN_REQUEST   – anonymous access  (default: true for internal Minio/NooBaa)
+    S3_NO_VERIFY_SSL     – disable TLS verify  (default: true — MinIO uses untrusted certs)
+    S3_NO_SIGN_REQUEST   – anonymous access     (default: true — bucket is public, no creds needed)
     S3_UPLOAD_TIMEOUT    – per-file timeout in seconds (default: 60)
 """
 import os
@@ -129,12 +134,14 @@ def main():
     parser.add_argument("src", nargs="?")
     parser.add_argument("dst", nargs="?")
     parser.add_argument("--endpoint-url", default=os.environ.get("S3_ENDPOINT", ""))
-    # Secure by default; set S3_NO_VERIFY_SSL=true / S3_NO_SIGN_REQUEST=true
-    # for internal Minio/NooBaa where TLS and auth are not configured
+    # The perf-results bucket is public and the MinIO ingress uses an
+    # untrusted cert, so both default to true.  Override with "false" to
+    # re-enable verification or request signing when targeting a different
+    # S3 backend.
     parser.add_argument("--no-verify-ssl", action="store_true",
-                        default=os.environ.get("S3_NO_VERIFY_SSL", "false").lower() == "true")
+                        default=os.environ.get("S3_NO_VERIFY_SSL", "true").lower() == "true")
     parser.add_argument("--no-sign-request", action="store_true",
-                        default=os.environ.get("S3_NO_SIGN_REQUEST", "false").lower() == "true")
+                        default=os.environ.get("S3_NO_SIGN_REQUEST", "true").lower() == "true")
 
     args = parser.parse_args()
     client = _build_client(args.endpoint_url, not args.no_verify_ssl, not args.no_sign_request)
