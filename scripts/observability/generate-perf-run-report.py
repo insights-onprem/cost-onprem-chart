@@ -24,7 +24,8 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
-import xml.etree.ElementTree as ET
+
+from run_utils import load_metadata, load_session, parse_junit
 
 
 # ---------------------------------------------------------------------------
@@ -528,25 +529,6 @@ def _build_kpi_scorecard(all_evals: list[dict], per_test: dict[str, list[dict]])
 # Data loading
 # ---------------------------------------------------------------------------
 
-def load_session(run_dir: Path) -> Optional[dict]:
-    for sf in sorted((run_dir / "results").glob("session_*.json")):
-        try:
-            return json.loads(sf.read_text())
-        except Exception:
-            pass
-    return None
-
-
-def load_metadata(run_dir: Path) -> dict:
-    meta_path = run_dir / "metadata.json"
-    if meta_path.exists():
-        try:
-            return json.loads(meta_path.read_text())
-        except Exception:
-            pass
-    return {}
-
-
 def load_grafana_links(run_dir: Path, skip: bool = False) -> dict:
     """Load grafana-links.json if present (written by push-grafana-snapshot.py).
     
@@ -579,34 +561,6 @@ def load_metrics_snapshots(run_dir: Path) -> list[dict]:
             pass
     return snapshots
 
-
-def parse_junit(run_dir: Path) -> Optional[dict]:
-    reports_dir = run_dir / "reports"
-    named = reports_dir / "junit.xml"
-    candidates = [named] if named.exists() else sorted(reports_dir.glob("*.xml"))
-    for xml_path in candidates:
-        try:
-            root = ET.parse(xml_path).getroot()
-            suites = root.findall("testsuite") if root.tag == "testsuites" else [root]
-            total = errors = failures = skipped = 0
-            duration = 0.0
-            for suite in suites:
-                total    += int(suite.get("tests",    0))
-                errors   += int(suite.get("errors",   0))
-                failures += int(suite.get("failures", 0))
-                skipped  += int(suite.get("skipped",  0))
-                try:
-                    duration += float(suite.get("time", 0))
-                except ValueError:
-                    pass
-            return {
-                "total": total, "passed": total - errors - failures - skipped,
-                "failed": failures + errors, "skipped": skipped,
-                "duration_s": round(duration, 1),
-            }
-        except Exception:
-            continue
-    return None
 
 
 # ---------------------------------------------------------------------------

@@ -19,6 +19,8 @@ This document provides a high-level view of all performance test permutations.
 ## Performance Profiles
 
 All tests can be run with different data profiles via `PERF_PROFILE` environment variable.
+Profile data volumes are derived from production metrics — see
+[sizing-guide.md](sizing-guide.md#quick-reference) for full sizing details.
 
 | Profile | Customers | Clusters | Nodes | CPU Cores | Use Case |
 |---------|-----------|----------|-------|-----------|----------|

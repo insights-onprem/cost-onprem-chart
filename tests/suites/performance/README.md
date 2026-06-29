@@ -45,7 +45,9 @@ This suite validates:
 
 ## Performance Profiles
 
-Based on production data analysis (Pau Garcia Quiles, April 2026):
+Based on production data analysis (Pau Garcia Quiles, April 2026).
+See [sizing-guide.md](../../../docs/performance/sizing-guide.md) for resource
+recommendations and [profiles.py](profiles.py) for the canonical code definitions.
 
 | Profile | Customers | Clusters | Nodes | CPU Cores | Memory |
 |---------|-----------|----------|-------|-----------|--------|

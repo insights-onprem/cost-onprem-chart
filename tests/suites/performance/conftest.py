@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from conftest import ClusterConfig, DatabaseConfig
+from conftest import ClusterConfig, DatabaseConfig, obtain_jwt_token
 from utils import run_oc_command, get_pod_by_label
 
 
@@ -132,29 +132,10 @@ class PerfTestConfig:
     )
 
 
-def _create_perf_config() -> PerfTestConfig:
-    """Create PerfTestConfig, working around frozen dataclass with default_factory."""
-    return PerfTestConfig(
-        soak_duration_hours=float(os.environ.get("SOAK_DURATION_HOURS", "1")),
-        soak_upload_interval_minutes=int(os.environ.get("SOAK_UPLOAD_INTERVAL_MINUTES", "15")),
-        soak_query_interval_minutes=int(os.environ.get("SOAK_QUERY_INTERVAL_MINUTES", "5")),
-        soak_metrics_interval_seconds=int(os.environ.get("SOAK_METRICS_INTERVAL_SECONDS", "60")),
-        ing_high_freq_duration_minutes=int(os.environ.get("PERF_ING_005_DURATION_MINUTES", "15")),
-        ing_high_freq_interval_seconds=int(os.environ.get("PERF_ING_005_INTERVAL_SECONDS", "300")),
-        scale_max_sources=int(os.environ.get("PERF_SCALE_002_MAX_SOURCES", "25")),
-        scale_batch_size=int(os.environ.get("PERF_SCALE_002_BATCH_SIZE", "5")),
-        api_crud_iterations=int(os.environ.get("PERF_API_003_ITERATIONS", "10")),
-        timeout_provider_ready=int(os.environ.get("PERF_TIMEOUT_PROVIDER", "300")),
-        timeout_summary_tables=int(os.environ.get("PERF_TIMEOUT_SUMMARY", "600")),
-        timeout_kruize_experiments=int(os.environ.get("PERF_TIMEOUT_KRUIZE", "300")),
-        timeout_kruize_recommendations=int(os.environ.get("PERF_TIMEOUT_RECOMMENDATIONS", "600")),
-        memory_growth_daily_percent_max=float(os.environ.get("PERF_MEMORY_GROWTH_MAX", "5.0")),
-        concurrent_upload_max=int(os.environ.get("PERF_CONCURRENT_UPLOADS_MAX", "10")),
-    )
-
-
-# Global config instance - import this in test files
-PERF_CONFIG = _create_perf_config()
+# Global config instance - import this in test files.
+# PerfTestConfig fields use default_factory=lambda: os.environ.get(...) so all
+# env vars are read at instantiation time — no explicit constructor args needed.
+PERF_CONFIG = PerfTestConfig()
 
 
 def get_profile_timeout_multiplier(profile_name: str) -> float:
@@ -282,71 +263,11 @@ class PerformanceResult:
 
 
 # =============================================================================
-# Performance Profile Definitions (from Pau's Production Data)
+# Performance Profile Definitions
 # =============================================================================
+# Canonical source: tests/suites/performance/profiles.py (PROFILES dict)
 
-PERFORMANCE_PROFILES = {
-    "small": {
-        "description": "37% of customers - Single cluster, 15 nodes, 200 cores",
-        "clusters": 1,
-        "nodes_per_cluster": 15,
-        "cpu_cores_per_node": 13,  # ~200 total
-        "memory_gib_per_node": 73,  # ~1.1 TB total
-        "namespaces_per_cluster": 10,
-        "pods_per_namespace": 5,
-        "pvcs_per_cluster": 48,
-        "cost_models": 1,
-        "data_days": 30,
-    },
-    "medium": {
-        "description": "35% of customers - 2 clusters, 49 nodes, 544 cores",
-        "clusters": 2,
-        "nodes_per_cluster": 25,  # ~49 total
-        "cpu_cores_per_node": 11,  # ~544 total
-        "memory_gib_per_node": 57,  # ~2.8 TB total
-        "namespaces_per_cluster": 20,
-        "pods_per_namespace": 8,
-        "pvcs_per_cluster": 89,  # ~177 total
-        "cost_models": 1,
-        "data_days": 30,
-    },
-    "large": {
-        "description": "21% of customers - 7 clusters, 133 nodes, 1964 cores",
-        "clusters": 7,
-        "nodes_per_cluster": 19,  # ~133 total
-        "cpu_cores_per_node": 15,  # ~1964 total
-        "memory_gib_per_node": 73,  # ~9.7 TB total
-        "namespaces_per_cluster": 30,
-        "pods_per_namespace": 10,
-        "pvcs_per_cluster": 70,  # ~492 total
-        "cost_models": 2,
-        "data_days": 30,
-    },
-    "xlarge": {
-        "description": "6% of customers - 23 clusters, 346 nodes, 6954 cores",
-        "clusters": 23,
-        "nodes_per_cluster": 15,  # ~346 total
-        "cpu_cores_per_node": 20,  # ~6954 total
-        "memory_gib_per_node": 140,  # ~48.5 TB total
-        "namespaces_per_cluster": 40,
-        "pods_per_namespace": 15,
-        "pvcs_per_cluster": 55,  # ~1255 total
-        "cost_models": 3,
-        "data_days": 30,
-    },
-    "stress_p99": {
-        "description": "P99 stress test - 33 clusters, 1072 nodes",
-        "clusters": 33,
-        "nodes_per_cluster": 32,  # ~1072 total
-        "cpu_cores_per_node": 54,  # ~57424 total
-        "memory_gib_per_node": 128,
-        "namespaces_per_cluster": 50,
-        "pods_per_namespace": 20,
-        "pvcs_per_cluster": 185,  # ~6099 total
-        "cost_models": 7,
-        "data_days": 30,
-    },
-}
+from .profiles import PROFILES
 
 
 # =============================================================================
@@ -572,7 +493,7 @@ def get_pod_resource_usage(namespace: str, label_selector: str) -> List[Resource
     return snapshots
 
 
-def _parse_cpu(value: str) -> float:
+def parse_cpu_millicores(value: str) -> float:
     """Parse CPU value (e.g., '500m', '2') to cores."""
     if not value:
         return 0.0
@@ -581,7 +502,7 @@ def _parse_cpu(value: str) -> float:
     return float(value)
 
 
-def _parse_memory_mib(value: str) -> float:
+def parse_memory_mib(value: str) -> float:
     """Parse memory value to MiB."""
     if not value:
         return 0.0
@@ -595,6 +516,11 @@ def _parse_memory_mib(value: str) -> float:
     elif value.endswith("Ti"):
         return float(value[:-2]) * 1024 * 1024
     return float(value) / (1024 * 1024)  # Assume bytes
+
+
+# Keep private aliases for internal use
+_parse_cpu = parse_cpu_millicores
+_parse_memory_mib = parse_memory_mib
 
 
 # =============================================================================
@@ -727,9 +653,9 @@ def performance_profile() -> str:
 @pytest.fixture(scope="session")
 def profile_config(performance_profile: str) -> Dict[str, Any]:
     """Get the configuration for the selected performance profile."""
-    if performance_profile not in PERFORMANCE_PROFILES:
+    if performance_profile not in PROFILES:
         pytest.skip(f"Unknown performance profile: {performance_profile}")
-    return PERFORMANCE_PROFILES[performance_profile]
+    return PROFILES[performance_profile]
 
 
 @pytest.fixture(scope="function")
@@ -1608,7 +1534,7 @@ def get_celery_queue_depths(namespace: str) -> dict:
     if not valkey_pod:
         return {}
 
-    queues = ["celery", "priority", "summary", "ocp", "cost_model", "download"]
+    queues = ["celery", "priority", "summary", "ocp", "cost_model", "download", "ros"]
     depths = {}
     for q in queues:
         result = run_oc_command(
@@ -1653,5 +1579,41 @@ def wait_for_queue_drain(
     elapsed = round(time.time() - start, 1)
     print(f"{prefix} Timed out after {elapsed}s. Final depths: {last_depths}")
     return {"drained": False, "elapsed_s": elapsed, "final_depths": last_depths}
+
+
+# =============================================================================
+# Shared Authentication Helper
+# =============================================================================
+
+def create_authenticated_session(keycloak_config) -> "requests.Session":
+    """Create a requests.Session with a fresh JWT token.
+
+    Use this in test classes that need authenticated API access. It avoids
+    duplicating token-acquisition logic across multiple test files.
+    """
+    import requests
+
+    token = obtain_jwt_token(keycloak_config)
+    session = requests.Session()
+    session.headers.update({
+        "Authorization": f"Bearer {token.access_token}",
+        "Content-Type": "application/json",
+    })
+    session.verify = False
+    return session
+
+
+# =============================================================================
+# Centralized Koku API URL Fixture
+# =============================================================================
+
+@pytest.fixture(scope="session")
+def koku_api_url(cluster_config: ClusterConfig) -> str:
+    """Internal Koku API URL for in-cluster requests."""
+    return (
+        f"http://{cluster_config.helm_release_name}-koku-api"
+        f".{cluster_config.namespace}.svc.cluster.local:8000"
+        f"/api/cost-management/v1"
+    )
 
 

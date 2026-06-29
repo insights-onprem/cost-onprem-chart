@@ -30,61 +30,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
-import xml.etree.ElementTree as ET
 
-
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
-
-def load_session(run_dir: Path) -> Optional[dict]:
-    for sf in sorted((run_dir / "results").glob("session_*.json")):
-        try:
-            return json.loads(sf.read_text())
-        except Exception:
-            pass
-    return None
-
-
-def load_metadata(run_dir: Path) -> dict:
-    p = run_dir / "metadata.json"
-    if p.exists():
-        try:
-            return json.loads(p.read_text())
-        except Exception:
-            pass
-    return {}
-
-
-def parse_junit(run_dir: Path) -> dict:
-    reports_dir = run_dir / "reports"
-    named = reports_dir / "junit.xml"
-    candidates = [named] if named.exists() else sorted(reports_dir.glob("*.xml"))
-    for xml_path in candidates:
-        try:
-            root = ET.parse(xml_path).getroot()
-            suites = root.findall("testsuite") if root.tag == "testsuites" else [root]
-            total = errors = failures = skipped = 0
-            duration = 0.0
-            for suite in suites:
-                total    += int(suite.get("tests",    0))
-                errors   += int(suite.get("errors",   0))
-                failures += int(suite.get("failures", 0))
-                skipped  += int(suite.get("skipped",  0))
-                try:
-                    duration += float(suite.get("time", 0))
-                except ValueError:
-                    pass
-            return {
-                "total": total,
-                "passed": total - errors - failures - skipped,
-                "failed": failures + errors,
-                "skipped": skipped,
-                "duration_s": round(duration, 1),
-            }
-        except Exception:
-            continue
-    return {}
+from run_utils import load_metadata, load_session, parse_junit
 
 
 def _import_report_module():
@@ -215,7 +162,7 @@ def load_metrics_snapshots(run_dir: Path) -> dict:
 def build_summary(run_dir: Path) -> dict:
     session  = load_session(run_dir)
     metadata = load_metadata(run_dir)
-    junit    = parse_junit(run_dir)
+    junit    = parse_junit(run_dir) or {}
     results  = (session or {}).get("results", [])
     run_id   = run_dir.name
 

@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 import requests
 
-from conftest import ClusterConfig, obtain_jwt_token
+from conftest import ClusterConfig
 from e2e_helpers import (
     cleanup_database_records,
     delete_source,
@@ -38,8 +38,9 @@ from .conftest import (
     PerfResultCollector,
     PerfTimer,
     PerformanceResult,
+    create_authenticated_session,
 )
-from .profiles import PROFILES, get_profile_metrics
+from .profiles import ACTIVE_PROFILE as _ACTIVE_PROFILE, PROFILES, get_profile_metrics
 from .test_api_latency import calculate_percentiles, measure_request_latency
 
 
@@ -49,7 +50,6 @@ from .test_api_latency import calculate_percentiles, measure_request_latency
 # baseline runs stay fast and heavier scale variants only appear at profile
 # levels where they produce meaningful signal.
 # =============================================================================
-_ACTIVE_PROFILE = os.environ.get("PERF_PROFILE", "baseline")
 
 _SCALE_001_SKIP_REASON = (
     "SCALE-001[10] not run for baseline — registering 10 sources adds 2+ min "
@@ -118,14 +118,7 @@ class TestMultiClusterScale:
     
     def _get_authenticated_session(self) -> requests.Session:
         """Get session with fresh token."""
-        token = obtain_jwt_token(self._keycloak_config)
-        session = requests.Session()
-        session.headers.update({
-            "Authorization": f"Bearer {token.access_token}",
-            "Content-Type": "application/json",
-        })
-        session.verify = False
-        return session
+        return create_authenticated_session(self._keycloak_config)
     
     def _get_source_count(self, session: requests.Session) -> int:
         """Get current number of sources."""
@@ -141,6 +134,8 @@ class TestMultiClusterScale:
     
     def _get_memory_usage(self) -> Dict[str, float]:
         """Get memory usage for key pods."""
+        from .conftest import parse_memory_mib
+
         memory_usage = {}
         
         components = [
@@ -157,17 +152,9 @@ class TestMultiClusterScale:
             
             if result.returncode == 0 and result.stdout.strip():
                 try:
-                    # Format: "pod-name CPU(cores) MEMORY(bytes)"
                     parts = result.stdout.strip().split()
                     if len(parts) >= 3:
-                        mem_str = parts[2]
-                        # Parse memory (Mi, Gi, etc.)
-                        if mem_str.endswith("Mi"):
-                            memory_usage[name] = float(mem_str[:-2])
-                        elif mem_str.endswith("Gi"):
-                            memory_usage[name] = float(mem_str[:-2]) * 1024
-                        elif mem_str.endswith("Ki"):
-                            memory_usage[name] = float(mem_str[:-2]) / 1024
+                        memory_usage[name] = parse_memory_mib(parts[2])
                 except (ValueError, IndexError):
                     pass
         
@@ -180,6 +167,7 @@ class TestMultiClusterScale:
         cluster_config: ClusterConfig,
         database_config,
         rh_identity_header: str,
+        koku_api_url: str,
         perf_timer: PerfTimer,
         perf_result: PerformanceResult,
         perf_collector: PerfResultCollector,
@@ -199,11 +187,6 @@ class TestMultiClusterScale:
         ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
         if not ingress_pod:
             pytest.skip("Ingress pod not found")
-        
-        koku_api_url = (
-            f"http://{self.helm_release}-koku-api."
-            f"{self.namespace}.svc.cluster.local:8000/api/cost-management/v1"
-        )
         
         # Register sources
         sources_created = []
@@ -269,6 +252,7 @@ class TestMultiClusterScale:
         cluster_config: ClusterConfig,
         database_config,
         rh_identity_header: str,
+        koku_api_url: str,
         perf_timer: PerfTimer,
         perf_result: PerformanceResult,
         perf_collector: PerfResultCollector,
@@ -294,11 +278,6 @@ class TestMultiClusterScale:
         ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
         if not ingress_pod:
             pytest.skip("Ingress pod not found")
-        
-        koku_api_url = (
-            f"http://{self.helm_release}-koku-api."
-            f"{self.namespace}.svc.cluster.local:8000/api/cost-management/v1"
-        )
         
         checkpoints = []
         sources_created = 0

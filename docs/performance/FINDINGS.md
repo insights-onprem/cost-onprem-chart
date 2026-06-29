@@ -305,27 +305,8 @@ During medium-profile tests, Ceph reported `OSD_FULL` despite disks at 25-29% ac
 
 ## Performance Baselines
 
-### Large File Processing Times
-
-| File Size | Profile | Upload Throughput | Processing Time | Total Time |
-|-----------|---------|-------------------|-----------------|------------|
-| ~13 KB | baseline | - | <1s | <1s |
-| ~48 MB | medium | 1-2 MB/s | 5-10 min | 6-11 min |
-| ~67 MB | large | 1.1-1.9 MB/s | 7-20 min | 8-22 min |
-| ~70 MB | xlarge | 14.5 MB/s | 31s | ~3 min |
-| ~102 MB | xlarge | 14.2 MB/s | 31s | ~3 min |
-| ~197 MB | large | 3.2 MB/s | >20 min | >21 min |
-
-The xlarge throughput improvement (14+ MB/s vs 1-3 MB/s) is from the worker CPU increase (1000m/2000m) — the pipeline drains faster with higher CPU allocation.
-
-### Concurrent Upload Scaling (validated)
-
-| Concurrent Sources | Replicas (listener/ocp/summary) | Profile | Result |
-|--------------------|--------------------------------|---------|--------|
-| 2 | 1/1/1 | baseline | PASS |
-| 5 | 2/2/2 | medium | PASS |
-| 10 | 2/2/2 | medium | PASS |
-| 10 | 3/3/3 | xlarge | PASS |
+Validated throughput, processing times, API latencies, and concurrent upload
+results are maintained in the [Sizing Guide](sizing-guide.md#performance-baselines-validated).
 
 ---
 

@@ -177,13 +177,8 @@ query_prometheus() {
     local token
     token=$(get_prometheus_token)
     
-    local auth_header=""
-    if [[ -n "$token" ]]; then
-        auth_header="-H 'Authorization: Bearer $token'"
-    fi
-    
     curl -s -k \
-        -H "Authorization: Bearer $token" \
+        ${token:+-H "Authorization: Bearer $token"} \
         --data-urlencode "query=$query" \
         "$PROMETHEUS_URL/api/v1/query" 2>/dev/null
 }
@@ -198,7 +193,7 @@ query_prometheus_range() {
     token=$(get_prometheus_token)
     
     curl -s -k \
-        -H "Authorization: Bearer $token" \
+        ${token:+-H "Authorization: Bearer $token"} \
         --data-urlencode "query=$query" \
         --data-urlencode "start=$start" \
         --data-urlencode "end=$end" \

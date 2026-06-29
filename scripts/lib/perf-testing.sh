@@ -37,7 +37,7 @@ _PERF_TESTING_SOURCED=1
 #   Phase 2 — oc scale
 #     Replica counts are set directly (idempotent, faster than helm upgrade).
 #     Kruize is always kept at replicas=1 (scaling degrades throughput,
-#     see PERF-FINDING-014).
+#     see PERF-FINDING-004).
 #
 # Profile matrix:
 #   baseline/small : replicas=1, chart resource defaults
@@ -73,7 +73,7 @@ apply_perf_profile_config() {
             ocp_worker_replicas=2
             summary_worker_replicas=2
             # Keep Kruize CPU request at default so it always schedules;
-            # raise limit so it can burst under ROS load (PERF-FINDING-014).
+            # raise limit so it can burst under ROS load (PERF-FINDING-006).
             kruize_cpu_lim="2000m"
             ;;
         medium)

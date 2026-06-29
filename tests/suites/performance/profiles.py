@@ -17,10 +17,14 @@ Usage:
     print(f"Clusters: {profile['clusters']}")
 """
 
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 import uuid
+
+# Active profile selected by the test runner — used by all perf test files.
+ACTIVE_PROFILE: str = os.environ.get("PERF_PROFILE", "baseline")
 
 
 # =============================================================================

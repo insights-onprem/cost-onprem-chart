@@ -30,14 +30,15 @@ from .conftest import (
     PerfTimer,
     PerformanceResult,
     TimingMetric,
+    create_authenticated_session,
     get_timeout_for_profile,
 )
+from .profiles import ACTIVE_PROFILE as _ACTIVE_PROFILE
 
 
 # =============================================================================
 # Profile-Aware Thresholds
 # =============================================================================
-_ACTIVE_PROFILE = os.environ.get("PERF_PROFILE", "baseline")
 
 # API-005 P95 latency thresholds by profile.
 # Larger profiles have more data, causing longer query times for complex group-by.
@@ -197,14 +198,7 @@ class TestAPILatency:
     
     def _get_authenticated_session(self) -> requests.Session:
         """Get a session with fresh JWT token."""
-        token = obtain_jwt_token(self._keycloak_config)
-        session = requests.Session()
-        session.headers.update({
-            "Authorization": f"Bearer {token.access_token}",
-            "Content-Type": "application/json",
-        })
-        session.verify = False
-        return session
+        return create_authenticated_session(self._keycloak_config)
     
     @pytest.mark.parametrize("iterations", [10, 50])
     def test_perf_api_001_report_baseline(

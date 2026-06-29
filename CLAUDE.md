@@ -116,17 +116,10 @@ before tests run.
 ./scripts/deploy-test-cost-onprem.sh --perf-only --perf-suite ros,api
 ```
 
-**Profile Scaling Matrix:**
-
-| Profile  | Processor | Listener | OCP Worker | Summary Worker | Kruize CPU | Upload Size | Timeouts |
-|----------|-----------|----------|------------|----------------|------------|-------------|----------|
-| baseline | 1         | 1        | 1          | 1              | 500m/1000m | 100MB       | 30s      |
-| small    | 1         | 2        | 2          | 2              | 1000m/2000m| 100MB       | 30s      |
-| medium   | 2         | 2        | 2          | 2              | 1000m/2000m| 200MB       | 180s     |
-| large    | 3         | 3        | 3          | 3              | 1000m/2000m| 200MB       | 180s     |
-
-Kruize is always kept at 1 replica (scaling degrades throughput, see PERF-FINDING-014).
-Listener CPU is automatically boosted to node max for perf runs.
+**Profile Scaling Matrix:** See `.cursor/prompts/run-tests.md` for the full
+table of replicas, CPU/memory, upload sizes, and timeouts per profile.
+Kruize is always 1 replica (PERF-FINDING-004). Listener CPU is auto-boosted
+to node max for perf runs.
 
 **Key Files:**
 - `scripts/lib/perf-testing.sh` — Profile config + test orchestration

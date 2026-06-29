@@ -17,10 +17,12 @@ import argparse
 import json
 import os
 import sys
-import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+
+from run_utils import load_metadata as _load_metadata_base
+from run_utils import load_session, parse_junit
 
 
 # ---------------------------------------------------------------------------
@@ -37,6 +39,8 @@ CPU_CONFIGS = [
 CPU_LABELS  = [c["label"] for c in CPU_CONFIGS]
 CPU_BY_LABEL = {c["label"]: c for c in CPU_CONFIGS}
 
+# Subset of profiles shown in the matrix view.
+# Full profile definitions: tests/suites/performance/profiles.py
 PROFILES = ["baseline", "small", "medium", "large", "xlarge"]
 
 # Which ING tests are relevant for each profile (for the matrix legend)
@@ -50,81 +54,11 @@ RELEVANT_TESTS = {
 
 
 # ---------------------------------------------------------------------------
-# Data loading
+# Data loading  (delegates to run_utils; thin wrapper for Optional semantics)
 # ---------------------------------------------------------------------------
 
 def load_metadata(run_dir: Path) -> Optional[dict]:
-    meta_path = run_dir / "metadata.json"
-    if meta_path.exists():
-        try:
-            return json.loads(meta_path.read_text())
-        except Exception:
-            pass
-    # Fall back to inferring from directory name: {version}-{profile}-{epoch}
-    parts = run_dir.name.split("-")
-    return None
-
-
-def parse_junit(run_dir: Path) -> Optional[dict]:
-    """Parse junit XML from reports/ subdirectory. Returns summary dict."""
-    # Prefer junit.xml by name, fall back to any *.xml
-    reports_dir = run_dir / "reports"
-    candidates = []
-    named = reports_dir / "junit.xml"
-    if named.exists():
-        candidates = [named]
-    else:
-        candidates = sorted(reports_dir.glob("*.xml"))
-    for xml_path in candidates:
-        try:
-            root = ET.parse(xml_path).getroot()
-            # Handle both <testsuites> and <testsuite> roots
-            suites = root.findall("testsuite") if root.tag == "testsuites" else [root]
-            total = errors = failures = skipped = 0
-            duration = 0.0
-            perf_tests = []
-            for suite in suites:
-                total    += int(suite.get("tests",    0))
-                errors   += int(suite.get("errors",   0))
-                failures += int(suite.get("failures", 0))
-                skipped  += int(suite.get("skipped",  0))
-                try:
-                    duration += float(suite.get("time", 0))
-                except ValueError:
-                    pass
-                for tc in suite.findall("testcase"):
-                    name = tc.get("name", "")
-                    if "perf" in name.lower() or "ing" in name.lower():
-                        status = "passed"
-                        failure_msg = None
-                        if tc.find("failure") is not None:
-                            status = "failed"
-                            failure_msg = (tc.find("failure").get("message") or "")[:120]
-                        elif tc.find("error") is not None:
-                            status = "error"
-                            failure_msg = (tc.find("error").get("message") or "")[:120]
-                        elif tc.find("skipped") is not None:
-                            status = "skipped"
-                        perf_tests.append({
-                            "name": name,
-                            "classname": tc.get("classname", ""),
-                            "time": float(tc.get("time", 0)),
-                            "status": status,
-                            "message": failure_msg,
-                        })
-            passed = total - errors - failures - skipped
-            return {
-                "total": total,
-                "passed": passed,
-                "failed": failures + errors,
-                "skipped": skipped,
-                "duration_s": round(duration, 1),
-                "perf_tests": perf_tests,
-                "xml_path": str(xml_path),
-            }
-        except Exception:
-            continue
-    return None
+    return _load_metadata_base(run_dir) or None
 
 
 def parse_metrics_summary(run_dir: Path) -> Optional[dict]:
@@ -190,16 +124,6 @@ def infer_profile(run_id: str, metadata: Optional[dict]) -> str:
         if p in run_id.lower():
             return p
     return "baseline"
-
-
-def load_session(run_dir: Path) -> Optional[dict]:
-    """Load session_*.json — the aggregated results file written by the perf collector."""
-    for sf in sorted((run_dir / "results").glob("session_*.json")):
-        try:
-            return json.loads(sf.read_text())
-        except Exception:
-            pass
-    return None
 
 
 def extract_perf_summary(session: dict) -> list[dict]:

@@ -102,12 +102,12 @@ resource limits, timeouts, upload sizes) via Helm upgrade + `oc scale` before te
 ```
 
 ### Profile Scaling (managed by perf-testing.sh)
-- **baseline**: 1 replica each, chart defaults
-- **small**: 2 replicas (listener/ocp/summary), kruize CPU bump
-- **medium**: 2 replicas, raised memory/CPU, 200MB uploads, 180s timeouts
-- **large**: 3 replicas, same resource overrides as medium
 
-Kruize is always 1 replica. Listener CPU is auto-boosted to node max for perf runs.
+See the Profile Scaling Matrix in `.cursor/prompts/run-tests.md` for the full
+table of replicas, CPU/memory, upload sizes, and timeouts per profile.
+
+Kruize is always 1 replica (PERF-FINDING-004). Listener CPU is auto-boosted
+to node max for perf runs.
 
 ### Key Performance Test Files
 - `scripts/lib/perf-testing.sh` — Profile config, scaling, test orchestration

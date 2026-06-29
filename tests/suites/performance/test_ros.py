@@ -37,9 +37,7 @@ from .conftest import (
     PerformanceResult,
 )
 from .test_ingestion import generate_and_upload_data
-from .profiles import PROFILES
-
-_ACTIVE_PROFILE = os.environ.get("PERF_PROFILE", "baseline")
+from .profiles import ACTIVE_PROFILE as _ACTIVE_PROFILE, PROFILES
 
 
 def _get_profile_workload_count(profile_name: str) -> int:
@@ -56,13 +54,6 @@ def _get_profile_workload_count(profile_name: str) -> int:
 
 
 # =============================================================================
-# Constants
-# =============================================================================
-
-UPLOAD_CONTENT_TYPE = "application/vnd.redhat.hccm.filename+tgz"
-
-
-# =============================================================================
 # Helper Functions
 # =============================================================================
 
@@ -70,8 +61,10 @@ def get_kruize_heap_usage(namespace: str) -> Optional[Dict[str, float]]:
     """Get Kruize JVM heap usage metrics.
     
     Returns:
-        Dict with 'used_mb', 'committed_mb', 'max_mb' or None if unavailable.
+        Dict with 'used_mb' or None if unavailable.
     """
+    from .conftest import parse_memory_mib
+
     kruize_pod = get_pod_by_label(namespace, "app.kubernetes.io/component=ros-optimization")
     if not kruize_pod:
         return None
@@ -86,16 +79,7 @@ def get_kruize_heap_usage(namespace: str) -> Optional[Dict[str, float]]:
     try:
         parts = result.stdout.strip().split()
         if len(parts) >= 3:
-            mem_str = parts[2]
-            if mem_str.endswith("Mi"):
-                mem_mb = float(mem_str[:-2])
-            elif mem_str.endswith("Gi"):
-                mem_mb = float(mem_str[:-2]) * 1024
-            elif mem_str.endswith("Ki"):
-                mem_mb = float(mem_str[:-2]) / 1024
-            else:
-                mem_mb = float(mem_str)
-            return {"used_mb": mem_mb}
+            return {"used_mb": parse_memory_mib(parts[2])}
     except (ValueError, IndexError):
         pass
     
@@ -486,17 +470,14 @@ class TestROSPerformance:
         else:
             print("[ros-queue-drain] queue reset failed, proceeding anyway")
 
-    @pytest.fixture(scope="class")
-    def kruize_credentials(self, cluster_config) -> Dict[str, str]:
-        """Get Kruize database credentials."""
-        secret_name = f"{cluster_config.helm_release_name}-db-credentials"
-        user = get_secret_value(cluster_config.namespace, secret_name, "kruize-user")
-        password = get_secret_value(cluster_config.namespace, secret_name, "kruize-password")
-        
-        if not user or not password:
+    # kruize_credentials is provided by the session-scoped fixture in conftest.py
+    # (returns KruizeCredentials dataclass or None)
+
+    @pytest.fixture(scope="class", autouse=True)
+    def _require_kruize_credentials(self, kruize_credentials):
+        """Skip all ROS tests if Kruize credentials are unavailable."""
+        if kruize_credentials is None:
             pytest.skip("Kruize database credentials not found")
-        
-        return {"user": user, "password": password, "database": "costonprem_kruize"}
 
     @pytest.fixture(scope="class")
     def db_pod(self, cluster_config) -> str:
@@ -520,10 +501,7 @@ class TestROSPerformance:
             pytest.skip("Ingress pod not found")
         return pod
 
-    @pytest.fixture(scope="class")
-    def koku_api_url(self, cluster_config) -> str:
-        """Get internal Koku API URL."""
-        return f"http://{cluster_config.helm_release_name}-koku-api.{cluster_config.namespace}.svc.cluster.local:8000/api/cost-management/v1"
+    # koku_api_url is provided by the session-scoped fixture in conftest.py
 
     def test_perf_ros_001_recommendation_baseline(
         self,
@@ -603,8 +581,8 @@ class TestROSPerformance:
             exp_success, exp_count, exp_time = wait_for_kruize_experiments(
                 cluster_config.namespace,
                 db_pod,
-                kruize_credentials["user"],
-                kruize_credentials["password"],
+                kruize_credentials.user,
+                kruize_credentials.password,
                 cluster_id,
                 expected_count=1,
                 timeout=300,
@@ -618,8 +596,8 @@ class TestROSPerformance:
                 rec_success, rec_count, rec_time = wait_for_kruize_recommendations(
                     cluster_config.namespace,
                     db_pod,
-                    kruize_credentials["user"],
-                    kruize_credentials["password"],
+                    kruize_credentials.user,
+                    kruize_credentials.password,
                     cluster_id,
                     expected_count=1,
                     timeout=300,
@@ -762,8 +740,8 @@ class TestROSPerformance:
                 exp_success, exp_count, exp_time = wait_for_kruize_experiments(
                     cluster_config.namespace,
                     db_pod,
-                    kruize_credentials["user"],
-                    kruize_credentials["password"],
+                    kruize_credentials.user,
+                    kruize_credentials.password,
                     cluster_id,
                     expected_count=num_workloads,
                     timeout=experiment_timeout,
@@ -873,8 +851,8 @@ class TestROSPerformance:
             exp_success, initial_exp_count, initial_time = wait_for_kruize_experiments(
                 cluster_config.namespace,
                 db_pod,
-                kruize_credentials["user"],
-                kruize_credentials["password"],
+                kruize_credentials.user,
+                kruize_credentials.password,
                 cluster_id,
                 expected_count=1,  # Based on baseline profile
                 timeout=300,
@@ -887,8 +865,8 @@ class TestROSPerformance:
         initial_rec_count = get_kruize_recommendation_count(
             cluster_config.namespace,
             db_pod,
-            kruize_credentials["user"],
-            kruize_credentials["password"],
+            kruize_credentials.user,
+            kruize_credentials.password,
             cluster_id,
         )
         
@@ -923,8 +901,8 @@ class TestROSPerformance:
                 current_rec_count = get_kruize_recommendation_count(
                     cluster_config.namespace,
                     db_pod,
-                    kruize_credentials["user"],
-                    kruize_credentials["password"],
+                    kruize_credentials.user,
+                    kruize_credentials.password,
                     cluster_id,
                 )
                 # Recommendations should have been updated
@@ -1061,8 +1039,8 @@ class TestROSPerformance:
                 exp_success, exp_count, exp_time = wait_for_kruize_experiments(
                     cluster_config.namespace,
                     db_pod,
-                    kruize_credentials["user"],
-                    kruize_credentials["password"],
+                    kruize_credentials.user,
+                    kruize_credentials.password,
                     cluster_id,
                     expected_count=num_workloads,
                     timeout=experiment_timeout,

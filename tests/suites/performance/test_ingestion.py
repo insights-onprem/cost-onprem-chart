@@ -56,21 +56,18 @@ from .conftest import (
     get_pod_resource_usage,
     save_perf_result,
 )
-from .profiles import PROFILES, get_profile_metrics, get_profile_nise_yaml
+from .profiles import ACTIVE_PROFILE as _ACTIVE_PROFILE, PROFILES, get_profile_metrics, get_profile_nise_yaml
 
 
 # =============================================================================
 # Constants
 # =============================================================================
 
-UPLOAD_CONTENT_TYPE = "application/vnd.redhat.hccm.filename+tgz"
-
 # ---------------------------------------------------------------------------
 # Profile-filtered parametrize lists — all gated by PERF_PROFILE so that
 # baseline runs stay fast (<30 min) and heavier variants only appear at the
 # run levels where they're meaningful.
 # ---------------------------------------------------------------------------
-_ACTIVE_PROFILE = os.environ.get("PERF_PROFILE", "baseline")
 
 # ING-001: data profile variants to generate and upload.
 # baseline → baseline data (1 cluster, 3 nodes, 1 day)
@@ -144,6 +141,8 @@ ING_006_PROFILES = (
 
 def get_listener_cpu_usage(namespace: str) -> Optional[float]:
     """Get current listener CPU usage in cores."""
+    from .conftest import parse_cpu_millicores
+
     result = run_oc_command([
         "adm", "top", "pod", "-n", namespace,
         "-l", "app.kubernetes.io/component=listener",
@@ -153,14 +152,10 @@ def get_listener_cpu_usage(namespace: str) -> Optional[float]:
     if result.returncode != 0 or not result.stdout.strip():
         return None
     
-    # Parse output: "pod-name CPU(cores) MEMORY(bytes)"
     try:
         parts = result.stdout.strip().split()
         if len(parts) >= 2:
-            cpu_str = parts[1]
-            if cpu_str.endswith("m"):
-                return float(cpu_str[:-1]) / 1000
-            return float(cpu_str)
+            return parse_cpu_millicores(parts[1])
     except (ValueError, IndexError):
         pass
     
@@ -314,6 +309,7 @@ class TestIngestionThroughput:
         cluster_config: ClusterConfig,
         ingress_url: str,
         database_config,
+        koku_api_url: str,
         perf_timer: PerfTimer,
         perf_result: PerformanceResult,
         perf_collector: PerfResultCollector,
@@ -334,8 +330,6 @@ class TestIngestionThroughput:
         ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
         if not ingress_pod:
             pytest.skip("Ingress pod not found")
-
-        koku_api_url = f"http://{self.helm_release}-koku-api.{self.namespace}.svc.cluster.local:8000/api/cost-management/v1"
 
         # Pre-test cleanup: remove any leftover source/DB records with this name
         # from a previous cancelled run to prevent HTTP 400 duplicate-source errors.
@@ -411,6 +405,7 @@ class TestIngestionThroughput:
         cluster_config: ClusterConfig,
         ingress_url: str,
         database_config,
+        koku_api_url: str,
         perf_timer: PerfTimer,
         perf_result: PerformanceResult,
         perf_collector: PerfResultCollector,
@@ -439,8 +434,6 @@ class TestIngestionThroughput:
         ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
         if not ingress_pod:
             pytest.skip("Ingress pod not found")
-        
-        koku_api_url = f"http://{self.helm_release}-koku-api.{self.namespace}.svc.cluster.local:8000/api/cost-management/v1"
         
         # Register source
         with perf_timer.measure("source_registration"):
@@ -540,6 +533,7 @@ class TestIngestionThroughput:
         cluster_config: ClusterConfig,
         ingress_url: str,
         database_config,
+        koku_api_url: str,
         perf_timer: PerfTimer,
         perf_result: PerformanceResult,
         perf_collector: PerfResultCollector,
@@ -569,8 +563,6 @@ class TestIngestionThroughput:
         ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
         if not ingress_pod:
             pytest.skip("Ingress pod not found")
-        
-        koku_api_url = f"http://{self.helm_release}-koku-api.{self.namespace}.svc.cluster.local:8000/api/cost-management/v1"
         
         # Register all sources first
         sources = []
@@ -694,6 +686,7 @@ class TestIngestionThroughput:
         cluster_config: ClusterConfig,
         ingress_url: str,
         database_config,
+        koku_api_url: str,
         perf_timer: PerfTimer,
         perf_result: PerformanceResult,
         perf_collector: PerfResultCollector,
@@ -725,8 +718,6 @@ class TestIngestionThroughput:
         ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
         if not ingress_pod:
             pytest.skip("Ingress pod not found")
-        
-        koku_api_url = f"http://{self.helm_release}-koku-api.{self.namespace}.svc.cluster.local:8000/api/cost-management/v1"
         
         # Register source
         with perf_timer.measure("source_registration"):
@@ -856,6 +847,7 @@ class TestIngestionThroughput:
         cluster_config: ClusterConfig,
         ingress_url: str,
         database_config,
+        koku_api_url: str,
         perf_timer: PerfTimer,
         perf_result: PerformanceResult,
         perf_collector: PerfResultCollector,
@@ -880,8 +872,6 @@ class TestIngestionThroughput:
         ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
         if not ingress_pod:
             pytest.skip("Ingress pod not found")
-        
-        koku_api_url = f"http://{self.helm_release}-koku-api.{self.namespace}.svc.cluster.local:8000/api/cost-management/v1"
         
         # Register source
         source = register_source(
@@ -963,6 +953,7 @@ class TestIngestionThroughput:
         cluster_config: ClusterConfig,
         ingress_url: str,
         database_config,
+        koku_api_url: str,
         perf_timer: PerfTimer,
         perf_result: PerformanceResult,
         perf_collector: PerfResultCollector,
@@ -999,8 +990,6 @@ class TestIngestionThroughput:
         ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
         if not ingress_pod:
             pytest.skip("Ingress pod not found")
-        
-        koku_api_url = f"http://{self.helm_release}-koku-api.{self.namespace}.svc.cluster.local:8000/api/cost-management/v1"
         
         # Track all sources for cleanup
         sources = []

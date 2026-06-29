@@ -105,6 +105,7 @@ upload_size = ~43 bytes/CSV row compressed at ~10:1 ratio
 ### Cluster Profiles (from Pau Garcia Quiles - Production Data April 2026)
 
 Based on production metrics snapshot covering 417 active OCP accounts.
+Resource sizing per profile is maintained in [sizing-guide.md](sizing-guide.md).
 
 | Profile | % of Customers | Clusters | Nodes | CPU Cores | Memory | PVCs | Cost Models |
 |---------|---------------|----------|-------|-----------|--------|------|-------------|
