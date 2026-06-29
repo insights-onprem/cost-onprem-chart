@@ -26,9 +26,6 @@ spec:
       securityContext:
         {{- include "cost-onprem.securityContext.pod" . | nindent 8 }}
 
-      initContainers:
-      {{- include "cost-onprem.koku.initContainer.combineCA" . | nindent 6 }}
-
       containers:
       - name: migrate
         image: "{{ include "cost-onprem.koku.image" . }}"
@@ -115,7 +112,13 @@ spec:
         {{- include "cost-onprem.koku.commonEnv" . | nindent 8 }}
 
         volumeMounts:
-        {{- include "cost-onprem.koku.volumeMounts" . | nindent 8 }}
+        - name: tmp
+          mountPath: /tmp
+        {{- if and .Values.valkey.tls.enabled .Values.valkey.tls.caCertSecretName }}
+        - name: redis-tls-ca
+          mountPath: /etc/redis-tls
+          readOnly: true
+        {{- end }}
 
         securityContext:
           {{- include "cost-onprem.securityContext.container" . | nindent 10 }}
@@ -129,4 +132,13 @@ spec:
             memory: 1Gi
 
       volumes:
-      {{- include "cost-onprem.koku.volumes" . | nindent 6 }}
+      - name: tmp
+        emptyDir: {}
+      {{- if and .Values.valkey.tls.enabled .Values.valkey.tls.caCertSecretName }}
+      - name: redis-tls-ca
+        secret:
+          secretName: {{ .Values.valkey.tls.caCertSecretName }}
+          items:
+            - key: ca.crt
+              path: ca.crt
+      {{- end }}
