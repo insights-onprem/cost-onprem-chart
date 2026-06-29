@@ -114,6 +114,11 @@ spec:
         volumeMounts:
         - name: tmp
           mountPath: /tmp
+        {{- if and .Values.valkey.tls.enabled .Values.valkey.tls.caCertSecretName }}
+        - name: redis-tls-ca
+          mountPath: /etc/redis-tls
+          readOnly: true
+        {{- end }}
 
         securityContext:
           {{- include "cost-onprem.securityContext.container" . | nindent 10 }}
@@ -129,3 +134,11 @@ spec:
       volumes:
       - name: tmp
         emptyDir: {}
+      {{- if and .Values.valkey.tls.enabled .Values.valkey.tls.caCertSecretName }}
+      - name: redis-tls-ca
+        secret:
+          secretName: {{ .Values.valkey.tls.caCertSecretName }}
+          items:
+            - key: ca.crt
+              path: ca.crt
+      {{- end }}
