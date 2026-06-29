@@ -647,7 +647,7 @@ class _TimerContext:
 @pytest.fixture(scope="session")
 def performance_profile() -> str:
     """Get the performance profile to use (from env var or default)."""
-    return os.environ.get("PERF_PROFILE", "small")
+    return os.environ.get("PERF_PROFILE", "baseline")
 
 
 @pytest.fixture(scope="session")
@@ -1588,19 +1588,11 @@ def wait_for_queue_drain(
 def create_authenticated_session(keycloak_config) -> "requests.Session":
     """Create a requests.Session with a fresh JWT token.
 
-    Use this in test classes that need authenticated API access. It avoids
-    duplicating token-acquisition logic across multiple test files.
+    Delegates to the root conftest version with JSON content type.
     """
-    import requests
+    from tests.conftest import create_authenticated_session as _root_create
 
-    token = obtain_jwt_token(keycloak_config)
-    session = requests.Session()
-    session.headers.update({
-        "Authorization": f"Bearer {token.access_token}",
-        "Content-Type": "application/json",
-    })
-    session.verify = False
-    return session
+    return _root_create(keycloak_config, content_type="application/json")
 
 
 # =============================================================================

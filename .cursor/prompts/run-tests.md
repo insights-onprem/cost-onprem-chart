@@ -79,11 +79,15 @@ The `apply_perf_profile_config()` function automatically adjusts the live cluste
 | baseline | 1         | 1        | 1          | 1              | 500m/1000m | 100MB       | 30s      |
 | small    | 1         | 2        | 2          | 2              | 500m/2000m | 100MB       | 30s      |
 | medium   | 2         | 2        | 2          | 2              | 500m/2000m | 200MB       | 180s     |
-| large    | 3         | 3        | 3          | 3              | 500m/2000m | 200MB       | 180s     |
-| xlarge   | 3         | 3        | 3          | 3              | 1000m/2000m| 200MB       | 600s     |
+| large    | 3         | 3        | 3          | 3              | 500m/2000m | 500MB       | 600s     |
+| xlarge   | 3         | 3        | 3          | 3              | 1000m/2000m| 500MB       | 600s     |
 
 Kruize is always kept at 1 replica (scaling degrades throughput, see PERF-FINDING-004).
 Listener CPU is automatically boosted to node max for perf runs.
+
+**Note**: ING-006 (processing window validation) has a 6-hour timeout — it
+validates the daily processing window spec and will run for the full duration
+on medium+ profiles. It is not gated by `SOAK_TESTS`.
 
 #### Key Environment Variables
 

@@ -832,6 +832,10 @@ def wait_for_processing_complete(
             }
 
         # ── 1. Fetch the most recent manifest for this cluster ──────────────
+        # Safety: cluster_id is always a test-generated UUID, never external
+        # input.  If this helper is reused with user-supplied values, switch
+        # to parameterised queries.
+        #
         # Schema note: reporting_common_costusagereportmanifest has no
         # num_processed_files column.  Completion is signalled by
         # completed_datetime being set (all download/processing/summary phases
