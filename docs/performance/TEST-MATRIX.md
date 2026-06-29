@@ -44,7 +44,7 @@ to 8 vCPU (actual usage <2 cores) to free headroom for workers.
 | `small` | 3 | 12 | 48000 | 1/2/2/2 | Listener + workers scaled for drain |
 | `medium` | 3 | 12 | 64000 | 2/2/2/2 | Memory bump needed for ROS/listener |
 | `large` | 3 | 16 | 64000 | 3/3/3/3 | CPU bump needed for extra pods |
-| `xlarge` | 3 | 18 | 64000 | 3/3/3/3 | **Validated** — 41/41 pass, 123 min |
+| `xlarge` | 3 | 18 | 64000 | 3/3/3/3 | **Validated** — 42/42 pass, 123 min |
 
 Hypervisor constraint: 80 threads total. With 3 masters at 10 vCPU (30 total),
 max `WORKER_CPU` is 16 (48 + 30 = 78/80). Trimming masters to 8 vCPU allows

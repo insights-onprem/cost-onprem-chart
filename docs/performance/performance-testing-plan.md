@@ -455,8 +455,11 @@ histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="koku-api
 
 | Profile | Run ID | Tests | Result | Duration | Key Metric |
 |---------|--------|-------|--------|----------|------------|
-| baseline | multiple | 41 | PASS | ~5 min | Smoke test |
-| xlarge | 1782335628 | 41 | **41 passed, 0 failed** | 123 min | 14+ MB/s upload, 31 exp/min Kruize |
+| baseline | multiple | 41 | **41 passed, 0 failed** | ~5 min | Smoke test |
+| small | multiple | 42 | **42 passed, 0 failed** | ~20 min | Standard workload |
+| medium | multiple | 42 | **42 passed, 0 failed** | ~45 min | Listener saturation identified |
+| large | 1782412062 | 42 | **42 passed, 0 failed** | ~75 min | 1.9 MB/s upload throughput |
+| xlarge | 1782403098 | 42 | **42 passed, 0 failed** | ~123 min | 14+ MB/s upload, 31 exp/min Kruize |
 
 ### Test Files
 
