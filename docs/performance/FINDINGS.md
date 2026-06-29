@@ -1,6 +1,9 @@
 # Performance Testing Findings
 
-Product issues and sizing requirements discovered during performance testing.
+Issues and sizing requirements discovered during performance testing
+(FLPATH-4036, COST-7567). This document is a point-in-time record of what
+was found and how it was addressed. Finding statuses are intentionally fixed
+at the time of discovery — Jira tickets track ongoing resolution.
 
 ---
 
@@ -67,7 +70,7 @@ Applied automatically by `apply_perf_profile_config()` for medium+ profiles.
 
 **Status**: Mitigated; upstream fix needed  
 **Severity**: High  
-**Jira**: Needs ticket — related to [COST-7722](https://redhat.atlassian.net/browse/COST-7722) (ros-ocp-backend performance optimization)
+**Jira**: [FLPATH-4428](https://redhat.atlassian.net/browse/FLPATH-4428) — related to [COST-7722](https://redhat.atlassian.net/browse/COST-7722) (ros-ocp-backend performance optimization)
 
 **Problem**:
 The ros-processor (Go) uses `kafkaAutoCommit: true` and does not advance the offset on FK errors. When a source is deleted while ROS events are still in Kafka, those events become permanent poison pills that block all subsequent events on that partition.
@@ -168,7 +171,7 @@ With the FLPATH-4302 CPU increase (1000m/2000m), Kruize throughput jumped to **3
 
 **Status**: Mitigated in perf scripts; chart fix needed  
 **Severity**: Critical  
-**Jira**: Needs ticket (FLPATH — chart bug)
+**Jira**: [FLPATH-4429](https://redhat.atlassian.net/browse/FLPATH-4429)
 
 **Problem**:
 Envoy reads its config file at startup only — it does not watch for changes. When `helm upgrade` modifies the gateway ConfigMap (e.g. increasing `ingressTimeout` from 30s to 600s), the running gateway pod continues using the old values. This rendered all timeout overrides from `apply_perf_profile_config()` ineffective, causing HTTP 504 failures on medium/large profile uploads despite correct values in the ConfigMap.
@@ -201,7 +204,7 @@ The `INGRESS_MAXUPLOADMEM` default is 32 MB. For uploads >32 MB, insights-ingres
 
 **Status**: Mitigated in perf profiles; chart fix needed  
 **Severity**: High  
-**Jira**: Needs ticket (FLPATH — chart enhancement)
+**Jira**: [FLPATH-4430](https://redhat.atlassian.net/browse/FLPATH-4430)
 
 **Problem**:
 The ingress pod (`insights-ingress-go`) uses the shared `resources.application` block (1Gi memory limit). Processing large uploads requires multipart parsing, tar extraction, and S3 staging — all memory-intensive. Uploads >100 MB or 10+ concurrent uploads cause HTTP 500 errors from the ingress pod due to memory exhaustion.
@@ -227,7 +230,7 @@ Uploads up to 138 MB succeed individually (ING-002[90-days] = 138.74 MB at 2.44 
 
 **Status**: Product limitation; upstream enhancement needed  
 **Severity**: Medium  
-**Jira**: Needs ticket (COST — upstream `insights-ingress-go` enhancement)
+**Jira**: [FLPATH-4431](https://redhat.atlassian.net/browse/FLPATH-4431)
 
 **Problem**:
 `insights-ingress-go` uses the minio-go `PutObject()` API for S3 staging, which performs a single-part upload. Payloads exceeding ~150 MB consistently fail with HTTP 500 against NooBaa/Ceph RGW backends. The error originates in the S3 staging step, not in multipart form parsing or pod memory limits.
@@ -310,69 +313,25 @@ results are maintained in the [Sizing Guide](sizing-guide.md#performance-baselin
 
 ---
 
-## Action Items
+## Jira Tracking
 
-### Product Changes (require Jira + PR)
-
-| Finding | Change | Jira | Status |
-|---------|--------|------|--------|
+| Finding | Summary | Jira | Status |
+|---------|---------|------|--------|
 | FINDING-001 | HAProxy + Envoy timeouts 30s → 180s | [FLPATH-4091](https://redhat.atlassian.net/browse/FLPATH-4091) | Code Review |
-| FINDING-006 | Kruize CPU limits 500m/1000m → 1000m/2000m | [FLPATH-4302](https://redhat.atlassian.net/browse/FLPATH-4302) | Code Review |
-| FINDING-011 | Envoy `request_timeout` removed | — | Fixed in chart |
-| FINDING-013 | ROS processor dead-letter handling | Needs ticket (relates to [COST-7722](https://redhat.atlassian.net/browse/COST-7722)) | Mitigated (test reordering) |
-| FINDING-020 | Gateway ConfigMap checksum annotation | Needs ticket (FLPATH) | Mitigated (perf script restart) |
-| FINDING-021 | Ingress upload memory per profile | — | Fixed in perf profiles |
-| FINDING-022 | Ingress pod dedicated resource block | Needs ticket (FLPATH) | Mitigated (perf profile override) |
-| FINDING-024 | Ingress multipart S3 upload for large payloads | Needs ticket (COST — insights-ingress-go) | Product limitation |
-| FINDING-025 | Worker CPU/memory sizing for throughput | [COST-7598](https://redhat.atlassian.net/browse/COST-7598), [COST-7618](https://redhat.atlassian.net/browse/COST-7618) | Fixed in perf profiles |
-
-### Sizing Documentation
-
-| Finding | Recommendation | Jira | Status |
-|---------|---------------|------|--------|
 | FINDING-002 | Listener CPU ≥1000m for burst ingestion | [COST-7618](https://redhat.atlassian.net/browse/COST-7618), [COST-6993](https://redhat.atlassian.net/browse/COST-6993) | Documented |
 | FINDING-003 | Scale replicas for concurrent source count | [COST-7598](https://redhat.atlassian.net/browse/COST-7598), [COST-6163](https://redhat.atlassian.net/browse/COST-6163) | Documented |
-| FINDING-004 | Kruize at 1 replica; ~8 exp/min baseline | [COST-7722](https://redhat.atlassian.net/browse/COST-7722) | Documented |
+| FINDING-004 | Kruize at 1 replica; CPU is throughput lever | [COST-7722](https://redhat.atlassian.net/browse/COST-7722) | Documented |
+| FINDING-006 | Kruize CPU 500m/1000m → 1000m/2000m | [FLPATH-4302](https://redhat.atlassian.net/browse/FLPATH-4302) | Code Review |
+| FINDING-011 | Envoy `request_timeout` removed | — | Fixed in chart |
+| FINDING-013 | ROS processor dead-letter handling | [FLPATH-4428](https://redhat.atlassian.net/browse/FLPATH-4428) | Mitigated |
+| FINDING-020 | Gateway ConfigMap checksum annotation | [FLPATH-4429](https://redhat.atlassian.net/browse/FLPATH-4429) | Mitigated |
+| FINDING-021 | Ingress upload memory per profile | — | Fixed in perf profiles |
+| FINDING-022 | Ingress dedicated resource block | [FLPATH-4430](https://redhat.atlassian.net/browse/FLPATH-4430) | Mitigated |
+| FINDING-024 | Ingress multipart S3 upload | [FLPATH-4431](https://redhat.atlassian.net/browse/FLPATH-4431) | Product limitation |
+| FINDING-025 | Worker CPU/memory sizing | [COST-7598](https://redhat.atlassian.net/browse/COST-7598), [COST-7618](https://redhat.atlassian.net/browse/COST-7618) | Fixed in perf profiles |
+
+**Parent epic**: [COST-7567](https://redhat.atlassian.net/browse/COST-7567) (CoP Performance Tuning & Hardware Sizing Guidelines)
 
 ---
 
-## Related Jira
-
-### Epic / Parent Tickets
-
-- [COST-7567](https://redhat.atlassian.net/browse/COST-7567): CoP Performance Tuning & Hardware Sizing Guidelines (epic)
-- [FLPATH-4036](https://redhat.atlassian.net/browse/FLPATH-4036): Performance Testing Framework
-
-### Chart Fixes (FLPATH)
-
-- [FLPATH-4091](https://redhat.atlassian.net/browse/FLPATH-4091): Gateway Timeout Fix → FINDING-001
-- [FLPATH-4302](https://redhat.atlassian.net/browse/FLPATH-4302): Kruize CPU Resource Increase → FINDING-006
-
-### Sizing & Tuning (COST)
-
-- [COST-7618](https://redhat.atlassian.net/browse/COST-7618): Produce sizing guide and Helm values overrides → FINDING-002, -003, -004, -025
-- [COST-7598](https://redhat.atlassian.net/browse/COST-7598): Processing pipeline analysis (Celery, ROS, Kruize) → FINDING-003, -025
-- [COST-7599](https://redhat.atlassian.net/browse/COST-7599): Validate tuned configuration recommendations → FINDING-025
-- [COST-7722](https://redhat.atlassian.net/browse/COST-7722): ros-ocp-backend performance optimization → FINDING-004, -013
-
-### Upstream Autoscaling (Backlog)
-
-- [COST-6163](https://redhat.atlassian.net/browse/COST-6163): Worker autoscaling → FINDING-003
-- [COST-6993](https://redhat.atlassian.net/browse/COST-6993): Listener autoscaling → FINDING-002
-
-### Infrastructure
-
-- [COST-7732](https://redhat.atlassian.net/browse/COST-7732): Deploy script refactor for performance test support
-
-### Untracked — Tickets Needed
-
-| Finding | Suggested Project | Summary |
-|---------|-------------------|---------|
-| FINDING-013 | COST | ROS processor dead-letter handling for Kafka FK errors |
-| FINDING-020 | FLPATH | Gateway ConfigMap checksum annotation for automatic rollout |
-| FINDING-022 | FLPATH | Ingress dedicated resource block (separate from `resources.application`) |
-| FINDING-024 | COST | Ingress multipart S3 upload support in `insights-ingress-go` |
-
----
-
-_Last Updated: 2026-06-25_
+_Last Updated: 2026-06-29_

@@ -73,7 +73,7 @@ flag and is not part of `apply_perf_profile_config()`.
 
 | Profile | Replicas | CPU Request | CPU Limit | Memory Request | Memory Limit |
 |---------|----------|-------------|-----------|----------------|--------------|
-| Small | 1 | 250m | 500m | 512Mi | 1Gi |
+| Small | 2 | 250m | 500m | 512Mi | 1Gi |
 | Medium | 2 | 250m | 1000m | 512Mi | 2Gi |
 | Large | 3 | 500m | 1000m | 1Gi | 2Gi |
 | XLarge | 3 | 1000m | 2000m | 2Gi | 4Gi |
@@ -82,7 +82,7 @@ flag and is not part of `apply_perf_profile_config()`.
 
 | Profile | Replicas | CPU Request | CPU Limit | Memory Request | Memory Limit |
 |---------|----------|-------------|-----------|----------------|--------------|
-| Small | 1 | 250m | 500m | chart default | chart default |
+| Small | 2 | 250m | 500m | chart default | chart default |
 | Medium | 2 | 250m | 1000m | chart default | chart default |
 | Large | 3 | 500m | 1000m | chart default | chart default |
 | XLarge | 3 | 1000m | 2000m | chart default | chart default |
