@@ -1177,6 +1177,15 @@ main() {
 
     deploy_rhbk
     deploy_kafka
+
+    # Save the user-supplied S3_ENDPOINT before deploy_s4 overwrites it
+    # with an in-cluster S4 endpoint for chart installation.  After the
+    # Helm chart is installed we restore the original so that downstream
+    # steps (metrics upload, etc.) target the external endpoint.
+    local _user_s3_endpoint="${S3_ENDPOINT:-}"
+    local _user_s3_port="${S3_PORT:-}"
+    local _user_s3_use_ssl="${S3_USE_SSL:-}"
+
     deploy_s4
 
     # Run Helm sanity test before deploying complex chart
@@ -1190,6 +1199,13 @@ main() {
 
     deploy_helm_chart
     setup_tls
+
+    # Restore the original S3 env so perf-upload targets the external endpoint
+    if [[ -n "${_user_s3_endpoint}" ]]; then
+        export S3_ENDPOINT="${_user_s3_endpoint}"
+        export S3_PORT="${_user_s3_port}"
+        export S3_USE_SSL="${_user_s3_use_ssl}"
+    fi
     
     # Deploy observability after Helm chart so services exist for auto-detection
     if [[ "${DEPLOY_OBSERVABILITY}" == "true" ]]; then

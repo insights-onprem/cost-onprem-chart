@@ -98,6 +98,43 @@ E2E_CLEANUP_AFTER=true    # Clean after tests (default)
 E2E_RESTART_SERVICES=false # Restart Valkey/listener (optional)
 ```
 
+### Performance Testing
+
+Performance tests use `scripts/lib/perf-testing.sh` for profile-based cluster scaling.
+The `apply_perf_profile_config()` function automatically adjusts the live deployment
+(replica counts, resource limits, timeouts, upload sizes) via Helm upgrade + `oc scale`
+before tests run.
+
+```bash
+# Deploy + run performance tests
+./scripts/deploy-test-cost-onprem.sh --namespace cost-onprem --run-perf --perf-profile medium
+
+# Performance tests only (skip deploy)
+./scripts/deploy-test-cost-onprem.sh --perf-only --perf-profile medium
+
+# Specific perf suite(s): api, ros, ingestion, scale, soak
+./scripts/deploy-test-cost-onprem.sh --perf-only --perf-suite ros,api
+```
+
+**Profile Scaling Matrix:**
+
+| Profile  | Processor | Listener | OCP Worker | Summary Worker | Kruize CPU | Upload Size | Timeouts |
+|----------|-----------|----------|------------|----------------|------------|-------------|----------|
+| baseline | 1         | 1        | 1          | 1              | 500m/1000m | 100MB       | 30s      |
+| small    | 1         | 2        | 2          | 2              | 1000m/2000m| 100MB       | 30s      |
+| medium   | 2         | 2        | 2          | 2              | 1000m/2000m| 200MB       | 180s     |
+| large    | 3         | 3        | 3          | 3              | 1000m/2000m| 200MB       | 180s     |
+
+Kruize is always kept at 1 replica (scaling degrades throughput, see PERF-FINDING-014).
+Listener CPU is automatically boosted to node max for perf runs.
+
+**Key Files:**
+- `scripts/lib/perf-testing.sh` — Profile config + test orchestration
+- `scripts/lib/listener-cpu.sh` — Listener CPU boost logic
+- `scripts/lib/perf-observability.sh` — Metrics collection + S3 upload
+- `tests/suites/performance/profiles.py` — Data generation profiles (cluster/node/pod counts)
+- `tests/suites/performance/conftest.py` — Fixtures, cleanup tracker, cluster info
+
 ---
 
 ## Kubernetes Label Conventions

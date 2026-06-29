@@ -190,6 +190,10 @@ With cloud providers enabled (3 additional Celery workers): **30** pods, **~8.8 
 | 5+ | Worker | 8 cores | 32 Gi | Scale workers horizontally |
 | 3 | Control Plane | 8 cores | 16 Gi | HA control plane |
 
+> **Scaling beyond defaults?** See [sizing-guide.md](../performance/sizing-guide.md)
+> for validated resource settings per deployment profile (small/medium/large/xlarge)
+> based on customer cluster count and data volume.
+
 ---
 
 ## Minimum Viable Deployment (Reduced Footprint)

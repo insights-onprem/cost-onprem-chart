@@ -69,6 +69,13 @@ from utils import (
     run_oc_command,
 )
 
+_ACTIVE_PROFILE = os.environ.get("PERF_PROFILE", "baseline")
+# Soak tests are opt-in: must set SOAK_TESTS=true explicitly.
+# This decouples long-running stability tests from performance profile runs.
+_SOAK_ENABLED = os.environ.get("SOAK_TESTS", "").lower() in ("true", "1", "yes")
+# Compute once at import time so @pytest.mark.timeout() can reference it.
+_SOAK_DURATION_S = int(float(os.environ.get("SOAK_DURATION_HOURS", "1")) * 3600)
+
 from .conftest import (
     PerfCleanupTracker,
     PerfResultCollector,
@@ -474,11 +481,12 @@ def query_worker(
     interval_seconds: float,
 ):
     """Background worker that performs periodic API queries."""
+    # gateway_url already includes /api — endpoints are relative to that base
     endpoints = [
-        "/api/cost-management/v1/sources/",
-        "/api/cost-management/v1/reports/openshift/costs/?filter[time_scope_units]=month&filter[time_scope_value]=-1",
-        "/api/cost-management/v1/reports/openshift/memory/?filter[time_scope_units]=month&filter[time_scope_value]=-1",
-        "/api/cost-management/v1/recommendations/openshift",
+        "/cost-management/v1/sources/",
+        "/cost-management/v1/reports/openshift/costs/?filter[time_scope_units]=month&filter[time_scope_value]=-1",
+        "/cost-management/v1/reports/openshift/memory/?filter[time_scope_units]=month&filter[time_scope_value]=-1",
+        "/cost-management/v1/recommendations/openshift",
     ]
     
     query_idx = 0
@@ -654,24 +662,35 @@ class TestSoakStability:
         return SoakConfig()
 
     @pytest.fixture(scope="class")
-    def gateway_url(self, cluster_config) -> str:
-        """Get gateway URL."""
-        gateway_route = run_oc_command([
-            "get", "route", "-n", cluster_config.namespace,
-            f"{cluster_config.helm_release_name}-api",
-            "-o", "jsonpath={.spec.host}"
-        ], check=False)
-        
-        if gateway_route.returncode != 0 or not gateway_route.stdout.strip():
-            pytest.skip("Gateway route not found")
-        
-        return f"https://{gateway_route.stdout.strip()}"
+    def upload_url(self, gateway_url: str) -> str:
+        """Get upload URL via the session-scoped gateway_url.
+
+        gateway_url from conftest already includes /api (e.g. https://host/api).
+        """
+        return f"{gateway_url}/ingress/v1/upload"
 
     @pytest.fixture(scope="class")
-    def upload_url(self, gateway_url) -> str:
-        """Get upload URL."""
-        return f"{gateway_url}/api/ingress/v1/upload"
+    def ingress_pod(self, cluster_config) -> str:
+        """Get ingress pod name."""
+        pod = get_pod_by_label(cluster_config.namespace, "app.kubernetes.io/component=ingress")
+        if not pod:
+            pytest.skip("Ingress pod not found")
+        return pod
 
+    @pytest.fixture(scope="class")
+    def koku_api_url(self, cluster_config) -> str:
+        """Get internal Koku API URL."""
+        return (
+            f"http://{cluster_config.helm_release_name}-koku-api"
+            f".{cluster_config.namespace}.svc.cluster.local:8000"
+            f"/api/cost-management/v1"
+        )
+
+    @pytest.mark.skipif(
+        not _SOAK_ENABLED,
+        reason="SOAK-001 requires SOAK_TESTS=true — multi-hour stability tests are opt-in.",
+    )
+    @pytest.mark.timeout(_SOAK_DURATION_S * 2 + 600)
     def test_perf_soak_001_continuous_operation(
         self,
         cluster_config,
@@ -681,6 +700,8 @@ class TestSoakStability:
         soak_config,
         gateway_url,
         upload_url,
+        ingress_pod,
+        koku_api_url,
         jwt_token: JWTToken,
         rh_identity_header: str,
     ):
@@ -702,10 +723,12 @@ class TestSoakStability:
         # Register source
         source = register_source(
             cluster_config.namespace,
-            gateway_url,
-            jwt_token.access_token,
-            source_name,
+            ingress_pod,
+            koku_api_url,
+            rh_identity_header,
             cluster_id,
+            "org1234567",
+            source_name,
         )
         
         perf_cleanup.track(
@@ -840,6 +863,11 @@ class TestSoakStability:
         assert len(restarts) == 0, f"Pod restarts detected (possible OOM): {restarts}"
         assert state.uploads_failed == 0, f"{state.uploads_failed} uploads failed"
 
+    @pytest.mark.skipif(
+        not _SOAK_ENABLED,
+        reason="SOAK-002 requires SOAK_TESTS=true — multi-hour stability tests are opt-in.",
+    )
+    @pytest.mark.timeout(_SOAK_DURATION_S + 300)
     def test_perf_soak_002_memory_leak_detection(
         self,
         cluster_config,
@@ -916,6 +944,11 @@ class TestSoakStability:
         
         assert not leak_detected, f"Memory leak detected in pods: {[p['pod'] for p in leak_pods]}"
 
+    @pytest.mark.skipif(
+        not _SOAK_ENABLED,
+        reason="SOAK-003 requires SOAK_TESTS=true — multi-hour stability tests are opt-in.",
+    )
+    @pytest.mark.timeout(_SOAK_DURATION_S + 300)
     def test_perf_soak_003_disk_usage_monitoring(
         self,
         cluster_config,
@@ -982,6 +1015,11 @@ class TestSoakStability:
             for w in warnings:
                 print(f"    - {w['component']}: {w['projected_7day_growth_gb']:.1f} GB projected growth in 7 days")
 
+    @pytest.mark.skipif(
+        not _SOAK_ENABLED,
+        reason="SOAK-004 requires SOAK_TESTS=true — multi-hour stability tests are opt-in.",
+    )
+    @pytest.mark.timeout(_SOAK_DURATION_S + 300)
     def test_perf_soak_004_queue_health_monitoring(
         self,
         cluster_config,

@@ -1,8 +1,8 @@
 # Cost On-Prem Performance Testing Plan
 
-**Date**: 2026-04-15  
-**Status**: Planning Phase  
-**Epic**: [FLPATH-4036](https://redhat.atlassian.net/browse/FLPATH-4036) - CoP - Performance Tuning & Hardware Sizing Guidelines
+**Date**: 2026-04-15 (updated 2026-06-25)  
+**Status**: Execution — Small through XLarge profiles validated  
+**Epic**: [FLPATH-4036](https://redhat.atlassian.net/browse/FLPATH-4036) / [COST-7567](https://redhat.atlassian.net/browse/COST-7567) - CoP - Performance Tuning & Hardware Sizing Guidelines
 
 ---
 
@@ -433,60 +433,78 @@ histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="koku-api
 
 ## Implementation Status
 
-### Completed (as of 2026-04-16)
+### Completed
 
 - [x] Customer size profiles received from Pau Garcia Quiles
 - [x] Performance test marker registered (`@pytest.mark.performance`)
 - [x] Profile definitions created (`tests/suites/performance/profiles.py`)
-  - Small, Medium, Large, XL profiles based on production data
-  - Stress profiles (P99, Max) for edge-case testing
-  - Baseline and burst profiles for specific test scenarios
 - [x] Test fixtures implemented (`tests/suites/performance/conftest.py`)
-  - Cluster info collection (`cluster_info` fixture)
-  - Timing instrumentation (`perf_timer` fixture)
-  - Performance result collection (`perf_collector` fixture)
-  - JSON report generation
-- [x] JSON schema defined (`tests/suites/performance/schema.json`)
-- [x] Ingestion throughput tests (PERF-ING-001 through PERF-ING-005)
+- [x] Ingestion throughput tests (PERF-ING-001 through PERF-ING-006)
 - [x] API latency tests (PERF-API-001 through PERF-API-006)
 - [x] Multi-cluster scale tests (PERF-SCALE-001 through PERF-SCALE-005)
+- [x] ROS/Kruize performance tests (PERF-ROS-001 through PERF-ROS-004)
+- [x] Soak test stubs (PERF-SOAK-001 through PERF-SOAK-004, opt-in via `SOAK_TESTS=true`)
+- [x] Observability stack (FLPATH-4061 / COST-7625) — metrics collection, HTML reports, S3 archival
+- [x] Profile-aware resource tuning (`apply_perf_profile_config()` in `perf-testing.sh`)
+- [x] Jenkins CI integration (`insights_onprem.groovy` with `PERF_PROFILE` and `PERF_SUITE` params)
+- [x] Self-contained HTML run reports and JSON summaries
+- [x] S3 result archival to shared MinIO
+
+### Validated Profiles
+
+| Profile | Run ID | Tests | Result | Duration | Key Metric |
+|---------|--------|-------|--------|----------|------------|
+| baseline | multiple | 41 | PASS | ~5 min | Smoke test |
+| xlarge | 1782335628 | 41 | **41 passed, 0 failed** | 123 min | 14+ MB/s upload, 31 exp/min Kruize |
 
 ### Test Files
 
 | File | Tests | Description |
 |------|-------|-------------|
-| `tests/suites/performance/test_ingestion.py` | 5+ | Ingestion throughput tests |
-| `tests/suites/performance/test_api_latency.py` | 7+ | API latency tests |
-| `tests/suites/performance/test_scale.py` | 5+ | Scale tests |
-| `tests/suites/performance/profiles.py` | - | Profile definitions + NISE YAML generation |
-| `tests/suites/performance/conftest.py` | - | Fixtures and utilities |
-| `tests/suites/performance/schema.json` | - | JSON report schema |
+| `test_ingestion.py` | 6 | Ingestion throughput (ING-001 through ING-006) |
+| `test_api_latency.py` | 6 | API latency (API-001 through API-006) |
+| `test_scale.py` | 5 | Multi-cluster scale (SCALE-001 through SCALE-005) |
+| `test_ros.py` | 4 | ROS/Kruize performance (ROS-001 through ROS-004) |
+| `test_soak.py` | 4 | Soak stability (SOAK-001 through SOAK-004, opt-in) |
+| `profiles.py` | — | Profile definitions + NISE YAML generation |
+| `conftest.py` | — | Fixtures, cleanup, data generation |
+| `verify_infrastructure.py` | — | Pre-run infrastructure validation |
 
 ### Running Performance Tests
 
 ```bash
-# All performance tests
-pytest -m performance tests/suites/performance/
+# Via the deploy script (recommended — handles profile config, metrics, S3 upload)
+./scripts/deploy-test-cost-onprem.sh \
+    --skip-deploy --perf-only \
+    --perf-profile xlarge --perf-suite all \
+    --listener-cpu max --collect-metrics --upload-metrics
 
-# Specific category
-pytest -m "performance and ingestion" tests/suites/performance/
-pytest -m "performance and api_latency" tests/suites/performance/
-pytest -m "performance and scale" tests/suites/performance/
-
-# With specific profile
+# Direct pytest (requires manual profile config)
 PERF_PROFILE=medium pytest -m performance tests/suites/performance/
 
-# Quick baseline only
-pytest tests/suites/performance/test_ingestion.py::TestIngestionThroughput::test_perf_ing_001_single_source_baseline
+# Specific suite
+PERF_PROFILE=xlarge pytest -m "performance and ingestion" tests/suites/performance/
+
+# Via Jenkins
+# Job: flightpath-insights-onprem (RUN_PERF_TESTS=true, PERF_PROFILE=xlarge, PERF_SUITE=all)
 ```
 
 ---
 
+## Success Criteria Status
+
+| ID | Criteria | Status | Evidence |
+|----|----------|--------|----------|
+| SC-1 | Sizing table | **Done** | [sizing-guide.md](./sizing-guide.md) — small through xlarge validated |
+| SC-2 | Cluster count limits | **Partial** | XLarge (23 clusters) validated; stress profiles (33+) not yet tested |
+| SC-3 | Bottleneck analysis | **Done** | [FINDINGS.md](./FINDINGS.md) — 13 findings documented with severity and evidence |
+| SC-4 | Processing window | **Partial** | XLarge completes in ~2h; need to validate against 6-hour SLA formally |
+| SC-5 | Soak test | **Not started** | Tests exist but require `SOAK_TESTS=true` and dedicated 7-day run window |
+
 ## Next Steps
 
-1. [ ] Provision performance test cluster (ODF-enabled)
-2. [ ] Set up Prometheus/Grafana observability stack (FLPATH-4061)
-3. [ ] Execute Phase 1 (baseline establishment with v0.2.20)
-4. [ ] Run initial baseline for Small profile (FLPATH-4065)
-5. [ ] Create HTML visualization for JSON reports (deferred)
-6. [ ] Execute soak tests (PERF-SOAK-001 through PERF-SOAK-004)
+1. [ ] Run medium profile for a clean validated baseline (target: 0 failures)
+2. [ ] Execute stress_p99 profile (33 clusters) to find the actual breaking point
+3. [ ] Execute 7-day soak test (SC-5) — requires dedicated cluster time
+4. [ ] Publish sizing guide to product documentation (COST-7618)
+5. [ ] File tickets for untracked findings (FINDING-013, -020, -022, -024)

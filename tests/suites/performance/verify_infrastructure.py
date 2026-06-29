@@ -184,6 +184,7 @@ def test_data_classes():
         total_memory_gib=192.0,
         storage_class="ocs-storagecluster-ceph-rbd",
         storage_type="ODF",
+        s3_backend="NooBaa",
         platform="bare-metal",
     )
     

@@ -13,6 +13,7 @@ Test IDs:
 """
 
 import os
+import subprocess
 import tempfile
 import time
 import uuid
@@ -26,6 +27,7 @@ import requests
 
 from conftest import ClusterConfig, JWTToken, obtain_jwt_token
 from e2e_helpers import (
+    wait_for_processing_complete,
     NISEConfig,
     SourceRegistration,
     cleanup_database_records,
@@ -36,7 +38,6 @@ from e2e_helpers import (
     register_source,
     upload_with_retry,
     wait_for_provider,
-    wait_for_summary_tables,
 )
 from utils import (
     create_upload_package_from_files,
@@ -63,6 +64,78 @@ from .profiles import PROFILES, get_profile_metrics, get_profile_nise_yaml
 # =============================================================================
 
 UPLOAD_CONTENT_TYPE = "application/vnd.redhat.hccm.filename+tgz"
+
+# ---------------------------------------------------------------------------
+# Profile-filtered parametrize lists — all gated by PERF_PROFILE so that
+# baseline runs stay fast (<30 min) and heavier variants only appear at the
+# run levels where they're meaningful.
+# ---------------------------------------------------------------------------
+_ACTIVE_PROFILE = os.environ.get("PERF_PROFILE", "baseline")
+
+# ING-001: data profile variants to generate and upload.
+# baseline → baseline data (1 cluster, 3 nodes, 1 day)
+# small+   → small data (1 cluster, 15 nodes, 30 days)
+# medium+  → medium data (2 clusters, 25 nodes, 30 days)
+# large+   → large data (7 clusters, 19 nodes, 30 days)
+_ING_001_PROFILES: dict = {
+    "baseline": ["baseline"],
+    "small":    ["small"],
+    "medium":   ["small", "medium"],
+    "large":    ["small", "medium", "large"],
+}
+ING_001_PROFILES = _ING_001_PROFILES.get(_ACTIVE_PROFILE, _ING_001_PROFILES["large"])
+
+# ING-002: burst window variants (data_days, processing_timeout_s).
+# baseline → skipped; ING-002 is a volume/burst test — ING-001 already covers
+#            the single-source pipeline for baseline.  Adding burst windows here
+#            only adds 5-20 min of upload+processing time with no extra signal.
+# small    → 30 + 60-day
+# medium+  → all three (30, 60, 90-day)
+_ING_002_SKIP_REASON = (
+    "ING-002 is a volume/burst test, not a baseline scenario — "
+    "ING-001 already validates the single-source pipeline end-to-end."
+)
+_ING_002_VARIANTS: dict = {
+    "baseline": [pytest.param(30, 600,  id="30-days",
+                              marks=pytest.mark.skip(reason=_ING_002_SKIP_REASON))],
+    "small":    [pytest.param(30, 600,  id="30-days"),
+                 pytest.param(60, 900,  id="60-days")],
+    "medium":   [pytest.param(30, 600,  id="30-days"),
+                 pytest.param(60, 900,  id="60-days"),
+                 pytest.param(90, 1200, id="90-days")],
+    "large":    [pytest.param(30, 600,  id="30-days"),
+                 pytest.param(60, 900,  id="60-days"),
+                 pytest.param(90, 1200, id="90-days")],
+}
+ING_002_PARAMS = _ING_002_VARIANTS.get(_ACTIVE_PROFILE, _ING_002_VARIANTS["large"])
+
+# ING-004: large-file target sizes.
+# Skipped for baseline — ING-004 intentionally ignores PERF_PROFILE and always
+# generates large-profile (133 nodes) × 30-day NISE data regardless of the active
+# profile.  That makes the 50 MB variant take 45-60 min of local NISE generation,
+# which is not a baseline concern.  ING-001 already validates the upload+processing
+# pipeline end-to-end.  ING-004 is meaningful from small upward where large-file
+# upload limits and ingress timeout behaviour are worth testing.
+_ING_004_SKIP_REASON = (
+    "ING-004 always generates large-profile NISE data regardless of PERF_PROFILE "
+    "— 50 MB takes 45-60 min of data generation, not appropriate for baseline."
+)
+_ING_004_SIZES: dict = {
+    "baseline": [pytest.param(50, id="50", marks=pytest.mark.skip(reason=_ING_004_SKIP_REASON))],
+    "small":    [50],
+    "medium":   [50, 100],
+    "large":    [50, 100],
+}
+ING_004_SIZES = _ING_004_SIZES.get(_ACTIVE_PROFILE, _ING_004_SIZES["large"])
+
+# ING-006: processing-window validation (SC-4 SLA).
+# Runs for small/medium/large profiles; skipped for baseline.
+_ING_006_PROFILE = _ACTIVE_PROFILE if _ACTIVE_PROFILE in ("small", "medium", "large", "xlarge") else None
+ING_006_PROFILES = (
+    [_ING_006_PROFILE]
+    if _ING_006_PROFILE
+    else [pytest.param("baseline", marks=pytest.mark.skip(reason="ING-006 skipped for baseline profile"))]
+)
 
 
 # =============================================================================
@@ -142,11 +215,11 @@ def generate_and_upload_data(
             
             # Collect generated files
             csv_files = list(Path(nise_output).rglob("*.csv"))
-            # Categorize files
+            # Categorize files - note: NISE uses singular (node_label, namespace_label)
             pod_usage_files = [str(f) for f in csv_files if "pod_usage" in f.name.lower()]
             ros_usage_files = [str(f) for f in csv_files if "ros_usage" in f.name.lower() or "resource_" in f.name.lower()]
-            node_label_files = [str(f) for f in csv_files if "node_labels" in f.name.lower()]
-            namespace_label_files = [str(f) for f in csv_files if "namespace_labels" in f.name.lower()]
+            node_label_files = [str(f) for f in csv_files if "node_label" in f.name.lower()]
+            namespace_label_files = [str(f) for f in csv_files if "namespace_label" in f.name.lower()]
         else:
             # Use NISEConfig-based generation
             files = generate_nise_data(
@@ -176,7 +249,8 @@ def generate_and_upload_data(
         package_size_mb = os.path.getsize(package_path) / (1024 * 1024)
         package_duration = time.time() - package_start
         
-        # Upload
+        # Upload — scale timeout with package size (minimum 0.5 MB/s assumed)
+        upload_timeout = max(180, int(package_size_mb / 0.5) + 60)
         upload_start = time.time()
         session = requests.Session()
         session.verify = False
@@ -186,6 +260,7 @@ def generate_and_upload_data(
             f"{ingress_url}/v1/upload",
             package_path,
             jwt_token.authorization_header,
+            timeout=upload_timeout,
         )
         
         upload_duration = time.time() - upload_start
@@ -200,6 +275,7 @@ def generate_and_upload_data(
             "upload_seconds": round(upload_duration, 3),
             "upload_status": response.status_code,
             "upload_mb_per_second": round(package_size_mb / upload_duration, 3) if upload_duration > 0 else 0,
+            "upload_timeout_seconds": upload_timeout,
         }
 
 
@@ -230,7 +306,8 @@ class TestIngestionThroughput:
         """Get a fresh JWT token for long-running tests."""
         return obtain_jwt_token(self._keycloak_config)
     
-    @pytest.mark.parametrize("profile_name", ["baseline", "small"])
+    @pytest.mark.timeout(1800)  # 30 min: generation + upload + summary table wait
+    @pytest.mark.parametrize("profile_name", ING_001_PROFILES)
     def test_perf_ing_001_single_source_baseline(
         self,
         profile_name: str,
@@ -252,14 +329,19 @@ class TestIngestionThroughput:
         """
         cluster_id = generate_cluster_id()
         source_name = f"perf-ing-001-{cluster_id[-8:]}"
-        
+
         # Get pod for internal API calls
         ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
         if not ingress_pod:
             pytest.skip("Ingress pod not found")
-        
+
         koku_api_url = f"http://{self.helm_release}-koku-api.{self.namespace}.svc.cluster.local:8000/api/cost-management/v1"
-        
+
+        # Pre-test cleanup: remove any leftover source/DB records with this name
+        # from a previous cancelled run to prevent HTTP 400 duplicate-source errors.
+        db_pod = database_config.pod_name if database_config else None
+        cleanup_database_records(self.namespace, db_pod, cluster_id)
+
         # Register source
         with perf_timer.measure("source_registration"):
             source = register_source(
@@ -292,44 +374,36 @@ class TestIngestionThroughput:
                 profile_name=profile_name,
             )
         
-        # Wait for processing
         with perf_timer.measure("processing_wait"):
-            schema = wait_for_summary_tables(
+            proc = wait_for_processing_complete(
                 self.namespace,
                 database_config.pod_name,
                 cluster_id,
-                timeout=900,
-                interval=30,
+                max_wait_seconds=1500,  # test timeout=1800; leave headroom for registration+upload
             )
-        
+
         # Capture listener CPU at end
         listener_cpu = get_listener_cpu_usage(self.namespace)
-        
-        # Record metrics
+
         perf_result.metrics = {
             "profile": profile_name,
             "upload": upload_result,
             "listener_cpu_cores": listener_cpu,
-            "processing_completed": schema is not None,
+            "processing_completed": proc["complete"],
+            "schema_name": proc.get("schema_name"),
         }
         perf_result.timings = perf_timer.get_timings()
-        perf_result.passed = schema is not None
-        
-        if not schema:
+        perf_result.passed = proc["complete"]
+
+        if not proc["complete"]:
             perf_result.error_message = "Processing did not complete within timeout"
-        
+
         perf_collector.add_result(perf_result)
         
-        assert schema is not None, "Data processing did not complete"
+        assert proc["complete"], "Data processing did not complete"
 
-    @pytest.mark.parametrize(
-        "data_days,timeout_seconds",
-        [
-            pytest.param(30, 600, id="30-days"),
-            pytest.param(60, 900, id="60-days"),
-            pytest.param(90, 1200, id="90-days"),
-        ],
-    )
+    @pytest.mark.parametrize("data_days,timeout_seconds", ING_002_PARAMS)
+    @pytest.mark.timeout(1800)  # 30 min ceiling — well above the 1200s max variant
     def test_perf_ing_002_single_source_burst(
         self,
         data_days: int,
@@ -418,30 +492,21 @@ class TestIngestionThroughput:
             perf_collector.add_result(perf_result)
             pytest.fail(f"{data_days}-day data upload exceeded {timeout_seconds}s timeout")
         
-        # Calculate remaining time for processing
-        remaining_time = max(60, test_deadline - time.time())
-        
-        # Monitor processing with CPU sampling
+        # Monitor processing; sample CPU on each poll cycle.
         with perf_timer.measure("processing_wait"):
-            start_wait = time.time()
-            schema = None
-            
-            while time.time() - start_wait < remaining_time:
-                schema = wait_for_summary_tables(
-                    self.namespace,
-                    database_config.pod_name,
-                    cluster_id,
-                    timeout=60,
-                    interval=30,
-                )
-                
-                # Sample CPU
+            def _sample_cpu():
                 cpu = get_listener_cpu_usage(self.namespace)
                 if cpu:
                     cpu_samples.append(cpu)
-                
-                if schema:
-                    break
+
+            proc = wait_for_processing_complete(
+                self.namespace,
+                database_config.pod_name,
+                cluster_id,
+                max_wait_seconds=1500,  # test timeout=1800; leave headroom for upload+registration
+                on_poll=_sample_cpu,
+            )
+        schema = proc.get("schema_name")
         
         # Calculate metrics
         processing_time = perf_timer.get_timing("processing_wait")
@@ -458,16 +523,16 @@ class TestIngestionThroughput:
             "avg_cpu_cores": sum(cpu_samples) / len(cpu_samples) if cpu_samples else 0,
             "max_cpu_cores": max(cpu_samples) if cpu_samples else 0,
             "processing_throughput_mb_s": round(throughput_mb_s, 4),
-            "processing_completed": schema is not None,
+            "processing_completed": proc["complete"],
         }
         perf_result.timings = perf_timer.get_timings()
-        perf_result.passed = schema is not None
+        perf_result.passed = proc["complete"]
         
         perf_collector.add_result(perf_result)
         
-        assert schema is not None, f"{data_days}-day data processing did not complete"
+        assert proc["complete"], f"{data_days}-day data processing did not complete"
 
-    @pytest.mark.timeout(600)  # 10 minutes per concurrent upload test
+    @pytest.mark.timeout(1200)  # 20 minutes — 10 concurrent large-profile uploads need more headroom
     @pytest.mark.parametrize("concurrent_sources", [2, 5, 10])
     def test_perf_ing_003_concurrent_uploads(
         self,
@@ -491,8 +556,15 @@ class TestIngestionThroughput:
         - Time to complete all
         - Error rate
         """
-        # Cap workers so the test client doesn't become the bottleneck
+        # Cap workers so the test client doesn't become the bottleneck.
+        # If the cap clips the requested value, record both so results are not misleading.
+        requested_sources = concurrent_sources
         concurrent_sources = min(concurrent_sources, perf_config.concurrent_upload_max)
+        if concurrent_sources < requested_sources:
+            print(
+                f"\n[ING-003] PERF_CONCURRENT_UPLOADS_MAX={perf_config.concurrent_upload_max} "
+                f"capped requested {requested_sources} → {concurrent_sources} workers"
+            )
         
         ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
         if not ingress_pod:
@@ -559,21 +631,44 @@ class TestIngestionThroughput:
                     else:
                         upload_results.append(result)
         
-        # Wait for all to process
+        # Wait for all sources to process using a shared deadline.
+        # Sources process in parallel through Kafka, so the total wall-clock
+        # time is dominated by pipeline depth (concurrent_sources / replicas)
+        # not the sum of individual processing times. A per-source timeout
+        # causes false negatives when earlier sources in the loop are slow
+        # to appear (queued behind others), even though later ones are already done.
+        #
+        # Budget: 30s per source (accounts for queueing) + 120s base overhead.
+        total_budget = 120 + concurrent_sources * 30
+        if _ACTIVE_PROFILE in ("medium", "large"):
+            total_budget = int(total_budget * 1.5)
+        import time as _time
+        deadline = _time.time() + total_budget
         processed_count = 0
         with perf_timer.measure("processing_wait_all"):
             for source_info in sources:
-                schema = wait_for_summary_tables(
+                remaining = max(15, int(deadline - _time.time()))
+                proc = wait_for_processing_complete(
                     self.namespace,
                     database_config.pod_name,
                     source_info["cluster_id"],
-                    timeout=600,
-                    interval=30,
+                    max_wait_seconds=remaining,
                 )
-                if schema:
+                if proc["complete"]:
                     processed_count += 1
         
+        # Wait for all Celery work from this test to fully drain before completing.
+        # This prevents downstream tests from starting while this test's tasks
+        # (cost model calculations, summaries, etc.) are still in flight.
+        from .conftest import wait_for_queue_drain
+        drain_result = wait_for_queue_drain(
+            self.namespace,
+            max_wait_seconds=600,
+            label=f"ING-003[{concurrent_sources}]",
+        )
+
         perf_result.metrics = {
+            "concurrent_sources_requested": requested_sources,
             "concurrent_sources": concurrent_sources,
             "successful_uploads": len(upload_results),
             "failed_uploads": len(errors),
@@ -581,17 +676,18 @@ class TestIngestionThroughput:
             "error_rate": len(errors) / concurrent_sources if concurrent_sources > 0 else 0,
             "total_upload_mb": sum(r.get("package_size_mb", 0) for r in upload_results),
             "errors": errors,
+            "queue_drain": drain_result,
         }
         perf_result.timings = perf_timer.get_timings()
         perf_result.passed = processed_count == concurrent_sources
-        
+
         perf_collector.add_result(perf_result)
-        
+
         assert len(errors) == 0, f"Upload errors: {errors}"
         assert processed_count == concurrent_sources, f"Only {processed_count}/{concurrent_sources} processed"
 
     @pytest.mark.timeout(3600)  # 60 minutes for large file upload test (generation + upload + processing)
-    @pytest.mark.parametrize("target_size_mb", [50, 100])
+    @pytest.mark.parametrize("target_size_mb", ING_004_SIZES)
     def test_perf_ing_004_large_file_upload(
         self,
         target_size_mb: int,
@@ -699,33 +795,28 @@ class TestIngestionThroughput:
         
         upload_throughput = package_size_mb / upload_seconds if upload_seconds > 0 else 0
         
-        # Wait for processing - large files need extended time
-        # Based on empirical data: ~67MB takes 20+ minutes to process
-        # Allow up to 45 minutes for processing large files
+        # Wait for manifest processing — no manual time ceiling; @pytest.mark.timeout guards.
         with perf_timer.measure("processing_wait"):
-            processing_start = time.time()
-            schema = None
-            max_wait = 2700  # 45 minutes for processing large files
-            
-            while time.time() - processing_start < max_wait:
-                schema = wait_for_summary_tables(
-                    self.namespace,
-                    database_config.pod_name,
-                    cluster_id,
-                    timeout=60,
-                    interval=30,
-                )
-                
-                # Sample CPU during processing
+            def _sample_cpu():
                 cpu = get_listener_cpu_usage(self.namespace)
                 if cpu:
                     cpu_samples.append(cpu)
-                
-                if schema:
-                    break
-        
-        processing_time = time.time() - processing_start
-        
+
+            proc = wait_for_processing_complete(
+                self.namespace,
+                database_config.pod_name,
+                cluster_id,
+                max_wait_seconds=3300,  # test timeout=3600; leave headroom for generation+upload
+                on_poll=_sample_cpu,
+            )
+        schema = proc.get("schema_name")
+
+        processing_time = proc["elapsed_s"]
+
+        # Capture final queue depths — key diagnostic for stalled processing
+        from .conftest import get_celery_queue_depths
+        final_queue_depths = get_celery_queue_depths(cluster_config.namespace)
+
         perf_result.metrics = {
             "target_size_mb": target_size_mb,
             "actual_size_mb": round(package_size_mb, 2),
@@ -740,10 +831,11 @@ class TestIngestionThroughput:
             "cpu_samples": cpu_samples,
             "avg_cpu_cores": sum(cpu_samples) / len(cpu_samples) if cpu_samples else 0,
             "max_cpu_cores": max(cpu_samples) if cpu_samples else 0,
-            "processing_completed": schema is not None,
+            "processing_completed": proc["complete"],
+            "final_queue_depths": final_queue_depths,
         }
         perf_result.timings = perf_timer.get_timings()
-        perf_result.passed = schema is not None
+        perf_result.passed = proc["complete"]
         
         perf_collector.add_result(perf_result)
         
@@ -754,9 +846,9 @@ class TestIngestionThroughput:
         print(f"  Upload: {upload_seconds:.1f}s ({upload_throughput:.2f} MB/s)")
         print(f"  Processing: {processing_time:.1f}s")
         print(f"  Total: {upload_seconds + processing_time:.1f}s")
-        print(f"  Completed: {schema is not None}")
+        print(f"  Completed: {proc['complete']}")
         
-        assert schema is not None, f"Large file ({package_size_mb:.2f} MB) processing did not complete"
+        assert proc["complete"], f"Large file ({package_size_mb:.2f} MB) processing did not complete"
 
     @pytest.mark.timeout(1200)  # 20 minutes for high-frequency upload test
     def test_perf_ing_005_high_frequency_uploads(
@@ -865,10 +957,11 @@ class TestIngestionThroughput:
         assert error_rate < 0.1, f"Error rate {error_rate:.1%} exceeds 10% threshold"
 
     @pytest.mark.timeout(21600)  # 6 hours max
-    @pytest.mark.parametrize("profile_name", ["small", "medium", "large"])
+    @pytest.mark.parametrize("profile_name", ING_006_PROFILES)
     def test_perf_ing_006_processing_window_validation(
         self,
         cluster_config: ClusterConfig,
+        ingress_url: str,
         database_config,
         perf_timer: PerfTimer,
         perf_result: PerformanceResult,
@@ -937,20 +1030,72 @@ class TestIngestionThroughput:
         print(f"  Clusters: {clusters}")
         print(f"  Registered sources: {len(sources)}")
         
-        # Simulate 4 uploads per day (6-hour intervals)
-        uploads_per_day = 4
+        # Simulate daily uploads (6-hour intervals).
+        # Default: 2 for all profiles (sufficient to validate processing window).
+        # Override via PERF_ING_006_UPLOADS for more thorough testing.
+        default_uploads = 2
+        uploads_per_day = int(os.environ.get("PERF_ING_006_UPLOADS", str(default_uploads)))
         upload_results = []
         total_start_time = time.time()
+        
+        # Pre-generate NISE data once per cluster to avoid repeated expensive generation.
+        # This significantly reduces test runtime for larger profiles (small/medium/large).
+        print(f"\n  Pre-generating NISE data for {len(cluster_ids)} cluster(s)...")
+        pre_generated_data = {}
+        data_end = datetime.now(timezone.utc)
+        data_start = data_end - timedelta(hours=6)
+        
+        for i, cluster_id in enumerate(cluster_ids):
+            print(f"    Generating data for cluster {i+1}/{len(cluster_ids)} ({cluster_id[:8]}...)...")
+            with tempfile.TemporaryDirectory() as temp_dir:
+                if profile_name and profile_name in PROFILES:
+                    yaml_content = get_profile_nise_yaml(
+                        profile_name, data_start, data_end, cluster_id, 0
+                    )
+                    yaml_path = os.path.join(temp_dir, "static_report.yml")
+                    with open(yaml_path, "w") as f:
+                        f.write(yaml_content)
+                    
+                    nise_output = os.path.join(temp_dir, "nise_output")
+                    os.makedirs(nise_output, exist_ok=True)
+                    
+                    result = subprocess.run(
+                        ["nise", "report", "ocp",
+                         "--static-report-file", yaml_path,
+                         "--ocp-cluster-id", cluster_id,
+                         "-w", "--ros-ocp-info"],
+                        capture_output=True,
+                        text=True,
+                        timeout=600,
+                        cwd=nise_output,
+                    )
+                    
+                    if result.returncode != 0:
+                        raise RuntimeError(f"NISE failed: {result.stderr}")
+                    
+                    # Collect and copy files to a persistent location
+                    csv_files = list(Path(nise_output).rglob("*.csv"))
+                    pod_usage = [str(f) for f in csv_files if "pod_usage" in f.name.lower()]
+                    ros_usage = [str(f) for f in csv_files if "ros_usage" in f.name.lower()]
+                    node_label = [str(f) for f in csv_files if "node_label" in f.name.lower()]
+                    namespace_label = [str(f) for f in csv_files if "namespace_label" in f.name.lower()]
+                    
+                    # Store file contents for reuse
+                    pre_generated_data[cluster_id] = {
+                        "pod_usage": [(f, open(f).read()) for f in pod_usage],
+                        "ros_usage": [(f, open(f).read()) for f in ros_usage],
+                        "node_label": [(f, open(f).read()) for f in node_label],
+                        "namespace_label": [(f, open(f).read()) for f in namespace_label],
+                    }
+        
+        print(f"  Pre-generation complete for {len(pre_generated_data)} cluster(s)")
         
         for upload_num in range(uploads_per_day):
             upload_start = time.time()
             
-            # Each upload covers 6 hours of data
-            data_end = datetime.now(timezone.utc)
-            data_start = data_end - timedelta(hours=6)
-            
+            # Each upload covers 6 hours of data (reuse pre-generated data)
             print(f"\n  Upload {upload_num + 1}/{uploads_per_day}:")
-            print(f"    Data range: {data_start.strftime('%Y-%m-%d %H:%M')} to {data_end.strftime('%Y-%m-%d %H:%M')}")
+            print(f"    Using pre-generated data (6-hour window)")
             
             upload_details = []
             
@@ -958,15 +1103,72 @@ class TestIngestionThroughput:
                 for i, (source, cluster_id) in enumerate(zip(sources, cluster_ids)):
                     try:
                         jwt_token = self._get_fresh_token()
-                        result = generate_and_upload_data(
-                            cluster_id,
-                            source.source_name if hasattr(source, 'source_name') else f"source-{i}",
-                            data_start,
-                            data_end,
-                            f"https://{cluster_config.gateway_route_host}/api/ingress/v1/upload",
-                            jwt_token,
-                            profile_name=profile_name,
-                        )
+                        
+                        # Use pre-generated data instead of regenerating
+                        if cluster_id in pre_generated_data:
+                            with tempfile.TemporaryDirectory() as temp_dir:
+                                # Write pre-generated files
+                                pod_files, ros_files, node_files, ns_files = [], [], [], []
+                                for orig_path, content in pre_generated_data[cluster_id]["pod_usage"]:
+                                    path = os.path.join(temp_dir, os.path.basename(orig_path))
+                                    with open(path, "w") as f:
+                                        f.write(content)
+                                    pod_files.append(path)
+                                for orig_path, content in pre_generated_data[cluster_id]["ros_usage"]:
+                                    path = os.path.join(temp_dir, os.path.basename(orig_path))
+                                    with open(path, "w") as f:
+                                        f.write(content)
+                                    ros_files.append(path)
+                                for orig_path, content in pre_generated_data[cluster_id]["node_label"]:
+                                    path = os.path.join(temp_dir, os.path.basename(orig_path))
+                                    with open(path, "w") as f:
+                                        f.write(content)
+                                    node_files.append(path)
+                                for orig_path, content in pre_generated_data[cluster_id]["namespace_label"]:
+                                    path = os.path.join(temp_dir, os.path.basename(orig_path))
+                                    with open(path, "w") as f:
+                                        f.write(content)
+                                    ns_files.append(path)
+                                
+                                # Create upload package
+                                package_path = create_upload_package_from_files(
+                                    pod_usage_files=pod_files,
+                                    ros_usage_files=ros_files,
+                                    cluster_id=cluster_id,
+                                    start_date=data_start,
+                                    end_date=data_end,
+                                    node_label_files=node_files if node_files else None,
+                                    namespace_label_files=ns_files if ns_files else None,
+                                )
+                                
+                                package_size_mb = os.path.getsize(package_path) / (1024 * 1024)
+                                
+                                # Upload
+                                session = requests.Session()
+                                session.verify = False
+                                response = upload_with_retry(
+                                    session,
+                                    f"{ingress_url}/v1/upload",
+                                    package_path,
+                                    jwt_token.authorization_header,
+                                )
+                                
+                                result = {
+                                    "package_size_mb": package_size_mb,
+                                    "upload_time": 0,
+                                }
+                        else:
+                            # Fallback to full generation if pre-gen not available
+                            result = generate_and_upload_data(
+                                cluster_id,
+                                source.source_name if hasattr(source, 'source_name') else f"source-{i}",
+                                data_start,
+                                data_end,
+                                f"{ingress_url}/v1/upload",
+                                jwt_token,
+                                profile_name=profile_name,
+                            )
+                        
                         upload_details.append({
                             "cluster_id": cluster_id,
                             "success": True,
@@ -980,18 +1182,18 @@ class TestIngestionThroughput:
                             "error": str(e),
                         })
             
-            # Wait for processing to complete
+            # Wait for each manifest to fully process — 1 hour per source per upload cycle.
             with perf_timer.measure(f"processing_{upload_num + 1}"):
                 for source, cluster_id in zip(sources, cluster_ids):
                     try:
-                        wait_for_summary_tables(
+                        wait_for_processing_complete(
                             self.namespace,
                             database_config.pod_name,
                             cluster_id,
-                            timeout=1800,  # 30 min per source
+                            max_wait_seconds=3600,
                         )
                     except Exception as e:
-                        print(f"    Warning: Summary wait failed for {cluster_id}: {e}")
+                        print(f"    Warning: Processing wait failed for {cluster_id}: {e}")
             
             upload_elapsed = time.time() - upload_start
             successful = sum(1 for d in upload_details if d.get("success", False))

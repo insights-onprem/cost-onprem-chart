@@ -762,6 +762,164 @@ def wait_for_provider(
     return wait_for_condition(check_provider, timeout=timeout, interval=interval)
 
 
+def wait_for_processing_complete(
+    namespace: str,
+    db_pod: str,
+    cluster_id: str,
+    poll_interval: int = 15,
+    max_wait_seconds: int = 1800,
+    on_poll=None,
+) -> dict:
+    """Block until the manifest for cluster_id is fully processed.
+
+                    Completion signal: ``reporting_common_costusagereportmanifest.completed_datetime``
+                    is set on the most recent manifest for *cluster_id*.  This timestamp is written
+                    after all download, processing, and summary phases finish — mirroring the
+                    ``manifest_complete_date`` field that the IQE plugin observes via the Koku
+                    source-stats API (``GET /sources/{uuid}/stats/``).
+
+                    Per-file progress is read from ``reporting_common_costusagereportstatus``
+                    (files with ``completed_datetime IS NOT NULL``) for logging only.
+
+                    A ``max_wait_seconds`` ceiling guards against stalled pipelines.  The default
+                    (1800 s) is intentionally generous; set it lower only for tests where you know
+                    the expected processing time.
+
+    Parameters
+    ----------
+    max_wait_seconds
+        Hard ceiling.  Returns ``{"complete": False, ...}`` if the manifest
+        counter hasn't reached completion by this time.
+    on_poll
+        Optional callable invoked once per poll cycle, after the DB query but
+        before sleeping.  Use this to collect side-car metrics (e.g. CPU
+        samples) without a separate polling loop.
+
+    Returns a dict::
+
+        {
+            "complete":            bool,
+            "elapsed_s":           float,
+            "num_total_files":     int,
+            "num_processed_files": int,
+            "pending_files":       int,   # informational only
+            "schema_name":         str | None,
+        }
+    """
+    import time as _time
+
+    start = _time.time()
+
+    print(
+        f"\n[wait-processing] cluster_id={cluster_id[:8]}… "
+        f"polling every {poll_interval}s (max {max_wait_seconds}s)"
+    )
+
+    last_num_processed = -1
+
+    while True:
+        elapsed = round(_time.time() - start, 1)
+
+        if elapsed >= max_wait_seconds:
+            print(f"[wait-processing] ✗ timed out after {elapsed}s — pipeline may be stalled")
+            return {
+                "complete":            False,
+                "elapsed_s":           elapsed,
+                "num_total_files":     0,
+                "num_processed_files": -1,
+                "pending_files":       -1,
+                "schema_name":         None,
+            }
+
+        # ── 1. Fetch the most recent manifest for this cluster ──────────────
+        # Schema note: reporting_common_costusagereportmanifest has no
+        # num_processed_files column.  Completion is signalled by
+        # completed_datetime being set (all download/processing/summary phases
+        # done) and optionally by per-file status rows in
+        # reporting_common_costusagereportstatus.
+        manifest_rows = execute_db_query(
+            namespace, db_pod, "costonprem_koku", "koku_user",
+            f"""
+            SELECT m.id,
+                   m.num_total_files,
+                   m.completed_datetime,
+                   m.state,
+                   c.schema_name
+            FROM   reporting_common_costusagereportmanifest m
+            JOIN   api_provider p ON m.provider_id = p.uuid
+            JOIN   api_customer c ON p.customer_id = c.id
+            WHERE  m.cluster_id = '{cluster_id}'
+            ORDER  BY m.creation_datetime DESC
+            LIMIT  1
+            """,
+        )
+
+        if not manifest_rows or not manifest_rows[0]:
+            print(f"[wait-processing] {elapsed}s — manifest not yet visible, waiting…")
+            _time.sleep(poll_interval)
+            continue
+
+        manifest_id, num_total, completed_dt, state_json, schema = manifest_rows[0]
+        num_total = int(num_total or 0)
+
+        # ── 2. Count per-file status rows (mirrors IQE files_processed) ──────
+        files_done_rows = execute_db_query(
+            namespace, db_pod, "costonprem_koku", "koku_user",
+            f"""
+            SELECT COUNT(*) FILTER (WHERE completed_datetime IS NOT NULL) AS done,
+                   COUNT(*)                                                AS total
+            FROM   reporting_common_costusagereportstatus
+            WHERE  manifest_id = {manifest_id}
+            """,
+        )
+        files_done  = int((files_done_rows or [[0, 0]])[0][0])
+        files_total = int((files_done_rows or [[0, 0]])[0][1])
+
+        # Derive active phase from state jsonb for progress logging
+        phase = "queued"
+        if state_json:
+            import json as _json
+            try:
+                st = _json.loads(state_json) if isinstance(state_json, str) else state_json
+                for p in ("summary", "processing", "download"):
+                    if st.get(p, {}).get("start"):
+                        phase = p + ("✓" if st[p].get("end") else "…")
+                        break
+            except Exception:
+                pass
+
+        if files_done != last_num_processed:
+            last_num_processed = files_done
+
+        print(
+            f"[wait-processing] {elapsed}s — "
+            f"files {files_done}/{files_total or num_total}, phase={phase}"
+            + (f", manifest done {completed_dt}" if completed_dt else "")
+        )
+
+        if on_poll is not None:
+            try:
+                on_poll()
+            except Exception:
+                pass
+
+        # ── 3. Done when manifest.completed_datetime is set ─────────────────
+        # This is the canonical signal: all download/processing/summary phases
+        # finished.  Mirrors IQE's manifest_complete_date check.
+        if completed_dt is not None:
+            print(f"[wait-processing] ✓ complete in {elapsed}s")
+            return {
+                "complete":            True,
+                "elapsed_s":           elapsed,
+                "num_total_files":     num_total,
+                "num_processed_files": files_done,
+                "pending_files":       max(0, files_total - files_done),
+                "schema_name":         schema,
+            }
+
+        _time.sleep(poll_interval)
+
+
 def wait_for_summary_tables(
     namespace: str,
     db_pod: str,
@@ -770,37 +928,46 @@ def wait_for_summary_tables(
     interval: int = 30,
 ) -> Optional[str]:
     """Wait for summary tables to be populated and return schema name.
-    
-    Returns schema name if successful, None on timeout.
+
+    .. deprecated::
+        Use :func:`wait_for_processing_complete` instead, which monitors the
+        manifest completion signals directly and requires no time ceiling.
+        This wrapper is kept for backwards compatibility with non-performance
+        test callers.
     """
-    found_schema = {"name": None}
-    
+    import time as _time
+
+    start = _time.time()
+    result = {"schema": None}
+
     def check_summary():
-        result = execute_db_query(
+        rows = execute_db_query(
             namespace, db_pod, "costonprem_koku", "koku_user",
             f"""
-            SELECT c.schema_name FROM reporting_common_costusagereportmanifest m
-            JOIN api_provider p ON m.provider_id = p.uuid
-            JOIN api_customer c ON p.customer_id = c.id
-            WHERE m.cluster_id = '{cluster_id}' LIMIT 1
-            """
+            SELECT c.schema_name
+            FROM   reporting_common_costusagereportmanifest m
+            JOIN   api_provider p ON m.provider_id = p.uuid
+            JOIN   api_customer c ON p.customer_id = c.id
+            WHERE  m.cluster_id = '{cluster_id}'
+            LIMIT  1
+            """,
         )
-        if not result or not result[0][0]:
+        if not rows or not rows[0][0]:
             return False
-        
-        schema = result[0][0].strip()
-        result = execute_db_query(
+
+        schema = rows[0][0].strip()
+        count_rows = execute_db_query(
             namespace, db_pod, "costonprem_koku", "koku_user",
-            f"SELECT COUNT(*) FROM {schema}.reporting_ocpusagelineitem_daily_summary WHERE cluster_id = '{cluster_id}'"
+            f"SELECT COUNT(*) FROM {schema}.reporting_ocpusagelineitem_daily_summary "
+            f"WHERE cluster_id = '{cluster_id}'",
         )
-        
-        if result and int(result[0][0]) > 0:
-            found_schema["name"] = schema
+        if count_rows and int(count_rows[0][0]) > 0:
+            result["schema"] = schema
             return True
         return False
-    
+
     if wait_for_condition(check_summary, timeout=timeout, interval=interval):
-        return found_schema["name"]
+        return result["schema"]
     return None
 
 
