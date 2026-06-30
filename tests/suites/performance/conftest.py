@@ -1058,8 +1058,19 @@ def perf_cleanup(cluster_config: ClusterConfig, rh_identity_header: str):
     
     yield tracker
     
-    # Cleanup after test completes (pass or fail)
-    tracker.cleanup(rh_identity_header)
+    # Cleanup after test completes (pass or fail).
+    # S3 cleanup can be slow under load (NooBaa retry backoff) and must not
+    # fail an otherwise-passing run — catch ALL exceptions including
+    # pytest-timeout's Failed signal.
+    try:
+        tracker.cleanup(rh_identity_header)
+    except BaseException as exc:
+        import warnings
+        warnings.warn(
+            f"Teardown cleanup failed (non-fatal): {exc}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
 
 # =============================================================================

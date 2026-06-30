@@ -53,10 +53,15 @@ def cleanup_s3_data(
     errors = []
     
     try:
-        # Configure boto3 for S3-compatible storage
+        # Configure boto3 for S3-compatible storage.
+        # Low retries + short timeouts prevent cleanup from hanging when
+        # NooBaa is under load (see SCALE-001[10] teardown timeout).
         boto_config = BotoConfig(
             signature_version='s3v4',
             s3={'addressing_style': 'path'},
+            retries={'max_attempts': 3, 'mode': 'standard'},
+            connect_timeout=10,
+            read_timeout=30,
         )
         
         s3 = boto3.client(
