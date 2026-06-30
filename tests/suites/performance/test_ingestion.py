@@ -1069,12 +1069,15 @@ class TestIngestionThroughput:
                     node_label = [str(f) for f in csv_files if "node_label" in f.name.lower()]
                     namespace_label = [str(f) for f in csv_files if "namespace_label" in f.name.lower()]
                     
-                    # Store file contents for reuse
+                    def _read(path):
+                        with open(path) as fh:
+                            return fh.read()
+
                     pre_generated_data[cluster_id] = {
-                        "pod_usage": [(f, open(f).read()) for f in pod_usage],
-                        "ros_usage": [(f, open(f).read()) for f in ros_usage],
-                        "node_label": [(f, open(f).read()) for f in node_label],
-                        "namespace_label": [(f, open(f).read()) for f in namespace_label],
+                        "pod_usage": [(f, _read(f)) for f in pod_usage],
+                        "ros_usage": [(f, _read(f)) for f in ros_usage],
+                        "node_label": [(f, _read(f)) for f in node_label],
+                        "namespace_label": [(f, _read(f)) for f in namespace_label],
                     }
         
         print(f"  Pre-generation complete for {len(pre_generated_data)} cluster(s)")
@@ -1153,7 +1156,7 @@ class TestIngestionThroughput:
                                 source.source_name if hasattr(source, 'source_name') else f"source-{i}",
                                 data_start,
                                 data_end,
-                                f"{ingress_url}/v1/upload",
+                                ingress_url,
                                 jwt_token,
                                 profile_name=profile_name,
                             )

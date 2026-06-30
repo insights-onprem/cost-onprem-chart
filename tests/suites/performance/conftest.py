@@ -957,8 +957,8 @@ class PerfCleanupTracker:
     def cleanup(self, rh_identity_header: str):
         """Clean up all tracked resources.
 
-        Raises RuntimeError if any cleanup operations fail, so test frameworks
-        surface dirty state rather than silently proceeding.
+        Emits a RuntimeWarning if any cleanup operations fail, so test
+        output surfaces dirty state without failing the test itself.
         """
         if not self._cleanup_enabled:
             print(f"\n[PERF CLEANUP] Skipped (E2E_CLEANUP_AFTER=false)")
@@ -1243,18 +1243,17 @@ def labeled_nise_source(
     # files is 0, the manifest is from a prior run — wait for a fresh one.
     # On larger profiles celery workers are under heavier load so allow more time.
     print("[labeled_nise_source] Waiting for manifest processing...")
-    import time as _proc_time
     _profile = os.environ.get("PERF_PROFILE", "baseline")
-    proc_deadline = _proc_time.time() + get_timeout_for_profile(300, _profile)
+    proc_deadline = time.time() + get_timeout_for_profile(300, _profile)
     proc_result = {"complete": False}
 
-    while _proc_time.time() < proc_deadline:
+    while time.time() < proc_deadline:
         proc_result = wait_for_processing_complete(
             namespace,
             db_pod,
             cluster_id,
             poll_interval=10,
-            max_wait_seconds=max(15, int(proc_deadline - _proc_time.time())),
+            max_wait_seconds=max(15, int(proc_deadline - time.time())),
         )
         if proc_result.get("complete"):
             processed = proc_result.get("num_processed_files", 0)
@@ -1266,7 +1265,7 @@ def labeled_nise_source(
                 f"[labeled_nise_source] Stale manifest (0 files processed) — "
                 f"waiting for fresh manifest..."
             )
-            _proc_time.sleep(15)
+            time.sleep(15)
         else:
             break
 
@@ -1293,12 +1292,12 @@ def labeled_nise_source(
         )
 
     if schema_name:
-        label_wait_start = _proc_time.time()
+        label_wait_start = time.time()
         _profile = os.environ.get("PERF_PROFILE", "baseline")
         label_wait_max = get_timeout_for_profile(300, _profile)
         found_labels = False
 
-        while _proc_time.time() - label_wait_start < label_wait_max:
+        while time.time() - label_wait_start < label_wait_max:
             count_rows = execute_db_query(
                 namespace, db_pod, "costonprem_koku", "koku_user",
                 f"""
@@ -1310,7 +1309,7 @@ def labeled_nise_source(
                 """,
             )
             count = int(count_rows[0][0]) if count_rows and count_rows[0] else 0
-            elapsed = round(_proc_time.time() - label_wait_start, 1)
+            elapsed = round(time.time() - label_wait_start, 1)
             if count > 0:
                 print(
                     f"[labeled_nise_source] Found {count} summary rows with pod_labels "
@@ -1339,7 +1338,7 @@ def labeled_nise_source(
                     f"[labeled_nise_source] {elapsed}s — no summary rows with pod_labels yet "
                     f"for {cluster_id[:8]}..."
                 )
-            _proc_time.sleep(15)
+            time.sleep(15)
 
         if not found_labels:
             # Final diagnostic: check if ANY rows exist for this cluster
