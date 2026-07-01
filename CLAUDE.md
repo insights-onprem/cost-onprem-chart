@@ -98,6 +98,36 @@ E2E_CLEANUP_AFTER=true    # Clean after tests (default)
 E2E_RESTART_SERVICES=false # Restart Valkey/listener (optional)
 ```
 
+### Performance Testing
+
+Performance tests use `scripts/lib/perf-testing.sh` for profile-based cluster scaling.
+The `apply_perf_profile_config()` function automatically adjusts the live deployment
+(replica counts, resource limits, timeouts, upload sizes) via Helm upgrade + `oc scale`
+before tests run.
+
+```bash
+# Deploy + run performance tests
+./scripts/deploy-test-cost-onprem.sh --namespace cost-onprem --run-perf --perf-profile medium
+
+# Performance tests only (skip deploy)
+./scripts/deploy-test-cost-onprem.sh --perf-only --perf-profile medium
+
+# Specific perf suite(s): api, ros, ingestion, scale, soak
+./scripts/deploy-test-cost-onprem.sh --perf-only --perf-suite ros,api
+```
+
+**Profile Scaling Matrix:** See `.cursor/prompts/run-tests.md` for the full
+table of replicas, CPU/memory, upload sizes, and timeouts per profile.
+Kruize is always 1 replica (PERF-FINDING-004). Listener CPU is auto-boosted
+to node max for perf runs.
+
+**Key Files:**
+- `scripts/lib/perf-testing.sh` — Profile config + test orchestration
+- `scripts/lib/listener-cpu.sh` — Listener CPU boost logic
+- `scripts/lib/perf-observability.sh` — Metrics collection + S3 upload
+- `tests/suites/performance/profiles.py` — Data generation profiles (cluster/node/pod counts)
+- `tests/suites/performance/conftest.py` — Fixtures, cleanup tracker, cluster info
+
 ---
 
 ## Kubernetes Label Conventions

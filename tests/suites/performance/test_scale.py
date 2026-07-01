@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 import requests
 
-from conftest import ClusterConfig, obtain_jwt_token
+from conftest import ClusterConfig
 from e2e_helpers import (
     cleanup_database_records,
     delete_source,
@@ -33,14 +33,64 @@ from e2e_helpers import (
 )
 from utils import exec_in_pod, execute_db_query, get_pod_by_label, run_oc_command
 
-from .conftest import (
-    PerfCleanupTracker,
+from .data_classes import PerformanceResult
+from .helpers import (
     PerfResultCollector,
     PerfTimer,
-    PerformanceResult,
+    create_authenticated_session,
+    parse_memory_mib,
 )
-from .profiles import PROFILES, get_profile_metrics
+from .tracker import PerfCleanupTracker
+from .profiles import ACTIVE_PROFILE as _ACTIVE_PROFILE, PROFILES, get_profile_metrics
 from .test_api_latency import calculate_percentiles, measure_request_latency
+
+
+# =============================================================================
+# Profile-filtered parametrize lists
+# Mirrors the pattern used in test_ingestion.py — all gated by PERF_PROFILE so
+# baseline runs stay fast and heavier scale variants only appear at profile
+# levels where they produce meaningful signal.
+# =============================================================================
+
+_SCALE_001_SKIP_REASON = (
+    "SCALE-001[10] not run for baseline — registering 10 sources adds 2+ min "
+    "with no additional signal beyond the [5] variant."
+)
+_SCALE_001_COUNTS: dict = {
+    "baseline": [5],
+    "small":    [5, 10],
+    "medium":   [5, 10],
+    "large":    [5, 10],
+}
+SCALE_001_COUNTS = _SCALE_001_COUNTS.get(_ACTIVE_PROFILE, _SCALE_001_COUNTS["large"])
+
+# SCALE-002 runs for all profiles including baseline.  The test registers up to 25
+# sources in batches and measures API latency after each batch — no data processing
+# or NISE generation involved.  Observed runtime is ~5 min, making it practical for
+# baseline.  It validates a core behavior (source registration + API responsiveness
+# under incremental load) that is meaningful at every profile level.
+_SCALE_002_SKIP_REASON = ""  # unused — skipif removed below
+
+_SCALE_003_SKIP_REASON = (
+    "SCALE-003 (large namespace count) requires substantial ingested data "
+    "to be meaningful and is not applicable to baseline."
+)
+
+_SCALE_004_CONCURRENCY: dict = {
+    "baseline": [5],
+    "small":    [5, 10],
+    "medium":   [5, 10, 20],
+    "large":    [5, 10, 20],
+}
+SCALE_004_CONCURRENCY = _SCALE_004_CONCURRENCY.get(_ACTIVE_PROFILE, _SCALE_004_CONCURRENCY["large"])
+
+_SCALE_005_DAYS: dict = {
+    "baseline": [10],
+    "small":    [10, 30],
+    "medium":   [10, 30],
+    "large":    [10, 30],
+}
+SCALE_005_DAYS = _SCALE_005_DAYS.get(_ACTIVE_PROFILE, _SCALE_005_DAYS["large"])
 
 
 # =============================================================================
@@ -69,14 +119,7 @@ class TestMultiClusterScale:
     
     def _get_authenticated_session(self) -> requests.Session:
         """Get session with fresh token."""
-        token = obtain_jwt_token(self._keycloak_config)
-        session = requests.Session()
-        session.headers.update({
-            "Authorization": f"Bearer {token.access_token}",
-            "Content-Type": "application/json",
-        })
-        session.verify = False
-        return session
+        return create_authenticated_session(self._keycloak_config)
     
     def _get_source_count(self, session: requests.Session) -> int:
         """Get current number of sources."""
@@ -108,29 +151,22 @@ class TestMultiClusterScale:
             
             if result.returncode == 0 and result.stdout.strip():
                 try:
-                    # Format: "pod-name CPU(cores) MEMORY(bytes)"
                     parts = result.stdout.strip().split()
                     if len(parts) >= 3:
-                        mem_str = parts[2]
-                        # Parse memory (Mi, Gi, etc.)
-                        if mem_str.endswith("Mi"):
-                            memory_usage[name] = float(mem_str[:-2])
-                        elif mem_str.endswith("Gi"):
-                            memory_usage[name] = float(mem_str[:-2]) * 1024
-                        elif mem_str.endswith("Ki"):
-                            memory_usage[name] = float(mem_str[:-2]) / 1024
+                        memory_usage[name] = parse_memory_mib(parts[2])
                 except (ValueError, IndexError):
                     pass
         
         return memory_usage
     
-    @pytest.mark.parametrize("source_count", [5, 10])
+    @pytest.mark.parametrize("source_count", SCALE_001_COUNTS)
     def test_perf_scale_001_source_count_baseline(
         self,
         source_count: int,
         cluster_config: ClusterConfig,
         database_config,
         rh_identity_header: str,
+        koku_api_url: str,
         perf_timer: PerfTimer,
         perf_result: PerformanceResult,
         perf_collector: PerfResultCollector,
@@ -150,11 +186,6 @@ class TestMultiClusterScale:
         ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
         if not ingress_pod:
             pytest.skip("Ingress pod not found")
-        
-        koku_api_url = (
-            f"http://{self.helm_release}-koku-api."
-            f"{self.namespace}.svc.cluster.local:8000/api/cost-management/v1"
-        )
         
         # Register sources
         sources_created = []
@@ -220,6 +251,7 @@ class TestMultiClusterScale:
         cluster_config: ClusterConfig,
         database_config,
         rh_identity_header: str,
+        koku_api_url: str,
         perf_timer: PerfTimer,
         perf_result: PerformanceResult,
         perf_collector: PerfResultCollector,
@@ -245,11 +277,6 @@ class TestMultiClusterScale:
         ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
         if not ingress_pod:
             pytest.skip("Ingress pod not found")
-        
-        koku_api_url = (
-            f"http://{self.helm_release}-koku-api."
-            f"{self.namespace}.svc.cluster.local:8000/api/cost-management/v1"
-        )
         
         checkpoints = []
         sources_created = 0
@@ -330,6 +357,10 @@ class TestMultiClusterScale:
         
         perf_collector.add_result(perf_result)
     
+    @pytest.mark.skipif(
+        _ACTIVE_PROFILE == "baseline",
+        reason=_SCALE_003_SKIP_REASON,
+    )
     def test_perf_scale_003_large_namespace_count(
         self,
         cluster_config: ClusterConfig,
@@ -412,7 +443,7 @@ class TestMultiClusterScale:
         
         perf_collector.add_result(perf_result)
     
-    @pytest.mark.parametrize("concurrent_queries", [5, 10, 20])
+    @pytest.mark.parametrize("concurrent_queries", SCALE_004_CONCURRENCY)
     def test_perf_scale_004_concurrent_queries(
         self,
         concurrent_queries: int,
@@ -506,7 +537,7 @@ class TestMultiClusterScale:
         
         assert (success_count / len(all_results)) >= 0.90, "Success rate below 90%"
     
-    @pytest.mark.parametrize("date_range_days", [10, 30])
+    @pytest.mark.parametrize("date_range_days", SCALE_005_DAYS)
     def test_perf_scale_005_historical_depth(
         self,
         date_range_days: int,

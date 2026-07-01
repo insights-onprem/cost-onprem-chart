@@ -91,14 +91,15 @@ Testing guides, validation procedures, and development resources.
 | **[UI OAuth Testing](development/ui-oauth-testing.md)** | Guide for testing UI OAuth flow with Keycloak |
 
 ### 📊 Performance
-Performance testing, sizing recommendations, and findings.
+Performance testing, sizing recommendations, and findings (FLPATH-4036 / COST-7567).
 
 | Document | Purpose |
 |----------|---------|
-| **[Performance Testing Plan](performance/performance-testing-plan.md)** | Comprehensive testing strategy for FLPATH-4036 |
+| **[Performance Testing Plan](performance/performance-testing-plan.md)** | Strategy, success criteria, and execution status |
 | **[Test Matrix](performance/TEST-MATRIX.md)** | Complete test matrix with all permutations and parameters |
-| **[Sizing Guide](performance/sizing-guide.md)** | Resource sizing recommendations by deployment scale |
-| **[Findings](performance/FINDINGS.md)** | Issues discovered during testing with Jira-ready summaries |
+| **[Sizing Guide](performance/sizing-guide.md)** | Validated resource recommendations by deployment scale |
+| **[Findings](performance/FINDINGS.md)** | Product issues discovered during testing with Jira-ready summaries |
+| **[Observability](performance/OBSERVABILITY.md)** | Metrics collection, S3 archival, and report generation |
 
 ---
 
@@ -197,7 +198,7 @@ All documents are maintained and updated regularly. If you find outdated informa
 
 ---
 
-**Last Updated:** 2026-01-29
-**Helm Chart Version:** 0.1.5+
-**Documentation Structure:** Reorganized into architecture/, operations/, api/, and development/ categories (TASK-014)
+**Last Updated:** 2026-06-25
+**Helm Chart Version:** 0.2.20+
+**Documentation Structure:** Reorganized into architecture/, operations/, api/, development/, and performance/ categories
 

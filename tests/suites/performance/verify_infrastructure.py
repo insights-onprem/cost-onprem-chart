@@ -19,8 +19,11 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-# Add tests directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+# When running standalone (not via pytest), ensure the tests/ directory is
+# on sys.path.  ``pytest`` handles this automatically.
+_tests_dir = str(Path(__file__).parent.parent.parent)
+if _tests_dir not in sys.path:
+    sys.path.insert(0, _tests_dir)
 
 
 def test_imports():
@@ -168,7 +171,7 @@ def test_data_classes():
     print("4. Testing data classes...")
     print("=" * 60)
     
-    from suites.performance.conftest import (
+    from suites.performance.data_classes import (
         ClusterInfo,
         TimingMetric,
         PerformanceResult,
@@ -184,6 +187,7 @@ def test_data_classes():
         total_memory_gib=192.0,
         storage_class="ocs-storagecluster-ceph-rbd",
         storage_type="ODF",
+        s3_backend="NooBaa",
         platform="bare-metal",
     )
     
@@ -245,7 +249,7 @@ def test_perf_timer():
     print("=" * 60)
     
     import time
-    from suites.performance.conftest import PerfTimer
+    from suites.performance.helpers import PerfTimer
     
     timer = PerfTimer()
     
@@ -373,11 +377,8 @@ def test_report_saving():
     print("8. Testing report saving...")
     print("=" * 60)
     
-    from suites.performance.conftest import (
-        ClusterInfo,
-        PerformanceResult,
-        save_perf_result,
-    )
+    from suites.performance.data_classes import ClusterInfo, PerformanceResult
+    from suites.performance.helpers import save_perf_result
     
     with tempfile.TemporaryDirectory() as tmpdir:
         result = PerformanceResult(

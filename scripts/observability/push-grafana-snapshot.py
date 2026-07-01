@@ -42,6 +42,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
+from run_utils import load_metadata, load_session
+
 
 # ---------------------------------------------------------------------------
 # Grafana API helpers
@@ -559,25 +561,6 @@ def get_grafana_sa_token(namespace: str) -> Optional[str]:
     except Exception:
         pass
     return None
-
-
-def load_session(run_dir: Path) -> Optional[dict]:
-    for sf in sorted((run_dir / "results").glob("session_*.json")):
-        try:
-            return json.loads(sf.read_text())
-        except Exception:
-            pass
-    return None
-
-
-def load_metadata(run_dir: Path) -> dict:
-    p = run_dir / "metadata.json"
-    if p.exists():
-        try:
-            return json.loads(p.read_text())
-        except Exception:
-            pass
-    return {}
 
 
 def run_time_range_ms(metadata: dict, results: list[dict]) -> tuple[int, int]:

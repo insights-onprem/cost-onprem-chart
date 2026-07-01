@@ -51,7 +51,54 @@ E2E_CLEANUP_AFTER=true    # Clean after tests (default)
 E2E_RESTART_SERVICES=false # Restart Valkey/listener (optional)
 ```
 
+### Performance Tests
+
+Performance tests use profile-based scaling via `scripts/lib/perf-testing.sh`.
+The `apply_perf_profile_config()` function automatically adjusts the live cluster
+(replica counts, resource limits, timeouts, upload sizes) before tests run.
+
+```bash
+# Full deploy + performance tests (baseline profile)
+./scripts/deploy-test-cost-onprem.sh --namespace cost-onprem --run-perf
+
+# Performance-only against existing deployment
+./scripts/deploy-test-cost-onprem.sh --namespace cost-onprem --perf-only
+
+# With a specific profile (baseline, small, medium, large)
+./scripts/deploy-test-cost-onprem.sh --perf-only --perf-profile medium
+
+# Run specific perf suite(s): api, ros, ingestion, scale, soak
+./scripts/deploy-test-cost-onprem.sh --perf-only --perf-suite ros
+./scripts/deploy-test-cost-onprem.sh --perf-only --perf-suite api,ingestion
+```
+
+#### Profile Scaling Matrix
+
+| Profile  | Processor | Listener | OCP Worker | Summary Worker | Kruize CPU | Upload Size | Timeouts |
+|----------|-----------|----------|------------|----------------|------------|-------------|----------|
+| baseline | 1         | 1        | 1          | 1              | 500m/1000m | 100MB       | 30s      |
+| small    | 1         | 2        | 2          | 2              | 500m/2000m | 100MB       | 30s      |
+| medium   | 2         | 2        | 2          | 2              | 500m/2000m | 200MB       | 180s     |
+| large    | 3         | 3        | 3          | 3              | 500m/2000m | 500MB       | 600s     |
+| xlarge   | 3         | 3        | 3          | 3              | 1000m/2000m| 500MB       | 600s     |
+
+Kruize is always kept at 1 replica (scaling degrades throughput, see PERF-FINDING-004).
+Listener CPU is automatically boosted to node max for perf runs.
+
+**Note**: ING-006 (processing window validation) has a 6-hour timeout — it
+validates the daily processing window spec and will run for the full duration
+on medium+ profiles. It is not gated by `SOAK_TESTS`.
+
+#### Key Environment Variables
+
+```bash
+PERF_PROFILE=medium       # Profile to use (default: baseline)
+PERF_SUITE=all            # Suite(s) to run (default: all)
+LISTENER_CPU_LIMIT=max    # Listener CPU boost (default: max for perf runs)
+```
+
 ## Output
 
 - JUnit XML report: `tests/reports/junit.xml`
 - Console output with test results
+- Performance results: `tests/perf-runs/<run-id>/` (for perf tests)

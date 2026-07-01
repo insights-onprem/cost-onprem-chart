@@ -69,46 +69,32 @@ from utils import (
     run_oc_command,
 )
 
-from .conftest import (
-    PerfCleanupTracker,
-    PerfResultCollector,
-    PerformanceResult,
-    save_perf_result,
-)
+from .data_classes import PerformanceResult
+from .helpers import PerfResultCollector, PerfTestConfig, save_perf_result
+from .profiles import ACTIVE_PROFILE as _ACTIVE_PROFILE
+from .tracker import PerfCleanupTracker
+
+# Soak tests are opt-in: must set SOAK_TESTS=true explicitly.
+# This decouples long-running stability tests from performance profile runs.
+_SOAK_ENABLED = os.environ.get("SOAK_TESTS", "").lower() in ("true", "1", "yes")
+# Compute once at import time so @pytest.mark.timeout() can reference it.
+_SOAK_DURATION_S = int(float(os.environ.get("SOAK_DURATION_HOURS", "1")) * 3600)
 
 
 # =============================================================================
 # Configuration
 # =============================================================================
 
-@dataclass
-class SoakConfig:
-    """Configuration for soak tests."""
-    
-    duration_hours: float = field(
-        default_factory=lambda: float(os.environ.get("SOAK_DURATION_HOURS", "1"))
-    )
-    upload_interval_minutes: float = field(
-        default_factory=lambda: float(os.environ.get("SOAK_UPLOAD_INTERVAL_MINUTES", "15"))
-    )
-    query_interval_minutes: float = field(
-        default_factory=lambda: float(os.environ.get("SOAK_QUERY_INTERVAL_MINUTES", "5"))
-    )
-    metrics_interval_seconds: float = field(
-        default_factory=lambda: float(os.environ.get("SOAK_METRICS_INTERVAL_SECONDS", "60"))
-    )
-    
-    @property
-    def duration_seconds(self) -> float:
-        return self.duration_hours * 3600
-    
-    @property
-    def upload_interval_seconds(self) -> float:
-        return self.upload_interval_minutes * 60
-    
-    @property
-    def query_interval_seconds(self) -> float:
-        return self.query_interval_minutes * 60
+# Soak configuration is provided by PerfTestConfig via the perf_config fixture.
+# Helper properties for convenience:
+def _soak_duration_seconds(perf_config) -> float:
+    return perf_config.soak_duration_hours * 3600
+
+def _soak_upload_interval_seconds(perf_config) -> float:
+    return perf_config.soak_upload_interval_minutes * 60
+
+def _soak_query_interval_seconds(perf_config) -> float:
+    return perf_config.soak_query_interval_minutes * 60
 
 
 @dataclass
@@ -190,6 +176,8 @@ def collect_pod_resources(namespace: str) -> Tuple[Dict[str, float], Dict[str, f
     Returns:
         Tuple of (memory_dict, cpu_dict) with pod_name -> value mappings
     """
+    from .helpers import parse_cpu_millicores, parse_memory_mib
+
     memory = {}
     cpu = {}
     
@@ -207,22 +195,14 @@ def collect_pod_resources(namespace: str) -> Tuple[Dict[str, float], Dict[str, f
         parts = line.split()
         if len(parts) >= 3:
             pod_name = parts[0]
-            cpu_str = parts[1]
-            mem_str = parts[2]
-            
-            # Parse CPU
-            if cpu_str.endswith("m"):
-                cpu[pod_name] = float(cpu_str[:-1]) / 1000
-            elif cpu_str.isdigit():
-                cpu[pod_name] = float(cpu_str)
-            
-            # Parse memory
-            if mem_str.endswith("Mi"):
-                memory[pod_name] = float(mem_str[:-2])
-            elif mem_str.endswith("Gi"):
-                memory[pod_name] = float(mem_str[:-2]) * 1024
-            elif mem_str.endswith("Ki"):
-                memory[pod_name] = float(mem_str[:-2]) / 1024
+            try:
+                cpu[pod_name] = parse_cpu_millicores(parts[1])
+            except (ValueError, IndexError):
+                pass
+            try:
+                memory[pod_name] = parse_memory_mib(parts[2])
+            except (ValueError, IndexError):
+                pass
     
     return memory, cpu
 
@@ -293,20 +273,24 @@ def collect_queue_depths(namespace: str) -> Dict[str, int]:
     Returns:
         Dict with queue_name -> depth mappings
     """
-    queues = {}
-    
-    # Kafka may be in a separate namespace
+    from .queue_helpers import get_celery_queue_depths
+
+    queues: Dict[str, int] = {}
+
+    # Valkey/Celery queues via shared helper
+    celery_depths = get_celery_queue_depths(namespace)
+    for q, depth in celery_depths.items():
+        queues[f"celery/{q}"] = depth
+
+    # Kafka consumer lag (soak-specific — not covered by get_celery_queue_depths)
     kafka_namespace = os.environ.get("KAFKA_NAMESPACE", "kafka")
     helm_release = os.environ.get("HELM_RELEASE_NAME", "cost-onprem")
-    
-    # Find Kafka broker pod dynamically
+
     kafka_pod = get_pod_by_label(kafka_namespace, f"app.kubernetes.io/name={helm_release}-kafka")
     if not kafka_pod:
-        # Try alternate label
         kafka_pod = get_pod_by_label(kafka_namespace, "strimzi.io/kind=Kafka")
-    
+
     if kafka_pod:
-        # Kafka consumer lag
         result = run_oc_command([
             "exec", "-n", kafka_namespace, kafka_pod, "--",
             "bin/kafka-consumer-groups.sh",
@@ -314,7 +298,7 @@ def collect_queue_depths(namespace: str) -> Dict[str, int]:
             "--all-groups",
             "--describe"
         ], check=False)
-        
+
         if result.returncode == 0:
             for line in result.stdout.strip().split("\n"):
                 if "koku" in line.lower() or "ros" in line.lower():
@@ -325,19 +309,7 @@ def collect_queue_depths(namespace: str) -> Dict[str, int]:
                         lag = parts[5]
                         if lag.isdigit():
                             queues[f"kafka/{group}/{topic}"] = int(lag)
-    
-    # Valkey queue lengths
-    valkey_pod = get_pod_by_label(namespace, "app.kubernetes.io/component=valkey")
-    if valkey_pod:
-        for queue in ["ocp", "summary", "ros"]:
-            result = run_oc_command([
-                "exec", "-n", namespace, valkey_pod, "--",
-                "valkey-cli", "LLEN", f"celery:{queue}"
-            ], check=False)
-            
-            if result.returncode == 0 and result.stdout.strip().isdigit():
-                queues[f"celery/{queue}"] = int(result.stdout.strip())
-    
+
     return queues
 
 
@@ -474,11 +446,12 @@ def query_worker(
     interval_seconds: float,
 ):
     """Background worker that performs periodic API queries."""
+    # gateway_url already includes /api — endpoints are relative to that base
     endpoints = [
-        "/api/cost-management/v1/sources/",
-        "/api/cost-management/v1/reports/openshift/costs/?filter[time_scope_units]=month&filter[time_scope_value]=-1",
-        "/api/cost-management/v1/reports/openshift/memory/?filter[time_scope_units]=month&filter[time_scope_value]=-1",
-        "/api/cost-management/v1/recommendations/openshift",
+        "/cost-management/v1/sources/",
+        "/cost-management/v1/reports/openshift/costs/?filter[time_scope_units]=month&filter[time_scope_value]=-1",
+        "/cost-management/v1/reports/openshift/memory/?filter[time_scope_units]=month&filter[time_scope_value]=-1",
+        "/cost-management/v1/recommendations/openshift",
     ]
     
     query_idx = 0
@@ -648,39 +621,36 @@ def analyze_queue_health(samples: List[MetricSample]) -> Dict[str, Any]:
 class TestSoakStability:
     """Soak/stability tests (PERF-SOAK-*)."""
 
-    @pytest.fixture(scope="class")
-    def soak_config(self) -> SoakConfig:
-        """Get soak test configuration."""
-        return SoakConfig()
+    # Soak configuration comes from the session-scoped perf_config fixture
+    # provided by conftest.py (PerfTestConfig dataclass).
 
     @pytest.fixture(scope="class")
-    def gateway_url(self, cluster_config) -> str:
-        """Get gateway URL."""
-        gateway_route = run_oc_command([
-            "get", "route", "-n", cluster_config.namespace,
-            f"{cluster_config.helm_release_name}-api",
-            "-o", "jsonpath={.spec.host}"
-        ], check=False)
-        
-        if gateway_route.returncode != 0 or not gateway_route.stdout.strip():
-            pytest.skip("Gateway route not found")
-        
-        return f"https://{gateway_route.stdout.strip()}"
+    def upload_url(self, gateway_url: str) -> str:
+        """Get upload URL via the session-scoped gateway_url.
 
-    @pytest.fixture(scope="class")
-    def upload_url(self, gateway_url) -> str:
-        """Get upload URL."""
-        return f"{gateway_url}/api/ingress/v1/upload"
+        gateway_url from conftest already includes /api (e.g. https://host/api).
+        """
+        return f"{gateway_url}/ingress/v1/upload"
 
+    # ingress_pod and koku_api_url are provided by session-scoped fixtures
+    # in conftest.py
+
+    @pytest.mark.skipif(
+        not _SOAK_ENABLED,
+        reason="SOAK-001 requires SOAK_TESTS=true — multi-hour stability tests are opt-in.",
+    )
+    @pytest.mark.timeout(_SOAK_DURATION_S * 2 + 600)
     def test_perf_soak_001_continuous_operation(
         self,
         cluster_config,
         perf_cleanup,
         perf_result,
         perf_collector,
-        soak_config,
+        perf_config: PerfTestConfig,
         gateway_url,
         upload_url,
+        ingress_pod,
+        koku_api_url,
         jwt_token: JWTToken,
         rh_identity_header: str,
     ):
@@ -702,10 +672,12 @@ class TestSoakStability:
         # Register source
         source = register_source(
             cluster_config.namespace,
-            gateway_url,
-            jwt_token.access_token,
-            source_name,
+            ingress_pod,
+            koku_api_url,
+            rh_identity_header,
             cluster_id,
+            "org1234567",
+            source_name,
         )
         
         perf_cleanup.track(
@@ -726,7 +698,7 @@ class TestSoakStability:
         # Metrics collector
         metrics_thread = threading.Thread(
             target=metrics_collector_worker,
-            args=(cluster_config.namespace, state, soak_config.metrics_interval_seconds),
+            args=(cluster_config.namespace, state, perf_config.soak_metrics_interval_seconds),
         )
         metrics_thread.start()
         threads.append(metrics_thread)
@@ -741,7 +713,7 @@ class TestSoakStability:
                 jwt_token.access_token,
                 cluster_id,
                 state,
-                soak_config.upload_interval_seconds,
+                _soak_upload_interval_seconds(perf_config),
                 db_pod,
             ),
         )
@@ -755,23 +727,24 @@ class TestSoakStability:
                 gateway_url,
                 jwt_token.access_token,
                 state,
-                soak_config.query_interval_seconds,
+                _soak_query_interval_seconds(perf_config),
             ),
         )
         query_thread.start()
         threads.append(query_thread)
         
-        print(f"\n=== PERF-SOAK-001: Starting {soak_config.duration_hours}h soak test ===")
-        print(f"  Upload interval: {soak_config.upload_interval_minutes} minutes")
-        print(f"  Query interval: {soak_config.query_interval_minutes} minutes")
-        print(f"  Metrics interval: {soak_config.metrics_interval_seconds} seconds")
+        print(f"\n=== PERF-SOAK-001: Starting {perf_config.soak_duration_hours}h soak test ===")
+        print(f"  Upload interval: {perf_config.soak_upload_interval_minutes} minutes")
+        print(f"  Query interval: {perf_config.soak_query_interval_minutes} minutes")
+        print(f"  Metrics interval: {perf_config.soak_metrics_interval_seconds} seconds")
         
         try:
             # Run for configured duration
             start = time.time()
-            while time.time() - start < soak_config.duration_seconds:
+            soak_duration_s = _soak_duration_seconds(perf_config)
+            while time.time() - start < soak_duration_s:
                 elapsed = time.time() - start
-                remaining = soak_config.duration_seconds - elapsed
+                remaining = soak_duration_s - elapsed
                 
                 # Progress update every 5 minutes
                 if int(elapsed) % 300 == 0:
@@ -808,7 +781,7 @@ class TestSoakStability:
         
         # Build result
         perf_result.metrics = {
-            "duration_hours": soak_config.duration_hours,
+            "duration_hours": perf_config.soak_duration_hours,
             "duration_actual_seconds": state.elapsed_seconds,
             "uploads_completed": state.uploads_completed,
             "uploads_failed": state.uploads_failed,
@@ -840,12 +813,17 @@ class TestSoakStability:
         assert len(restarts) == 0, f"Pod restarts detected (possible OOM): {restarts}"
         assert state.uploads_failed == 0, f"{state.uploads_failed} uploads failed"
 
+    @pytest.mark.skipif(
+        not _SOAK_ENABLED,
+        reason="SOAK-002 requires SOAK_TESTS=true — multi-hour stability tests are opt-in.",
+    )
+    @pytest.mark.timeout(_SOAK_DURATION_S + 300)
     def test_perf_soak_002_memory_leak_detection(
         self,
         cluster_config,
         perf_result,
         perf_collector,
-        soak_config,
+        perf_config: PerfTestConfig,
     ):
         """PERF-SOAK-002: Memory leak detection.
         
@@ -855,8 +833,8 @@ class TestSoakStability:
         Success criteria: < 5% memory growth per day
         """
         # Collect samples for the configured duration (or minimum 60 seconds for validation)
-        duration = max(soak_config.duration_seconds, 60)
-        interval = soak_config.metrics_interval_seconds
+        duration = max(_soak_duration_seconds(perf_config), 60)
+        interval = perf_config.soak_metrics_interval_seconds
         
         samples = []
         start_time = time.time()
@@ -916,12 +894,17 @@ class TestSoakStability:
         
         assert not leak_detected, f"Memory leak detected in pods: {[p['pod'] for p in leak_pods]}"
 
+    @pytest.mark.skipif(
+        not _SOAK_ENABLED,
+        reason="SOAK-003 requires SOAK_TESTS=true — multi-hour stability tests are opt-in.",
+    )
+    @pytest.mark.timeout(_SOAK_DURATION_S + 300)
     def test_perf_soak_003_disk_usage_monitoring(
         self,
         cluster_config,
         perf_result,
         perf_collector,
-        soak_config,
+        perf_config: PerfTestConfig,
     ):
         """PERF-SOAK-003: Disk usage monitoring.
         
@@ -930,8 +913,8 @@ class TestSoakStability:
         Success criteria: No disk exhaustion warnings
         """
         # Collect samples for the configured duration (or minimum 60 seconds for validation)
-        duration = max(soak_config.duration_seconds, 60)
-        interval = soak_config.metrics_interval_seconds
+        duration = max(_soak_duration_seconds(perf_config), 60)
+        interval = perf_config.soak_metrics_interval_seconds
         
         samples = []
         start_time = time.time()
@@ -982,12 +965,17 @@ class TestSoakStability:
             for w in warnings:
                 print(f"    - {w['component']}: {w['projected_7day_growth_gb']:.1f} GB projected growth in 7 days")
 
+    @pytest.mark.skipif(
+        not _SOAK_ENABLED,
+        reason="SOAK-004 requires SOAK_TESTS=true — multi-hour stability tests are opt-in.",
+    )
+    @pytest.mark.timeout(_SOAK_DURATION_S + 300)
     def test_perf_soak_004_queue_health_monitoring(
         self,
         cluster_config,
         perf_result,
         perf_collector,
-        soak_config,
+        perf_config: PerfTestConfig,
     ):
         """PERF-SOAK-004: Queue health monitoring.
         
@@ -996,8 +984,8 @@ class TestSoakStability:
         Success criteria: No sustained queue growth indicating processing backup
         """
         # Collect samples for the configured duration (or minimum 60 seconds for validation)
-        duration = max(soak_config.duration_seconds, 60)
-        interval = soak_config.metrics_interval_seconds
+        duration = max(_soak_duration_seconds(perf_config), 60)
+        interval = perf_config.soak_metrics_interval_seconds
         
         samples = []
         start_time = time.time()
