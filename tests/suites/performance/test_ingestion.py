@@ -42,20 +42,18 @@ from e2e_helpers import (
 from utils import (
     create_upload_package_from_files,
     exec_in_pod,
-    get_pod_by_label,
     run_oc_command,
 )
 
-from .conftest import (
-    PerfCleanupTracker,
+from .data_classes import PerformanceResult, ResourceSnapshot, TimingMetric
+from .helpers import (
     PerfResultCollector,
     PerfTimer,
-    PerformanceResult,
-    ResourceSnapshot,
-    TimingMetric,
+    generate_and_upload_data,
     get_pod_resource_usage,
     save_perf_result,
 )
+from .tracker import PerfCleanupTracker
 from .profiles import ACTIVE_PROFILE as _ACTIVE_PROFILE, PROFILES, get_profile_metrics, get_profile_nise_yaml
 
 
@@ -141,7 +139,7 @@ ING_006_PROFILES = (
 
 def get_listener_cpu_usage(namespace: str) -> Optional[float]:
     """Get current listener CPU usage in cores."""
-    from .conftest import parse_cpu_millicores
+    from .helpers import parse_cpu_millicores
 
     result = run_oc_command([
         "adm", "top", "pod", "-n", namespace,
@@ -160,118 +158,6 @@ def get_listener_cpu_usage(namespace: str) -> Optional[float]:
         pass
     
     return None
-
-
-def generate_and_upload_data(
-    cluster_id: str,
-    source_name: str,
-    start_date: datetime,
-    end_date: datetime,
-    ingress_url: str,
-    jwt_token: JWTToken,
-    config: Optional[NISEConfig] = None,
-    profile_name: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Generate NISE data and upload it to ingress.
-    
-    Returns timing and metadata about the upload.
-    """
-    with tempfile.TemporaryDirectory() as temp_dir:
-        # Generate data
-        gen_start = time.time()
-        
-        if profile_name and profile_name in PROFILES:
-            # Use profile-based generation
-            yaml_content = get_profile_nise_yaml(
-                profile_name, start_date, end_date, cluster_id, 0
-            )
-            yaml_path = os.path.join(temp_dir, "static_report.yml")
-            with open(yaml_path, "w") as f:
-                f.write(yaml_content)
-            
-            # Run NISE with the generated YAML
-            import subprocess
-            nise_output = os.path.join(temp_dir, "nise_output")
-            os.makedirs(nise_output, exist_ok=True)
-            
-            result = subprocess.run(
-                ["nise", "report", "ocp",
-                 "--static-report-file", yaml_path,
-                 "--ocp-cluster-id", cluster_id,
-                 "-w", "--ros-ocp-info"],
-                capture_output=True,
-                text=True,
-                timeout=600,
-                cwd=nise_output,
-            )
-            
-            if result.returncode != 0:
-                raise RuntimeError(f"NISE failed: {result.stderr}")
-            
-            # Collect generated files
-            csv_files = list(Path(nise_output).rglob("*.csv"))
-            # Categorize files - note: NISE uses singular (node_label, namespace_label)
-            pod_usage_files = [str(f) for f in csv_files if "pod_usage" in f.name.lower()]
-            ros_usage_files = [str(f) for f in csv_files if "ros_usage" in f.name.lower() or "resource_" in f.name.lower()]
-            node_label_files = [str(f) for f in csv_files if "node_label" in f.name.lower()]
-            namespace_label_files = [str(f) for f in csv_files if "namespace_label" in f.name.lower()]
-        else:
-            # Use NISEConfig-based generation
-            files = generate_nise_data(
-                cluster_id, start_date, end_date, temp_dir, config
-            )
-            pod_usage_files = files.get("pod_usage_files", [])
-            ros_usage_files = files.get("ros_usage_files", [])
-            node_label_files = files.get("node_label_files", [])
-            namespace_label_files = files.get("namespace_label_files", [])
-        
-        gen_duration = time.time() - gen_start
-        total_files = len(pod_usage_files) + len(ros_usage_files)
-        
-        # Create upload package
-        package_start = time.time()
-        
-        package_path = create_upload_package_from_files(
-            pod_usage_files=pod_usage_files,
-            ros_usage_files=ros_usage_files,
-            cluster_id=cluster_id,
-            start_date=start_date,
-            end_date=end_date,
-            node_label_files=node_label_files if node_label_files else None,
-            namespace_label_files=namespace_label_files if namespace_label_files else None,
-        )
-        
-        package_size_mb = os.path.getsize(package_path) / (1024 * 1024)
-        package_duration = time.time() - package_start
-        
-        # Upload — scale timeout with package size (minimum 0.5 MB/s assumed)
-        upload_timeout = max(180, int(package_size_mb / 0.5) + 60)
-        upload_start = time.time()
-        session = requests.Session()
-        session.verify = False
-        
-        response = upload_with_retry(
-            session,
-            f"{ingress_url}/v1/upload",
-            package_path,
-            jwt_token.authorization_header,
-            timeout=upload_timeout,
-        )
-        
-        upload_duration = time.time() - upload_start
-        
-        return {
-            "cluster_id": cluster_id,
-            "source_name": source_name,
-            "csv_file_count": total_files,
-            "package_size_mb": round(package_size_mb, 3),
-            "generation_seconds": round(gen_duration, 3),
-            "packaging_seconds": round(package_duration, 3),
-            "upload_seconds": round(upload_duration, 3),
-            "upload_status": response.status_code,
-            "upload_mb_per_second": round(package_size_mb / upload_duration, 3) if upload_duration > 0 else 0,
-            "upload_timeout_seconds": upload_timeout,
-        }
 
 
 # =============================================================================
@@ -315,6 +201,7 @@ class TestIngestionThroughput:
         perf_collector: PerfResultCollector,
         rh_identity_header: str,
         perf_cleanup,
+        ingress_pod: str,
     ):
         """PERF-ING-001: Single source baseline - 1 source, 1 month data, default config.
         
@@ -325,11 +212,6 @@ class TestIngestionThroughput:
         """
         cluster_id = generate_cluster_id()
         source_name = f"perf-ing-001-{cluster_id[-8:]}"
-
-        # Get pod for internal API calls
-        ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
-        if not ingress_pod:
-            pytest.skip("Ingress pod not found")
 
         # Pre-test cleanup: remove any leftover source/DB records with this name
         # from a previous cancelled run to prevent HTTP 400 duplicate-source errors.
@@ -411,6 +293,7 @@ class TestIngestionThroughput:
         perf_collector: PerfResultCollector,
         rh_identity_header: str,
         perf_cleanup,
+        ingress_pod: str,
         request,
     ):
         """PERF-ING-002: Single source burst - 1 source, N days data, max listener CPU.
@@ -430,10 +313,6 @@ class TestIngestionThroughput:
         cluster_id = generate_cluster_id()
         source_name = f"perf-ing-002-{data_days}d-{cluster_id[-8:]}"
         profile_name = "single_source_burst"
-        
-        ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
-        if not ingress_pod:
-            pytest.skip("Ingress pod not found")
         
         # Register source
         with perf_timer.measure("source_registration"):
@@ -539,6 +418,7 @@ class TestIngestionThroughput:
         perf_collector: PerfResultCollector,
         rh_identity_header: str,
         perf_cleanup,
+        ingress_pod: str,
         perf_config,
     ):
         """PERF-ING-003: Concurrent uploads - N sources uploading simultaneously.
@@ -559,10 +439,6 @@ class TestIngestionThroughput:
                 f"\n[ING-003] PERF_CONCURRENT_UPLOADS_MAX={perf_config.concurrent_upload_max} "
                 f"capped requested {requested_sources} → {concurrent_sources} workers"
             )
-        
-        ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
-        if not ingress_pod:
-            pytest.skip("Ingress pod not found")
         
         # Register all sources first
         sources = []
@@ -652,7 +528,7 @@ class TestIngestionThroughput:
         # Wait for all Celery work from this test to fully drain before completing.
         # This prevents downstream tests from starting while this test's tasks
         # (cost model calculations, summaries, etc.) are still in flight.
-        from .conftest import wait_for_queue_drain
+        from .queue_helpers import wait_for_queue_drain
         drain_result = wait_for_queue_drain(
             self.namespace,
             max_wait_seconds=600,
@@ -692,6 +568,7 @@ class TestIngestionThroughput:
         perf_collector: PerfResultCollector,
         rh_identity_header: str,
         perf_cleanup,
+        ingress_pod: str,
     ):
         """PERF-ING-004: Large file upload (50MB+).
         
@@ -714,10 +591,6 @@ class TestIngestionThroughput:
         """
         cluster_id = generate_cluster_id()
         source_name = f"perf-ing-004-{target_size_mb}mb-{cluster_id[-8:]}"
-        
-        ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
-        if not ingress_pod:
-            pytest.skip("Ingress pod not found")
         
         # Register source
         with perf_timer.measure("source_registration"):
@@ -805,7 +678,7 @@ class TestIngestionThroughput:
         processing_time = proc["elapsed_s"]
 
         # Capture final queue depths — key diagnostic for stalled processing
-        from .conftest import get_celery_queue_depths
+        from .queue_helpers import get_celery_queue_depths
         final_queue_depths = get_celery_queue_depths(cluster_config.namespace)
 
         perf_result.metrics = {
@@ -853,6 +726,7 @@ class TestIngestionThroughput:
         perf_collector: PerfResultCollector,
         rh_identity_header: str,
         perf_cleanup,
+        ingress_pod: str,
     ):
         """PERF-ING-005: High frequency uploads - Upload every 5 min for 1 hour.
         
@@ -868,10 +742,6 @@ class TestIngestionThroughput:
         
         cluster_id = generate_cluster_id()
         source_name = f"perf-ing-005-{cluster_id[-8:]}"
-        
-        ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
-        if not ingress_pod:
-            pytest.skip("Ingress pod not found")
         
         # Register source
         source = register_source(
@@ -959,6 +829,7 @@ class TestIngestionThroughput:
         perf_collector: PerfResultCollector,
         rh_identity_header: str,
         perf_cleanup,
+        ingress_pod: str,
         profile_name: str,
     ):
         """PERF-ING-006: 6-hour processing window validation (SC-4).
@@ -986,10 +857,6 @@ class TestIngestionThroughput:
         
         # Get profile settings
         clusters = profile.get("clusters", 1)
-        
-        ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
-        if not ingress_pod:
-            pytest.skip("Ingress pod not found")
         
         # Track all sources for cleanup
         sources = []

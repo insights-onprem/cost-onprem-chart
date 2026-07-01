@@ -31,12 +31,8 @@ from utils import (
     run_oc_command,
 )
 
-from .conftest import (
-    PerfResultCollector,
-    PerfTimer,
-    PerformanceResult,
-)
-from .test_ingestion import generate_and_upload_data
+from .data_classes import PerformanceResult
+from .helpers import PerfResultCollector, PerfTimer, generate_and_upload_data
 from .profiles import ACTIVE_PROFILE as _ACTIVE_PROFILE, PROFILES
 
 
@@ -63,7 +59,7 @@ def get_kruize_heap_usage(namespace: str) -> Optional[Dict[str, float]]:
     Returns:
         Dict with 'used_mb' or None if unavailable.
     """
-    from .conftest import parse_memory_mib
+    from .helpers import parse_memory_mib
 
     kruize_pod = get_pod_by_label(namespace, "app.kubernetes.io/component=ros-optimization")
     if not kruize_pod:
@@ -493,15 +489,8 @@ class TestROSPerformance:
         # gateway_url from conftest already includes /api (e.g. https://host/api)
         return f"{gateway_url}/ingress/v1/upload"
 
-    @pytest.fixture(scope="class")
-    def ingress_pod(self, cluster_config) -> str:
-        """Get ingress pod name."""
-        pod = get_pod_by_label(cluster_config.namespace, "app.kubernetes.io/component=ingress")
-        if not pod:
-            pytest.skip("Ingress pod not found")
-        return pod
-
-    # koku_api_url is provided by the session-scoped fixture in conftest.py
+    # ingress_pod and koku_api_url are provided by session-scoped fixtures
+    # in conftest.py
 
     def test_perf_ros_001_recommendation_baseline(
         self,

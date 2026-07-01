@@ -19,18 +19,10 @@ This document provides a high-level view of all performance test permutations.
 ## Performance Profiles
 
 All tests can be run with different data profiles via `PERF_PROFILE` environment variable.
-Profile data volumes are derived from production metrics — see
-[sizing-guide.md](sizing-guide.md#quick-reference) for full sizing details.
-
-| Profile | Customers | Clusters | Nodes | CPU Cores | Use Case |
-|---------|-----------|----------|-------|-----------|----------|
-| `baseline` | - | 1 | 3 | 6 | Smoke/quick validation |
-| `small` | 37% | 1 | 15 | 200 | Standard testing |
-| `medium` | 35% | 2 | 49 | 544 | Scale testing |
-| `large` | 21% | 7 | 133 | 1,964 | Stress testing |
-| `xlarge` | 6% | 23 | 346 | 6,954 | Extreme scale |
-| `stress_p99` | P99 | 33 | 1,072 | 57,424 | P99 workload |
-| `stress_max` | Max | 67 | 4,311 | 793,424 | Maximum observed |
+Profile definitions (cluster counts, node counts, CPU cores) and sizing recommendations
+are maintained in [sizing-guide.md](sizing-guide.md#quick-reference) — the canonical
+reference for profile data.  Key profiles: `baseline` (smoke), `small`/`medium`/`large`
+(customer tiers covering 93% of deployments), `xlarge` (top 6%).
 
 ### Cluster Infrastructure per Profile
 

@@ -25,11 +25,10 @@ import requests
 
 from conftest import ClusterConfig, JWTToken, obtain_jwt_token
 
-from .conftest import (
+from .data_classes import PerformanceResult, TimingMetric
+from .helpers import (
     PerfResultCollector,
     PerfTimer,
-    PerformanceResult,
-    TimingMetric,
     create_authenticated_session,
     get_timeout_for_profile,
 )
@@ -104,21 +103,20 @@ def measure_request_latency(
 def calculate_percentiles(
     latencies: List[float],
 ) -> Dict[str, float]:
-    """Calculate latency percentiles."""
+    """Calculate latency percentiles using statistics.quantiles."""
     if not latencies:
-        return {"p50": 0, "p95": 0, "p99": 0, "min": 0, "max": 0, "avg": 0}
-    
-    sorted_latencies = sorted(latencies)
-    n = len(sorted_latencies)
-    
-    def percentile(p: float) -> float:
-        idx = int(n * p / 100)
-        return sorted_latencies[min(idx, n - 1)]
-    
+        return {"p50": 0, "p95": 0, "p99": 0, "min": 0, "max": 0, "avg": 0, "count": 0}
+
+    n = len(latencies)
+    if n < 2:
+        val = round(latencies[0], 4)
+        return {"p50": val, "p95": val, "p99": val, "min": val, "max": val, "avg": val, "count": n}
+
+    q = statistics.quantiles(latencies, n=100, method="inclusive")
     return {
-        "p50": round(percentile(50), 4),
-        "p95": round(percentile(95), 4),
-        "p99": round(percentile(99), 4),
+        "p50": round(q[49], 4),
+        "p95": round(q[94], 4),
+        "p99": round(q[98], 4),
         "min": round(min(latencies), 4),
         "max": round(max(latencies), 4),
         "avg": round(statistics.mean(latencies), 4),

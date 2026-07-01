@@ -33,13 +33,14 @@ from e2e_helpers import (
 )
 from utils import exec_in_pod, execute_db_query, get_pod_by_label, run_oc_command
 
-from .conftest import (
-    PerfCleanupTracker,
+from .data_classes import PerformanceResult
+from .helpers import (
     PerfResultCollector,
     PerfTimer,
-    PerformanceResult,
     create_authenticated_session,
+    parse_memory_mib,
 )
+from .tracker import PerfCleanupTracker
 from .profiles import ACTIVE_PROFILE as _ACTIVE_PROFILE, PROFILES, get_profile_metrics
 from .test_api_latency import calculate_percentiles, measure_request_latency
 
@@ -134,8 +135,6 @@ class TestMultiClusterScale:
     
     def _get_memory_usage(self) -> Dict[str, float]:
         """Get memory usage for key pods."""
-        from .conftest import parse_memory_mib
-
         memory_usage = {}
         
         components = [

@@ -69,20 +69,16 @@ from utils import (
     run_oc_command,
 )
 
+from .data_classes import PerformanceResult
+from .helpers import PerfResultCollector, PerfTestConfig, save_perf_result
 from .profiles import ACTIVE_PROFILE as _ACTIVE_PROFILE
+from .tracker import PerfCleanupTracker
+
 # Soak tests are opt-in: must set SOAK_TESTS=true explicitly.
 # This decouples long-running stability tests from performance profile runs.
 _SOAK_ENABLED = os.environ.get("SOAK_TESTS", "").lower() in ("true", "1", "yes")
 # Compute once at import time so @pytest.mark.timeout() can reference it.
 _SOAK_DURATION_S = int(float(os.environ.get("SOAK_DURATION_HOURS", "1")) * 3600)
-
-from .conftest import (
-    PerfCleanupTracker,
-    PerfResultCollector,
-    PerfTestConfig,
-    PerformanceResult,
-    save_perf_result,
-)
 
 
 # =============================================================================
@@ -180,7 +176,7 @@ def collect_pod_resources(namespace: str) -> Tuple[Dict[str, float], Dict[str, f
     Returns:
         Tuple of (memory_dict, cpu_dict) with pod_name -> value mappings
     """
-    from .conftest import parse_cpu_millicores, parse_memory_mib
+    from .helpers import parse_cpu_millicores, parse_memory_mib
 
     memory = {}
     cpu = {}
@@ -277,7 +273,7 @@ def collect_queue_depths(namespace: str) -> Dict[str, int]:
     Returns:
         Dict with queue_name -> depth mappings
     """
-    from .conftest import get_celery_queue_depths
+    from .queue_helpers import get_celery_queue_depths
 
     queues: Dict[str, int] = {}
 
@@ -636,15 +632,8 @@ class TestSoakStability:
         """
         return f"{gateway_url}/ingress/v1/upload"
 
-    @pytest.fixture(scope="class")
-    def ingress_pod(self, cluster_config) -> str:
-        """Get ingress pod name."""
-        pod = get_pod_by_label(cluster_config.namespace, "app.kubernetes.io/component=ingress")
-        if not pod:
-            pytest.skip("Ingress pod not found")
-        return pod
-
-    # koku_api_url is provided by the session-scoped fixture in conftest.py
+    # ingress_pod and koku_api_url are provided by session-scoped fixtures
+    # in conftest.py
 
     @pytest.mark.skipif(
         not _SOAK_ENABLED,
