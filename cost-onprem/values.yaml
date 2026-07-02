@@ -1138,14 +1138,14 @@ resources:
       memory: "1Gi"
       cpu: "1"
 
-  # Kruize is memory-intensive (Java workload)
+  # Kruize is CPU-intensive under load (Java workload, liveness probe sensitive)
   kruize:
     requests:
       memory: "1Gi"
-      cpu: "500m"
+      cpu: "1000m"
     limits:
       memory: "2Gi"
-      cpu: "1000m"
+      cpu: "2000m"
 
 
 # -----------------------------------------------------------------------------
