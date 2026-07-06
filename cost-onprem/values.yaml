@@ -49,7 +49,7 @@ ros:
   # use the same image
   image:
     repository: quay.io/redhat-services-prod/insights-management-tenant/insights-ocp-resource-optimization/ros-ocp-backend
-    tag: "410b86b"
+    tag: "102fa3a"
     pullPolicy: IfNotPresent
 
   # Service Account
@@ -147,7 +147,7 @@ costManagement:
 
     image:
       repository: quay.io/redhat-services-prod/cost-mgmt-dev-tenant/koku
-      tag: "d3c5bba"
+      tag: "fe362a1"
       pullPolicy: IfNotPresent
 
     replicas: 1
@@ -443,7 +443,7 @@ kruize:
 
   image:
     repository: quay.io/redhat-services-prod/kruize-autotune-tenant/autotune
-    tag: "5eeae99"
+    tag: "c1eaa66"
 
   port: 8080
 
@@ -655,7 +655,7 @@ database:
 rbac:
   image:
     repository: quay.io/redhat-services-prod/hcc-accessmanagement-tenant/insights-rbac
-    tag: "b34eb9a"
+    tag: "a4fc360"
     pullPolicy: IfNotPresent
 
   api:
