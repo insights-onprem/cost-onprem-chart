@@ -48,3 +48,7 @@ tests/reports/report.html
 tests/reports/screenshots/
 tests/reports/videos/
 tests/reports/traces/
+
+# Performance test run output (metrics, results, reports, generated HTML)
+tests/perf-runs/
+perf-runs/

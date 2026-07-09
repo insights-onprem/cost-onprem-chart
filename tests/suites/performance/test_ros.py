@@ -31,19 +31,22 @@ from utils import (
     run_oc_command,
 )
 
-from .conftest import (
-    PerfResultCollector,
-    PerfTimer,
-    PerformanceResult,
-)
-from .test_ingestion import generate_and_upload_data
+from .data_classes import PerformanceResult
+from .helpers import PerfResultCollector, PerfTimer, generate_and_upload_data
+from .profiles import ACTIVE_PROFILE as _ACTIVE_PROFILE, PROFILES
 
 
-# =============================================================================
-# Constants
-# =============================================================================
+def _get_profile_workload_count(profile_name: str) -> int:
+    """Calculate workload (pod) count for a single cluster in a profile.
 
-UPLOAD_CONTENT_TYPE = "application/vnd.redhat.hccm.filename+tgz"
+    ROS tests generate data for one cluster at a time, so this returns the
+    per-cluster count rather than the total across all clusters.
+    """
+    profile = PROFILES.get(profile_name, PROFILES["baseline"])
+    return (
+        profile["namespaces_per_cluster"]
+        * profile["pods_per_namespace"]
+    )
 
 
 # =============================================================================
@@ -54,8 +57,10 @@ def get_kruize_heap_usage(namespace: str) -> Optional[Dict[str, float]]:
     """Get Kruize JVM heap usage metrics.
     
     Returns:
-        Dict with 'used_mb', 'committed_mb', 'max_mb' or None if unavailable.
+        Dict with 'used_mb' or None if unavailable.
     """
+    from .helpers import parse_memory_mib
+
     kruize_pod = get_pod_by_label(namespace, "app.kubernetes.io/component=ros-optimization")
     if not kruize_pod:
         return None
@@ -70,44 +75,70 @@ def get_kruize_heap_usage(namespace: str) -> Optional[Dict[str, float]]:
     try:
         parts = result.stdout.strip().split()
         if len(parts) >= 3:
-            mem_str = parts[2]
-            if mem_str.endswith("Mi"):
-                mem_mb = float(mem_str[:-2])
-            elif mem_str.endswith("Gi"):
-                mem_mb = float(mem_str[:-2]) * 1024
-            elif mem_str.endswith("Ki"):
-                mem_mb = float(mem_str[:-2]) / 1024
-            else:
-                mem_mb = float(mem_str)
-            return {"used_mb": mem_mb}
+            return {"used_mb": parse_memory_mib(parts[2])}
     except (ValueError, IndexError):
         pass
     
     return None
 
 
-def get_ros_queue_depth(namespace: str) -> Optional[int]:
-    """Get the ROS events Kafka topic queue depth."""
-    # Kafka may be in a separate namespace
+def _get_kafka_pod_and_namespace() -> Tuple[Optional[str], str]:
+    """Get the Kafka broker pod name and namespace.
+    
+    Returns:
+        Tuple of (pod_name, namespace) or (None, namespace) if not found.
+    """
     kafka_namespace = os.environ.get("KAFKA_NAMESPACE", "kafka")
     helm_release = os.environ.get("HELM_RELEASE_NAME", "cost-onprem")
     
-    # Find Kafka broker pod dynamically
-    kafka_pod = get_pod_by_label(kafka_namespace, f"app.kubernetes.io/name={helm_release}-kafka")
+    # Strimzi broker pods have strimzi.io/broker-role=true (excludes controllers)
+    kafka_pod = get_pod_by_label(kafka_namespace, "strimzi.io/broker-role=true")
     if not kafka_pod:
-        kafka_pod = get_pod_by_label(kafka_namespace, "strimzi.io/kind=Kafka")
+        # Fallback: try standard k8s label
+        kafka_pod = get_pod_by_label(kafka_namespace, "app.kubernetes.io/name=kafka")
+    if not kafka_pod:
+        # Last resort: hardcoded name pattern {helm_release}-kafka-broker-0
+        kafka_pod = f"{helm_release}-kafka-broker-0"
+    
+    return kafka_pod, kafka_namespace
+
+
+def _is_kafka_healthy(kafka_pod: str, kafka_namespace: str) -> bool:
+    """Check if the Kafka broker pod is healthy and ready for exec."""
+    result = run_oc_command([
+        "get", "pod", kafka_pod, "-n", kafka_namespace,
+        "-o", "jsonpath={.status.containerStatuses[0].ready}"
+    ], check=False)
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+def get_ros_queue_depth(namespace: str) -> Optional[int]:
+    """Get the ROS events Kafka topic queue depth."""
+    kafka_pod, kafka_namespace = _get_kafka_pod_and_namespace()
     
     if not kafka_pod:
         return None
     
-    result = run_oc_command([
+    if not _is_kafka_healthy(kafka_pod, kafka_namespace):
+        return None
+    
+    # Try without -c first (works for single-container pods)
+    # Then try with -c kafka (for multi-container pods like Strimzi)
+    base_cmd = [
         "exec", "-n", kafka_namespace,
-        kafka_pod, "--",
-        "bin/kafka-consumer-groups.sh",
+        kafka_pod
+    ]
+    kafka_cmd = [
+        "--", "bin/kafka-consumer-groups.sh",
         "--bootstrap-server", "localhost:9092",
         "--group", "ros-processor",
         "--describe"
-    ], check=False)
+    ]
+    
+    result = run_oc_command(base_cmd + kafka_cmd, check=False)
+    if result.returncode != 0 and "container" in result.stderr.lower():
+        # Multi-container pod, try with explicit container
+        result = run_oc_command(base_cmd + ["-c", "kafka"] + kafka_cmd, check=False)
     
     if result.returncode != 0:
         return None
@@ -125,6 +156,88 @@ def get_ros_queue_depth(namespace: str) -> Optional[int]:
         return None
 
 
+def reset_ros_queue_offset(namespace: str) -> bool:
+    """Reset the ROS processor Kafka consumer offset to latest.
+    
+    This clears any poison pill events that are blocking the queue by
+    skipping past them. The ros-processor must be scaled down first.
+    
+    Returns:
+        True if reset succeeded, False otherwise.
+    """
+    kafka_pod, kafka_namespace = _get_kafka_pod_and_namespace()
+    if not kafka_pod:
+        print("[ros-queue-reset] Kafka pod not found, cannot reset")
+        return False
+    
+    print(f"[ros-queue-reset] Using Kafka pod: {kafka_pod} in namespace: {kafka_namespace}")
+    
+    if not _is_kafka_healthy(kafka_pod, kafka_namespace):
+        print(f"[ros-queue-reset] Kafka pod {kafka_pod} is not ready (container may be crash-looping)")
+        return False
+    
+    # Step 1: Scale down ros-processor so consumer group becomes inactive
+    print("[ros-queue-reset] Scaling down ros-processor...")
+    result = run_oc_command([
+        "scale", "deployment/cost-onprem-ros-processor",
+        "-n", namespace, "--replicas=0"
+    ], check=False)
+    if result.returncode != 0:
+        print(f"[ros-queue-reset] Failed to scale down: {result.stderr}")
+        return False
+    
+    # Step 2: Wait for consumer group to become inactive (session timeout ~30s)
+    print("[ros-queue-reset] Waiting for consumer group to become inactive...")
+    time.sleep(35)
+    
+    # Step 3: Reset offset to latest
+    print("[ros-queue-reset] Resetting offset to latest...")
+    base_cmd = ["exec", "-n", kafka_namespace, kafka_pod]
+    kafka_cmd = [
+        "--", "bin/kafka-consumer-groups.sh",
+        "--bootstrap-server", "localhost:9092",
+        "--group", "ros-processor",
+        "--topic", "hccm.ros.events",
+        "--reset-offsets", "--to-latest", "--execute"
+    ]
+    
+    # Try without -c first (single-container pods), then with -c kafka
+    result = run_oc_command(base_cmd + kafka_cmd, check=False)
+    if result.returncode != 0 and "container" in result.stderr.lower():
+        print("[ros-queue-reset] Multi-container pod detected, retrying with -c kafka...")
+        result = run_oc_command(base_cmd + ["-c", "kafka"] + kafka_cmd, check=False)
+    
+    if result.returncode != 0:
+        print(f"[ros-queue-reset] Failed to reset offset: {result.stderr}")
+        # Scale back up anyway
+        run_oc_command([
+            "scale", "deployment/cost-onprem-ros-processor",
+            "-n", namespace, "--replicas=1"
+        ], check=False)
+        return False
+    
+    print(f"[ros-queue-reset] Offset reset output: {result.stdout.strip()}")
+    
+    # Step 4: Scale ros-processor back up
+    print("[ros-queue-reset] Scaling up ros-processor...")
+    result = run_oc_command([
+        "scale", "deployment/cost-onprem-ros-processor",
+        "-n", namespace, "--replicas=1"
+    ], check=False)
+    if result.returncode != 0:
+        print(f"[ros-queue-reset] Warning: Failed to scale up: {result.stderr}")
+        return False
+    
+    # Step 5: Wait for ros-processor to be ready
+    print("[ros-queue-reset] Waiting for ros-processor to be ready...")
+    time.sleep(15)
+    
+    # Verify queue is now empty
+    new_lag = get_ros_queue_depth(namespace)
+    print(f"[ros-queue-reset] Complete. New lag: {new_lag}")
+    return True
+
+
 def get_kruize_experiment_count(
     namespace: str,
     db_pod: str,
@@ -132,8 +245,12 @@ def get_kruize_experiment_count(
     kruize_password: str,
     cluster_id: Optional[str] = None,
 ) -> int:
-    """Get the count of Kruize experiments."""
-    where_clause = f"WHERE cluster_name = '{cluster_id}'" if cluster_id else ""
+    """Get the count of Kruize experiments.
+
+    Kruize stores cluster_name as ``org_id;cluster_uuid`` (e.g.
+    ``org1234567;abcd-1234``), so we match with LIKE to be org-agnostic.
+    """
+    where_clause = f"WHERE cluster_name LIKE '%{cluster_id}'" if cluster_id else ""
     
     result = execute_db_query(
         namespace,
@@ -156,12 +273,15 @@ def get_kruize_recommendation_count(
     kruize_password: str,
     cluster_id: Optional[str] = None,
 ) -> int:
-    """Get the count of Kruize recommendations."""
+    """Get the count of Kruize recommendations.
+
+    Uses LIKE for cluster matching — see ``get_kruize_experiment_count``.
+    """
     if cluster_id:
         query = f"""
         SELECT COUNT(*) FROM kruize_recommendations r
         JOIN kruize_experiments e ON r.experiment_name = e.experiment_name
-        WHERE e.cluster_name = '{cluster_id}'
+        WHERE e.cluster_name LIKE '%{cluster_id}'
         """
     else:
         query = "SELECT COUNT(*) FROM kruize_recommendations"
@@ -258,17 +378,102 @@ def wait_for_kruize_recommendations(
 class TestROSPerformance:
     """ROS/Kruize performance tests (PERF-ROS-*)."""
 
-    @pytest.fixture(scope="class")
-    def kruize_credentials(self, cluster_config) -> Dict[str, str]:
-        """Get Kruize database credentials."""
-        secret_name = f"{cluster_config.helm_release_name}-db-credentials"
-        user = get_secret_value(cluster_config.namespace, secret_name, "kruize-user")
-        password = get_secret_value(cluster_config.namespace, secret_name, "kruize-password")
+    @pytest.fixture(scope="class", autouse=True)
+    def ensure_clean_ros_queue(self, cluster_config):
+        """Ensure ROS queue is healthy at the start of the test class.
         
-        if not user or not password:
+        This fixture runs once before any ROS tests. If the queue has non-zero
+        lag that isn't decreasing (poisoned), we reset it proactively rather
+        than waiting for each test's drain_ros_queue fixture to time out.
+        
+        PERF-FINDING-013: FK poison pills from prior test runs can block the
+        entire ROS queue. Resetting at suite start is more efficient.
+        """
+        initial_lag = get_ros_queue_depth(cluster_config.namespace)
+        if initial_lag is None or initial_lag == 0:
+            print(f"[ros-suite-init] Queue healthy (lag={initial_lag})")
+            return
+        
+        print(f"[ros-suite-init] Queue has lag={initial_lag}, checking if progressing...")
+        
+        # Quick check: is the lag decreasing?
+        time.sleep(15)
+        second_lag = get_ros_queue_depth(cluster_config.namespace)
+        
+        if second_lag is not None and second_lag < initial_lag:
+            # Queue is progressing, let drain_ros_queue handle individual tests
+            print(f"[ros-suite-init] Queue progressing ({initial_lag} -> {second_lag}), will drain per-test")
+            return
+        
+        # Queue is stalled - likely poisoned, reset it now
+        print(f"[ros-suite-init] Queue stalled at {second_lag}, resetting...")
+        if reset_ros_queue_offset(cluster_config.namespace):
+            print("[ros-suite-init] Queue reset successful")
+        else:
+            print("[ros-suite-init] Queue reset failed - tests may fail")
+
+    @pytest.fixture(autouse=True)
+    def drain_ros_queue(self, cluster_config):
+        """Wait for the ROS processor to consume all pending Kafka events.
+
+        Ingestion tests generate ROS events as a side-effect.  If those events
+        are still in-flight when the test cleanup deletes the source, the
+        ros-processor hits FK constraint errors that block the queue.  Draining
+        the queue before each ROS test prevents this cascade.
+
+        The timeout scales with the observed lag (~6s per event via Kruize API).
+        We also track whether lag is decreasing; if it stalls for ``stall_timeout``
+        seconds we reset the queue offset to skip past poison pills (PERF-FINDING-013).
+        """
+        poll_interval = 5
+        stall_timeout = 90
+
+        initial_lag = get_ros_queue_depth(cluster_config.namespace)
+        if initial_lag is not None and initial_lag == 0:
+            return
+
+        max_wait = max(180, (initial_lag or 0) * 8)
+        print(f"[ros-queue-drain] initial lag={initial_lag}, max_wait={max_wait}s")
+
+        start = time.time()
+        prev_lag = initial_lag
+        last_progress_time = start
+        while time.time() - start < max_wait:
+            lag = get_ros_queue_depth(cluster_config.namespace)
+            if lag is not None and lag == 0:
+                print(f"[ros-queue-drain] drained in {time.time() - start:.0f}s")
+                return
+            if lag is not None:
+                if lag != prev_lag:
+                    print(f"[ros-queue-drain] lag={lag}, waiting…")
+                    if prev_lag is not None and lag < prev_lag:
+                        last_progress_time = time.time()
+                    prev_lag = lag
+                elif time.time() - last_progress_time > stall_timeout:
+                    # Queue is stalled - likely poisoned with FK errors (PERF-FINDING-013)
+                    print(f"[ros-queue-drain] lag stalled at {lag} for {stall_timeout}s - resetting queue")
+                    if reset_ros_queue_offset(cluster_config.namespace):
+                        print("[ros-queue-drain] queue reset successful, proceeding")
+                    else:
+                        print("[ros-queue-drain] queue reset failed, proceeding anyway")
+                    return
+            time.sleep(poll_interval)
+        
+        # Timed out - also try to reset the queue
+        print(f"[ros-queue-drain] timed out after {max_wait}s (lag={prev_lag}) - resetting queue")
+        if reset_ros_queue_offset(cluster_config.namespace):
+            print("[ros-queue-drain] queue reset successful, proceeding")
+        else:
+            print("[ros-queue-drain] queue reset failed, proceeding anyway")
+
+    # kruize_credentials is provided by the session-scoped fixture in conftest.py
+    # (returns KruizeCredentials dataclass or None)
+
+    @pytest.fixture(scope="class", autouse=True)
+    def _require_kruize_credentials(self, kruize_credentials):
+        """Skip all ROS tests if Kruize credentials are unavailable."""
+        if kruize_credentials is None:
             pytest.skip("Kruize database credentials not found")
-        
-        return {"user": user, "password": password, "database": "costonprem_kruize"}
 
     @pytest.fixture(scope="class")
     def db_pod(self, cluster_config) -> str:
@@ -279,45 +484,13 @@ class TestROSPerformance:
         return pod
 
     @pytest.fixture(scope="class")
-    def upload_url(self, cluster_config) -> str:
-        """Get upload URL for ingestion."""
-        gateway_route = run_oc_command([
-            "get", "route", "-n", cluster_config.namespace,
-            f"{cluster_config.helm_release_name}-api",
-            "-o", "jsonpath={.spec.host}"
-        ], check=False)
-        
-        if gateway_route.returncode != 0 or not gateway_route.stdout.strip():
-            pytest.skip("Gateway route not found")
-        
-        return f"https://{gateway_route.stdout.strip()}/api/ingress/v1/upload"
+    def upload_url(self, gateway_url: str) -> str:
+        """Get upload URL for ingestion via the session-scoped gateway_url."""
+        # gateway_url from conftest already includes /api (e.g. https://host/api)
+        return f"{gateway_url}/ingress/v1/upload"
 
-    @pytest.fixture(scope="class")
-    def gateway_url(self, cluster_config) -> str:
-        """Get gateway URL."""
-        gateway_route = run_oc_command([
-            "get", "route", "-n", cluster_config.namespace,
-            f"{cluster_config.helm_release_name}-api",
-            "-o", "jsonpath={.spec.host}"
-        ], check=False)
-        
-        if gateway_route.returncode != 0 or not gateway_route.stdout.strip():
-            pytest.skip("Gateway route not found")
-        
-        return f"https://{gateway_route.stdout.strip()}"
-
-    @pytest.fixture(scope="class")
-    def ingress_pod(self, cluster_config) -> str:
-        """Get ingress pod name."""
-        pod = get_pod_by_label(cluster_config.namespace, "app.kubernetes.io/component=ingress")
-        if not pod:
-            pytest.skip("Ingress pod not found")
-        return pod
-
-    @pytest.fixture(scope="class")
-    def koku_api_url(self, cluster_config) -> str:
-        """Get internal Koku API URL."""
-        return f"http://{cluster_config.helm_release_name}-koku-api.{cluster_config.namespace}.svc.cluster.local:8000/api/cost-management/v1"
+    # ingress_pod and koku_api_url are provided by session-scoped fixtures
+    # in conftest.py
 
     def test_perf_ros_001_recommendation_baseline(
         self,
@@ -374,7 +547,7 @@ class TestROSPerformance:
                 source_name=source_name,
                 start_date=start_date,
                 end_date=end_date,
-                ingress_url=gateway_url + "/api/ingress",
+                ingress_url=gateway_url + "/ingress",
                 jwt_token=jwt_token,
                 profile_name="baseline",  # Uses ROS-enabled data generation
             )
@@ -397,8 +570,8 @@ class TestROSPerformance:
             exp_success, exp_count, exp_time = wait_for_kruize_experiments(
                 cluster_config.namespace,
                 db_pod,
-                kruize_credentials["user"],
-                kruize_credentials["password"],
+                kruize_credentials.user,
+                kruize_credentials.password,
                 cluster_id,
                 expected_count=1,
                 timeout=300,
@@ -412,8 +585,8 @@ class TestROSPerformance:
                 rec_success, rec_count, rec_time = wait_for_kruize_recommendations(
                     cluster_config.namespace,
                     db_pod,
-                    kruize_credentials["user"],
-                    kruize_credentials["password"],
+                    kruize_credentials.user,
+                    kruize_credentials.password,
                     cluster_id,
                     expected_count=1,
                     timeout=300,
@@ -443,7 +616,11 @@ class TestROSPerformance:
         
         assert exp_count >= 1, f"Expected at least 1 experiment, got {exp_count}"
 
-    @pytest.mark.timeout(1200)
+    @pytest.mark.skipif(
+        _ACTIVE_PROFILE == "baseline",
+        reason="ROS-002 (50 workloads, 10 min) is a scale test — not appropriate for baseline.",
+    )
+    @pytest.mark.timeout(3600)
     def test_perf_ros_002_multi_workload_scale(
         self,
         cluster_config,
@@ -461,17 +638,18 @@ class TestROSPerformance:
         rh_identity_header: str,
     ):
         """PERF-ROS-002: Multi-workload scale test.
-        
+
         Measures:
-        - Time to process 50 workloads concurrently
+        - Time to process workloads from active profile concurrently
         - Kruize memory usage under load
         - ROS event queue depth
-        
-        Expected: All 50 workloads processed within 15 minutes
+
+        Expected: All profile workloads processed within 15 minutes
         """
         cluster_id = generate_cluster_id()
         source_name = f"perf-ros-002-{uuid.uuid4().hex[:8]}"
-        num_workloads = 50
+        # Use workload count from active profile (pods = workloads for Kruize)
+        num_workloads = _get_profile_workload_count(_ACTIVE_PROFILE)
         
         # Capture initial Kruize memory
         initial_heap = get_kruize_heap_usage(cluster_config.namespace)
@@ -495,7 +673,7 @@ class TestROSPerformance:
             source_name=source_name,
         )
         
-        # Generate and upload 50 workloads
+        # Generate and upload workloads based on active profile
         end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=7)
         
@@ -505,9 +683,9 @@ class TestROSPerformance:
                 source_name=source_name,
                 start_date=start_date,
                 end_date=end_date,
-                ingress_url=gateway_url + "/api/ingress",
+                ingress_url=gateway_url + "/ingress",
                 jwt_token=jwt_token,
-                profile_name="baseline",
+                profile_name=_ACTIVE_PROFILE,
             )
         
         assert upload_result.get("upload_status") == 202, f"Upload failed: {upload_result}"
@@ -543,16 +721,19 @@ class TestROSPerformance:
                     timeout=300,
                 )
             
-            # Wait for Kruize experiments (expect ~50 for 50 workloads)
+            # Measured rate: ~8 experiments/min (7.5s each).
+            # For medium (160 workloads) at 90%: 144 * 7.5s ≈ 1080s.
+            # Budget: num_workloads * 10s gives ~33% headroom.
+            experiment_timeout = max(600, num_workloads * 10)
             with perf_timer.measure("kruize_experiment_creation"):
                 exp_success, exp_count, exp_time = wait_for_kruize_experiments(
                     cluster_config.namespace,
                     db_pod,
-                    kruize_credentials["user"],
-                    kruize_credentials["password"],
+                    kruize_credentials.user,
+                    kruize_credentials.password,
                     cluster_id,
                     expected_count=num_workloads,
-                    timeout=600,
+                    timeout=experiment_timeout,
                 )
         finally:
             monitor_stop.set()
@@ -647,7 +828,7 @@ class TestROSPerformance:
                 source_name=source_name,
                 start_date=start_date,
                 end_date=end_date,
-                ingress_url=gateway_url + "/api/ingress",
+                ingress_url=gateway_url + "/ingress",
                 jwt_token=jwt_token,
                 profile_name="baseline",
             )
@@ -659,8 +840,8 @@ class TestROSPerformance:
             exp_success, initial_exp_count, initial_time = wait_for_kruize_experiments(
                 cluster_config.namespace,
                 db_pod,
-                kruize_credentials["user"],
-                kruize_credentials["password"],
+                kruize_credentials.user,
+                kruize_credentials.password,
                 cluster_id,
                 expected_count=1,  # Based on baseline profile
                 timeout=300,
@@ -673,8 +854,8 @@ class TestROSPerformance:
         initial_rec_count = get_kruize_recommendation_count(
             cluster_config.namespace,
             db_pod,
-            kruize_credentials["user"],
-            kruize_credentials["password"],
+            kruize_credentials.user,
+            kruize_credentials.password,
             cluster_id,
         )
         
@@ -691,7 +872,7 @@ class TestROSPerformance:
                 source_name=source_name,
                 start_date=start_date2,
                 end_date=end_date2,
-                ingress_url=gateway_url + "/api/ingress",
+                ingress_url=gateway_url + "/ingress",
                 jwt_token=jwt_token,
                 profile_name="baseline",
             )
@@ -709,8 +890,8 @@ class TestROSPerformance:
                 current_rec_count = get_kruize_recommendation_count(
                     cluster_config.namespace,
                     db_pod,
-                    kruize_credentials["user"],
-                    kruize_credentials["password"],
+                    kruize_credentials.user,
+                    kruize_credentials.password,
                     cluster_id,
                 )
                 # Recommendations should have been updated
@@ -740,7 +921,11 @@ class TestROSPerformance:
         print(f"  Refresh processing: {refresh_time:.1f}s")
         print(f"  Speedup ratio: {perf_result.metrics['speedup_ratio']:.2f}x")
 
-    @pytest.mark.timeout(1800)
+    @pytest.mark.skipif(
+        _ACTIVE_PROFILE == "baseline",
+        reason="ROS-004 (100 workloads, 15 min) is a memory pressure test — not appropriate for baseline.",
+    )
+    @pytest.mark.timeout(2700)
     def test_perf_ros_004_kruize_memory_pressure(
         self,
         cluster_config,
@@ -758,17 +943,18 @@ class TestROSPerformance:
         rh_identity_header: str,
     ):
         """PERF-ROS-004: Kruize memory pressure test.
-        
+
         Measures:
-        - Kruize heap usage with high workload count
+        - Kruize heap usage with profile workload count
         - Memory stability under sustained load
         - OOM risk assessment
-        
+
         Expected: No OOM, heap stays within limits
         """
         cluster_id = generate_cluster_id()
         source_name = f"perf-ros-004-{uuid.uuid4().hex[:8]}"
-        num_workloads = 100  # High workload count to stress Kruize
+        # Use workload count from active profile
+        num_workloads = _get_profile_workload_count(_ACTIVE_PROFILE)
         
         # Get Kruize pod limits
         kruize_pod = get_pod_by_label(cluster_config.namespace, "app.kubernetes.io/component=ros-optimization")
@@ -818,7 +1004,7 @@ class TestROSPerformance:
         monitor.start()
         
         try:
-            # Generate and upload high workload count
+            # Generate and upload workloads based on active profile
             end_date = datetime.now(timezone.utc)
             start_date = end_date - timedelta(days=7)
             
@@ -828,23 +1014,25 @@ class TestROSPerformance:
                     source_name=source_name,
                     start_date=start_date,
                     end_date=end_date,
-                    ingress_url=gateway_url + "/api/ingress",
+                    ingress_url=gateway_url + "/ingress",
                     jwt_token=jwt_token,
-                    profile_name="baseline",
+                    profile_name=_ACTIVE_PROFILE,
                 )
 
             assert upload_result.get("upload_status") == 202, f"Upload failed: {upload_result}"
             
-            # Wait for processing
+            # Measured rate: ~8 experiments/min (7.5s each).
+            # Budget: num_workloads * 10s gives ~33% headroom.
+            experiment_timeout = max(900, num_workloads * 10)
             with perf_timer.measure("processing"):
                 exp_success, exp_count, exp_time = wait_for_kruize_experiments(
                     cluster_config.namespace,
                     db_pod,
-                    kruize_credentials["user"],
-                    kruize_credentials["password"],
+                    kruize_credentials.user,
+                    kruize_credentials.password,
                     cluster_id,
                     expected_count=num_workloads,
-                    timeout=900,
+                    timeout=experiment_timeout,
                 )
         finally:
             monitor_stop.set()

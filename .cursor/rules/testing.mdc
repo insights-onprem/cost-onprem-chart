@@ -87,6 +87,35 @@ Key points:
 5. Run `--all` tests to verify: `./scripts/run-pytest.sh --all`
 6. Check `tests/conftest.py` and `tests/e2e_helpers.py` for shared utilities
 
+## Performance Testing
+
+Performance tests use `scripts/lib/perf-testing.sh` for profile-based cluster scaling.
+`apply_perf_profile_config()` automatically adjusts the live deployment (replicas,
+resource limits, timeouts, upload sizes) via Helm upgrade + `oc scale` before tests run.
+
+```bash
+# Deploy + performance tests
+./scripts/deploy-test-cost-onprem.sh --namespace cost-onprem --run-perf --perf-profile medium
+
+# Performance-only (skip deploy)
+./scripts/deploy-test-cost-onprem.sh --perf-only --perf-profile medium --perf-suite ros,api
+```
+
+### Profile Scaling (managed by perf-testing.sh)
+
+See the Profile Scaling Matrix in `.cursor/prompts/run-tests.md` for the full
+table of replicas, CPU/memory, upload sizes, and timeouts per profile.
+
+Kruize is always 1 replica (PERF-FINDING-004). Listener CPU is auto-boosted
+to node max for perf runs.
+
+### Key Performance Test Files
+- `scripts/lib/perf-testing.sh` — Profile config, scaling, test orchestration
+- `scripts/lib/listener-cpu.sh` — Listener CPU boost logic
+- `scripts/lib/perf-observability.sh` — Metrics collection, S3 upload, report generation
+- `tests/suites/performance/profiles.py` — Data generation profiles
+- `tests/suites/performance/conftest.py` — Fixtures, cleanup tracker, cluster info
+
 ## IMPORTANT: Do NOT tail logs automatically
 
 **NEVER run `kubectl logs --follow` or `tail -f` or any log-tailing command unless explicitly asked by the user.** These commands block and waste time. Instead:

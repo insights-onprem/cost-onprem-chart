@@ -17,10 +17,14 @@ Usage:
     print(f"Clusters: {profile['clusters']}")
 """
 
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 import uuid
+
+# Active profile selected by the test runner — used by all perf test files.
+ACTIVE_PROFILE: str = os.environ.get("PERF_PROFILE", "baseline")
 
 
 # =============================================================================
@@ -235,7 +239,21 @@ def generate_node_yaml(
     pods_per_namespace: int,
     base_name: str = "perf",
 ) -> str:
-    """Generate YAML for a single node."""
+    """Generate YAML for a single node.
+    
+    NISE YAML format uses SIBLING keys for list items (2-space indent after marker):
+    - node: followed by node_name: at +2 spaces (sibling, not nested)
+    - pod: followed by pod_name: at +2 spaces (sibling, not nested)
+    - node_labels for node labels (not 'labels')
+    - namespace_labels for namespace labels (not 'labels')
+    - labels for pod labels
+    
+    Example of correct NISE format:
+        - node:
+          node_name: my-node  # 2 spaces after list marker = sibling
+        - pod:
+          pod_name: my-pod    # 2 spaces after list marker = sibling
+    """
     node_name = f"{base_name}-node-{node_index:03d}"
     resource_id = f"{base_name}-resource-{node_index:03d}"
     
@@ -252,6 +270,32 @@ def generate_node_yaml(
             cpu_usage = cpu_request * (0.4 + (pod_idx % 3) * 0.2)  # 40-80% utilization
             mem_usage = mem_request * (0.5 + (pod_idx % 3) * 0.15)  # 50-80% utilization
             
+            # Varied labels to ensure we have 10+ unique tag keys
+            # Using NATO phonetic alphabet names to avoid any reserved word issues
+            val_b = ['alfa', 'bravo', 'charlie', 'delta'][pod_idx % 4]
+            val_d = ['echo', 'foxtrot', 'golf', 'hotel'][(pod_idx + ns_idx) % 4]
+            val_f = ['india', 'juliet', 'kilo'][pod_idx % 3]
+            val_h = ['lima', 'mike', 'november'][ns_idx % 3]
+            val_j = ['oscar', 'papa', 'quebec', 'romeo'][pod_idx % 4]
+            val_l = ['sierra', 'tango', 'uniform'][pod_idx % 3]
+            
+            # Build labels string with 10 unique keys using NATO alphabet
+            # IMPORTANT: NISE requires 'label_' prefix - it's stripped during processing
+            labels = (
+                f"label_tagone:perf|"
+                f"label_tagtwo:{base_name[:8]}|"
+                f"label_tagthree:{val_b}|"
+                f"label_tagfour:{val_d}|"
+                f"label_tagfive:{val_f}|"
+                f"label_tagsix:{val_h}|"
+                f"label_tagseven:{val_j}|"
+                f"label_tageight:{val_l}|"
+                f"label_tagnine:static|"
+                f"label_tagten:fixed"
+            )
+            
+            # Pod YAML with SIBLING keys (2-space indent = sibling of 'pod:')
+            # pods: is at 14 spaces, list marker at 16, sibling props at 18
             pods_yaml.append(f"""                - pod:
                   pod_name: {pod_name}
                   cpu_request: {cpu_request}
@@ -263,19 +307,24 @@ def generate_node_yaml(
                     full_period: {cpu_usage:.3f}
                   mem_usage_gig:
                     full_period: {mem_usage:.3f}
-                  labels: environment:performance|app:{base_name}-app|tier:{['web', 'api', 'worker', 'db'][pod_idx % 4]}""")
+                  labels: {labels}""")
         
+        # Namespace YAML with namespace_labels (dict key, so properties are nested)
+        # IMPORTANT: NISE requires 'label_' prefix for namespace labels too
         namespaces_yaml.append(f"""            {ns_name}:
-              labels: openshift.io/cluster-monitoring:true|cost-management:enabled
+              namespace_labels: label_nslabel1:nsval1|label_nslabel2:nsval2
               pods:
 {chr(10).join(pods_yaml)}""")
     
+    # Node YAML with SIBLING keys (2-space indent = sibling of 'node:')
+    # IMPORTANT: NISE requires 'label_' prefix for node labels too
+    # nodes: is at 6 spaces, so - node: must be at 8 spaces, properties at 10
     return f"""        - node:
           node_name: {node_name}
+          node_labels: label_nodelabel1:nodeval1|label_nodelabel2:nodeval2|label_nodelabel3:nodeval3
           cpu_cores: {cpu_cores}
           memory_gig: {memory_gib}
           resource_id: {resource_id}
-          labels: node-role.kubernetes.io/worker:true|kubernetes.io/os:linux|node.kubernetes.io/instance-type:m5.xlarge
           namespaces:
 {chr(10).join(namespaces_yaml)}"""
 

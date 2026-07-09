@@ -58,7 +58,7 @@ GRAFANA_NAMESPACE=${GRAFANA_NAMESPACE:-grafana}
 SKIP_UWM=${SKIP_UWM:-false}
 SKIP_EXPORTERS=${SKIP_EXPORTERS:-false}
 SKIP_GRAFANA=${SKIP_GRAFANA:-true}  # Grafana is optional - dashboards are reference only
-RETENTION_DAYS=${RETENTION_DAYS:-30}
+RETENTION_DAYS=${RETENTION_DAYS:-3}
 
 # PostgreSQL settings (auto-detected if not set)
 POSTGRES_HOST=${POSTGRES_HOST:-}

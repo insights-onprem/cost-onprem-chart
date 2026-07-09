@@ -834,11 +834,16 @@ def check_pod_exists(namespace: str, label: str) -> bool:
 
 
 def check_pod_ready(namespace: str, label: str) -> bool:
-    """Check if a pod with the given label is ready."""
+    """Check if any pod with the given label is ready.
+
+    Uses field-selector to only consider Running pods, avoiding false negatives
+    when a Pending pod (e.g. from a stale ReplicaSet) sorts before a Running one.
+    """
     try:
         result = run_oc_command([
             "get", "pods", "-n", namespace,
             "-l", label,
+            "--field-selector=status.phase=Running",
             "-o", "jsonpath={.items[0].status.conditions[?(@.type=='Ready')].status}"
         ], check=False)
         return result.stdout.strip() == "True"
