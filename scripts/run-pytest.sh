@@ -456,8 +456,14 @@ main() {
         # Run only UI tests
         pytest_args+=("-m" "ui")
     elif [[ ${#pytest_markers[@]} -gt 0 ]]; then
-        local marker_expr
-        marker_expr=$(IFS=" or "; echo "${pytest_markers[*]}")
+        local marker_expr=""
+        for _m in "${pytest_markers[@]}"; do
+            if [[ -n "$marker_expr" ]]; then
+                marker_expr="($marker_expr) or ($_m)"
+            else
+                marker_expr="$_m"
+            fi
+        done
         # Check if this is a performance test request
         if [[ "$marker_expr" == *"performance"* ]]; then
             # Performance tests - use marker as-is
