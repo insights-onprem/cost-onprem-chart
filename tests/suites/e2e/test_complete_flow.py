@@ -462,6 +462,7 @@ class TestCompleteDataFlow:
                 "secret_key": s3_config.secret_key,
                 "bucket": s3_config.bucket,
                 "verify_ssl": s3_config.verify_ssl,
+                "addressing_style": s3_config.addressing_style,
             }
         
         # Pre-test cleanup

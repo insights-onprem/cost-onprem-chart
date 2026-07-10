@@ -137,6 +137,8 @@ class S3Config:
     secret_key: str
     bucket: str = "koku-bucket"
     verify_ssl: bool = False
+    addressing_style: str = "path"
+    region: str = "onprem"
 
 
 # =============================================================================
@@ -716,25 +718,48 @@ def kruize_database_config(
 
 @pytest.fixture(scope="session")
 def s3_config(cluster_config: ClusterConfig) -> Optional[S3Config]:
-    """Get S3/Object storage configuration."""
-    # Try to get S3 route (OpenShift ODF)
+    """Get S3/Object storage configuration from deployed resources.
+
+    Reads the authoritative configuration from the deployed Helm release:
+    - S3_ENDPOINT from the koku-api deployment env spec
+    - addressing_style and region from the aws-config ConfigMap
+    - Credentials from the storage-credentials secret
+    """
+    log = logging.getLogger(__name__)
+
+    # 1. Read S3_ENDPOINT from koku-api deployment env spec (literal value: field)
     s3_endpoint = None
-    
-    # Try external route first
     result = run_oc_command([
-        "get", "route", "-n", "openshift-storage", "s3",
-        "-o", "jsonpath={.spec.host}"
+        "get", "deployment",
+        f"{cluster_config.helm_release_name}-koku-api",
+        "-n", cluster_config.namespace,
+        "-o", "jsonpath={.spec.template.spec.containers[*].env[?(@.name=='S3_ENDPOINT')].value}",
     ], check=False)
-    
-    if result.stdout.strip():
-        s3_endpoint = f"https://{result.stdout.strip()}"
-    else:
-        # Fallback to internal service
-        s3_endpoint = "https://s3.openshift-storage.svc:443"
-    
-    # Get credentials - try multiple secret name patterns
-    # The helm chart uses 'cost-onprem-storage-credentials' (release name prefix)
-    # but the namespace might be different from the helm release name
+    if result.returncode == 0 and result.stdout.strip():
+        s3_endpoint = result.stdout.strip().split()[0]
+
+    if not s3_endpoint:
+        log.info("s3_config: S3_ENDPOINT not found in koku-api deployment")
+        return None
+
+    # 2. Read addressing_style and region from the aws-config ConfigMap
+    addressing_style = "path"
+    region = "onprem"
+    cm_result = run_oc_command([
+        "get", "configmap",
+        f"{cluster_config.helm_release_name}-aws-config",
+        "-n", cluster_config.namespace,
+        "-o", "jsonpath={.data.config}",
+    ], check=False)
+    if cm_result.returncode == 0 and cm_result.stdout.strip():
+        for line in cm_result.stdout.strip().splitlines():
+            stripped = line.strip()
+            if stripped.startswith("addressing_style"):
+                addressing_style = stripped.split("=", 1)[1].strip()
+            elif stripped.startswith("region"):
+                region = stripped.split("=", 1)[1].strip()
+
+    # 3. Get credentials — try multiple secret name patterns
     storage_secret_patterns = [
         f"{cluster_config.helm_release_name}-storage-credentials",  # Helm release name
         f"{cluster_config.namespace}-storage-credentials",  # Namespace-based
@@ -742,23 +767,26 @@ def s3_config(cluster_config: ClusterConfig) -> Optional[S3Config]:
         "koku-storage-credentials",  # Legacy name
         f"{cluster_config.helm_release_name}-object-storage-credentials",  # Object storage credentials
     ]
-    
+
     access_key = None
     secret_key = None
-    
+
     for secret_name in storage_secret_patterns:
         access_key = get_secret_value(cluster_config.namespace, secret_name, "access-key")
         secret_key = get_secret_value(cluster_config.namespace, secret_name, "secret-key")
         if access_key and secret_key:
             break
-    
+
     if not access_key or not secret_key:
+        log.info("s3_config: Storage credentials not found")
         return None
-    
+
     return S3Config(
         endpoint=s3_endpoint,
         access_key=access_key,
         secret_key=secret_key,
+        addressing_style=addressing_style,
+        region=region,
     )
 
 
@@ -957,23 +985,31 @@ def org_id(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig) -> st
 @pytest.fixture(scope="session", autouse=True)
 def _ensure_keycloak_password_grant_lab_users(
     cluster_config: ClusterConfig,
-    keycloak_config: KeycloakConfig,
-    org_id: str,
 ) -> None:
     """Keep ``admin`` / ``viewer`` and the ``org-admin`` realm role aligned with tests.
 
     Ephemeral lab clusters can drift (missing realm role on admin, wrong viewer
     password). Provisioning runs once per session after ``org_id`` is resolved.
+
+    Detects Keycloak and gateway inline (instead of depending on fixtures that
+    call pytest.skip) so that offline tests (helm template, lint) can run
+    without a cluster.
     """
     log = logging.getLogger(__name__)
+
+    keycloak_url = get_route_url(cluster_config.keycloak_namespace, "keycloak")
+    if not keycloak_url:
+        log.info("Keycloak not detected - skipping lab user sync")
+        return
+
     try:
         from rbac_keycloak_users import ensure_password_grant_lab_users_with_org_admin
 
         ensure_password_grant_lab_users_with_org_admin(
-            keycloak_base_url=keycloak_config.url,
+            keycloak_base_url=keycloak_url,
             keycloak_namespace=cluster_config.keycloak_namespace,
-            realm=keycloak_config.realm,
-            org_id=org_id,
+            realm="kubernetes",
+            org_id=_DEFAULT_ORG_ID,
             account_number=os.environ.get("TEST_ACCOUNT_NUMBER", _DEFAULT_ACCOUNT_NUMBER),
             admin_username=os.environ.get("TEST_USERNAME", "admin"),
             admin_password=os.environ.get("TEST_PASSWORD", "admin"),
@@ -993,7 +1029,7 @@ def _ensure_keycloak_password_grant_lab_users(
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _rbac_bootstrap(cluster_config: ClusterConfig, keycloak_config: KeycloakConfig, gateway_url: str):
+def _rbac_bootstrap(cluster_config: ClusterConfig):
     """Bootstrap RBAC permissions for the CI service account.
 
     With is_org_admin=false in the Envoy gateway, the CI service account needs
@@ -1005,12 +1041,55 @@ def _rbac_bootstrap(cluster_config: ClusterConfig, keycloak_config: KeycloakConf
     Only the service account principal is added to the admin group — individual
     test users (alice, bob, carol) are NOT affected, preserving granular RBAC
     test coverage in test_rbac_access.py.
+
+    Detects Keycloak and gateway inline (instead of depending on fixtures that
+    call pytest.skip) so that offline tests (helm template, lint) can run
+    without a cluster.
     """
     logger = logging.getLogger(__name__)
 
+    # Detect Keycloak inline — avoids propagating pytest.skip to all tests
+    keycloak_url = get_route_url(cluster_config.keycloak_namespace, "keycloak")
+    if not keycloak_url:
+        logger.info("RBAC bootstrap: Keycloak not detected, skipping")
+        return
+
+    client_id = "cost-management-operator"
+    client_secret = None
+    for secret_name in [
+        "keycloak-client-secret-cost-management-operator",
+        "keycloak-client-secret-cost-management-service-account",
+        f"credential-{client_id}",
+        f"keycloak-client-{client_id}",
+        f"{client_id}-secret",
+    ]:
+        client_secret = get_secret_value(
+            cluster_config.keycloak_namespace, secret_name, "CLIENT_SECRET"
+        )
+        if client_secret:
+            break
+    if not client_secret:
+        logger.info("RBAC bootstrap: Keycloak client secret not found, skipping")
+        return
+
+    kc_config = KeycloakConfig(url=keycloak_url, client_id=client_id, client_secret=client_secret)
+
+    # Detect gateway inline
+    gw_route = f"{cluster_config.helm_release_name}-api"
+    gw_url = get_route_url(cluster_config.namespace, gw_route)
+    if not gw_url:
+        logger.info("RBAC bootstrap: Gateway route not found, skipping")
+        return
+    gw_result = run_oc_command([
+        "get", "route", gw_route, "-n", cluster_config.namespace,
+        "-o", "jsonpath={.spec.path}",
+    ], check=False)
+    gw_path = gw_result.stdout.strip().rstrip("/") if gw_result.stdout else ""
+    gateway_url = f"{gw_url}{gw_path}" if gw_path else gw_url
+
     # Step 1: Get a token and trigger tenant creation
     try:
-        token = obtain_jwt_token(keycloak_config)
+        token = obtain_jwt_token(kc_config)
     except Exception as e:
         logger.warning(f"RBAC bootstrap: could not obtain JWT token: {e}")
         return
@@ -1021,7 +1100,7 @@ def _rbac_bootstrap(cluster_config: ClusterConfig, keycloak_config: KeycloakConf
     # the mapper may not be active when this first token is issued. Register
     # both the decoded username AND the expected mapper value so RBAC lookups
     # succeed regardless of timing.
-    sa_default = f"service-account-{keycloak_config.client_id}"
+    sa_default = f"service-account-{kc_config.client_id}"
     sa_mapper_override = "cost-mgmt-operator"
     try:
         claims = decode_jwt_payload(token.access_token)

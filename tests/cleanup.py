@@ -31,9 +31,10 @@ def cleanup_s3_data(
     org_id: str,
     cluster_id: Optional[str] = None,
     verify_ssl: bool = False,
+    addressing_style: str = "path",
 ) -> dict:
     """Clean up S3 data files from previous test runs.
-    
+
     Args:
         endpoint: S3 endpoint URL
         access_key: S3 access key
@@ -42,23 +43,24 @@ def cleanup_s3_data(
         org_id: Organization ID to clean up
         cluster_id: Optional cluster ID to limit cleanup scope
         verify_ssl: Whether to verify SSL certificates
-        
+        addressing_style: S3 addressing style ("path" for on-prem, "auto" for AWS)
+
     Returns:
         Dict with cleanup statistics
     """
     if not BOTO3_AVAILABLE:
         return {"error": "boto3 not available", "files_deleted": 0}
-    
+
     files_deleted = 0
     errors = []
-    
+
     try:
         # Configure boto3 for S3-compatible storage.
         # Low retries + short timeouts prevent cleanup from hanging when
         # NooBaa is under load (see SCALE-001[10] teardown timeout).
         boto_config = BotoConfig(
             signature_version='s3v4',
-            s3={'addressing_style': 'path'},
+            s3={'addressing_style': addressing_style},
             retries={'max_attempts': 3, 'mode': 'standard'},
             connect_timeout=10,
             read_timeout=30,
@@ -371,6 +373,7 @@ def full_cleanup(
             org_id=org_id,
             cluster_id=cluster_id,
             verify_ssl=s3_config.get("verify_ssl", False),
+            addressing_style=s3_config.get("addressing_style", "path"),
         )
         results["s3"] = s3_result
         if verbose:

@@ -829,13 +829,13 @@ create_s3_buckets() {
             verify_ssl="true"
             echo_info "  Auto-enabled SSL verification for AWS S3 endpoint (override with S3_VERIFY_SSL=false)"
         fi
-        local s3_port="${S3_PORT:-443}"
+        local s3_port="${S3_PORT:-$(echo "$S3_ENDPOINT" | grep -oP ':\K[0-9]+$' || echo 443)}"
         local s3_ssl="${S3_USE_SSL:-true}"
         if [ "$s3_ssl" = "true" ]; then
-            s3_url="https://${S3_ENDPOINT}:${s3_port}"
+            s3_url="https://${endpoint_host}:${s3_port}"
             [ "$verify_ssl" = "true" ] && no_verify_ssl="" || no_verify_ssl="--no-verify-ssl"
         else
-            s3_url="http://${S3_ENDPOINT}:${s3_port}"
+            s3_url="http://${endpoint_host}:${s3_port}"
             no_verify_ssl=""
         fi
         echo_info "  ✓ Using S3_ENDPOINT: $s3_url"
@@ -2315,6 +2315,9 @@ main() {
     echo_info "Next: Run NAMESPACE=$NAMESPACE ./run-pytest.sh to test the deployment"
 }
 
+# Allow sourcing for unit tests: only run main when executed directly.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+
 # Handle script arguments
 case "${1:-}" in
     "cleanup")
@@ -2478,3 +2481,5 @@ esac
 
 # Run main function
 main "$@"
+
+fi  # end BASH_SOURCE guard
