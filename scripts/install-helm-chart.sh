@@ -2315,6 +2315,9 @@ main() {
     echo_info "Next: Run NAMESPACE=$NAMESPACE ./run-pytest.sh to test the deployment"
 }
 
+# Allow sourcing for unit tests: only run main when executed directly.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+
 # Handle script arguments
 case "${1:-}" in
     "cleanup")
@@ -2478,3 +2481,5 @@ esac
 
 # Run main function
 main "$@"
+
+fi  # end BASH_SOURCE guard
