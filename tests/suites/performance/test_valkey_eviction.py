@@ -12,7 +12,6 @@ Test IDs:
 
 import json
 import os
-import subprocess
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -288,67 +287,6 @@ return cjson.encode(counts)
 # =============================================================================
 # Valkey Resource Helpers
 # =============================================================================
-
-def patch_valkey_memory(namespace: str, release: str, memory_limit: str) -> bool:
-    """Patch the Valkey deployment's memory request+limit and restart the pod."""
-    mem_bytes = _parse_memory_to_bytes(memory_limit)
-    # Request must be <= limit
-    request_bytes = min(mem_bytes, 256 * 1024 * 1024)
-    if request_bytes >= 1024 * 1024:
-        request_str = f"{request_bytes // (1024*1024)}Mi"
-    else:
-        request_str = memory_limit
-
-    result = run_oc_command(
-        ["patch", "deploy", f"{release}-valkey", "-n", namespace,
-         "--type=json",
-         "-p", json.dumps([
-             {
-                 "op": "replace",
-                 "path": "/spec/template/spec/containers/0/resources/requests/memory",
-                 "value": request_str,
-             },
-             {
-                 "op": "replace",
-                 "path": "/spec/template/spec/containers/0/resources/limits/memory",
-                 "value": memory_limit,
-             },
-         ])],
-        check=False,
-    )
-    if result.returncode != 0:
-        print(f"[valkey-patch] Failed to patch: {result.stderr}")
-        return False
-
-    print(f"[valkey-patch] Patched Valkey memory limit to {memory_limit}")
-
-    # Wait for rollout (timeout must exceed the oc --timeout flag)
-    try:
-        rollout = run_oc_command(
-            ["rollout", "status", f"deploy/{release}-valkey",
-             "-n", namespace, "--timeout=120s"],
-            check=False,
-            timeout=150,
-        )
-    except subprocess.TimeoutExpired:
-        print(f"[valkey-patch] Rollout timed out — pod likely can't start at {memory_limit}")
-        return False
-
-    if rollout.returncode != 0:
-        print(f"[valkey-patch] Rollout warning: {rollout.stderr}")
-        return False
-
-    # Verify the new pod has the correct limit
-    time.sleep(5)
-    verify = run_oc_command(
-        ["get", "deploy", f"{release}-valkey", "-n", namespace,
-         "-o", "jsonpath={.spec.template.spec.containers[0].resources.limits.memory}"],
-        check=False,
-    )
-    actual = verify.stdout.strip() if verify.returncode == 0 else "unknown"
-    print(f"[valkey-patch] Verified: memory limit = {actual}")
-    return actual == memory_limit
-
 
 def get_valkey_config(namespace: str) -> dict:
     """Read current Valkey CONFIG settings."""

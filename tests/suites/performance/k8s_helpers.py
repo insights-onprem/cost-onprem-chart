@@ -154,17 +154,13 @@ def merge_resources(original: dict, overrides: dict) -> dict:
 
 
 def _delete_first_pod(namespace: str, owner_name: str) -> None:
-    """Delete the first pod owned by a StatefulSet to force recreation."""
-    pod_result = run_oc_command(
-        ["get", "pods", "-n", namespace,
-         "-l", f"app.kubernetes.io/component=database",
-         "-o", "jsonpath={.items[0].metadata.name}"],
+    """Delete the first pod owned by a StatefulSet to force recreation.
+
+    Uses the StatefulSet naming convention (<owner_name>-0) to identify the pod.
+    """
+    pod_name = f"{owner_name}-0"
+    print(f"[k8s-patch] Deleting pod {pod_name} to apply new resources...")
+    run_oc_command(
+        ["delete", "pod", pod_name, "-n", namespace, "--wait=false"],
         check=False,
     )
-    if pod_result.returncode == 0 and pod_result.stdout.strip():
-        pod_name = pod_result.stdout.strip()
-        print(f"[k8s-patch] Deleting pod {pod_name} to apply new resources...")
-        run_oc_command(
-            ["delete", "pod", pod_name, "-n", namespace, "--wait=false"],
-            check=False,
-        )
