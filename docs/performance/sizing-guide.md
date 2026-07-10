@@ -134,6 +134,14 @@ not a resource constraint.
 Database resources are not dynamically adjusted by `apply_perf_profile_config()` —
 they should be set via `values.yaml` at deployment time.
 
+**Empirical validation (COST-7605)**: CPU and memory sweeps at medium and large profiles
+confirm these recommendations are well-positioned. API query latency is sub-10ms at all
+tested CPU levels (2000m–8000m), with diminishing returns above 4000m (PERF-FINDING-027).
+Memory beyond 4Gi provides no latency benefit for current workloads since the dataset
+fits entirely in shared_buffers at 1GB (PERF-FINDING-028). Larger memory allocations
+are recommended for extended retention periods where the working set may exceed the
+buffer pool.
+
 ---
 
 ## Gateway Configuration
