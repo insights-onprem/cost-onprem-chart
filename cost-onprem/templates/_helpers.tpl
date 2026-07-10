@@ -427,14 +427,12 @@ Kafka security protocol resolver (supports both internal and external Kafka)
 {{- end }}
 
 {{/*
-Kafka SASL environment variables (reusable across all Kafka-consuming deployments)
-Renders env var block for SASL authentication; no-op when kafka.sasl.mechanism is empty.
+Kafka SASL authentication environment variables (mechanism + credentials only)
+No-op when kafka.sasl.mechanism is empty. Pair with tlsEnv for transport security.
 Usage: {{ include "cost-onprem.kafka.saslEnv" . | nindent 12 }}
 */}}
 {{- define "cost-onprem.kafka.saslEnv" -}}
 {{- if .Values.kafka.sasl.mechanism }}
-- name: KAFKA_SECURITY_PROTOCOL
-  value: {{ include "cost-onprem.kafka.securityProtocol" . | quote }}
 - name: KAFKA_SASL_MECHANISM
   value: {{ .Values.kafka.sasl.mechanism | quote }}
 {{- if .Values.kafka.sasl.existingSecret }}
@@ -449,10 +447,23 @@ Usage: {{ include "cost-onprem.kafka.saslEnv" . | nindent 12 }}
       name: {{ .Values.kafka.sasl.existingSecret | quote }}
       key: password
 {{- end }}
-{{- if .Values.kafka.tls.enabled }}
+{{- end }}
+{{- end }}
+
+{{/*
+Kafka TLS/transport-security environment variables (independent of SASL)
+Renders KAFKA_SECURITY_PROTOCOL when non-PLAINTEXT, and KAFKA_SSL_CA_LOCATION
+when TLS is enabled with a CA cert secret (matching tlsVolume/tlsVolumeMount gates).
+Usage: {{ include "cost-onprem.kafka.tlsEnv" . | nindent 12 }}
+*/}}
+{{- define "cost-onprem.kafka.tlsEnv" -}}
+{{- if ne (include "cost-onprem.kafka.securityProtocol" .) "PLAINTEXT" }}
+- name: KAFKA_SECURITY_PROTOCOL
+  value: {{ include "cost-onprem.kafka.securityProtocol" . | quote }}
+{{- end }}
+{{- if and .Values.kafka.tls.enabled .Values.kafka.tls.caCertSecret }}
 - name: KAFKA_SSL_CA_LOCATION
   value: "/etc/kafka/certs/ca.crt"
-{{- end }}
 {{- end }}
 {{- end }}
 
@@ -462,8 +473,6 @@ Usage: {{ include "cost-onprem.kafka.ingressSaslEnv" . | nindent 12 }}
 */}}
 {{- define "cost-onprem.kafka.ingressSaslEnv" -}}
 {{- if .Values.kafka.sasl.mechanism }}
-- name: INGRESS_KAFKASECURITYPROTOCOL
-  value: {{ include "cost-onprem.kafka.securityProtocol" . | quote }}
 - name: INGRESS_SASLMECHANISM
   value: {{ .Values.kafka.sasl.mechanism | quote }}
 {{- if .Values.kafka.sasl.existingSecret }}
@@ -478,10 +487,21 @@ Usage: {{ include "cost-onprem.kafka.ingressSaslEnv" . | nindent 12 }}
       name: {{ .Values.kafka.sasl.existingSecret | quote }}
       key: password
 {{- end }}
-{{- if .Values.kafka.tls.enabled }}
+{{- end }}
+{{- end }}
+
+{{/*
+Kafka TLS/transport-security environment variables for Ingress (uses INGRESS_* prefix)
+Usage: {{ include "cost-onprem.kafka.ingressTlsEnv" . | nindent 12 }}
+*/}}
+{{- define "cost-onprem.kafka.ingressTlsEnv" -}}
+{{- if ne (include "cost-onprem.kafka.securityProtocol" .) "PLAINTEXT" }}
+- name: INGRESS_KAFKASECURITYPROTOCOL
+  value: {{ include "cost-onprem.kafka.securityProtocol" . | quote }}
+{{- end }}
+{{- if and .Values.kafka.tls.enabled .Values.kafka.tls.caCertSecret }}
 - name: INGRESS_KAFKACA
   value: "/etc/kafka/certs/ca.crt"
-{{- end }}
 {{- end }}
 {{- end }}
 

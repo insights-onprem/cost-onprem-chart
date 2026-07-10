@@ -339,6 +339,7 @@ Common environment variables for Koku API and Celery
 - name: INSIGHTS_KAFKA_PORT
   value: {{ include "cost-onprem.koku.kafka.port" . | quote }}
 {{- include "cost-onprem.kafka.saslEnv" . }}
+{{- include "cost-onprem.kafka.tlsEnv" . }}
 - name: S3_ENDPOINT
   value: {{ include "cost-onprem.storage.endpointWithProtocol" . | quote }}
 - name: REQUESTED_BUCKET
