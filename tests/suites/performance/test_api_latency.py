@@ -14,7 +14,6 @@ Test IDs:
 
 import json
 import os
-import statistics
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
@@ -32,6 +31,7 @@ from .helpers import (
     create_authenticated_session,
     get_timeout_for_profile,
 )
+from .k8s_helpers import calculate_percentiles
 from .profiles import ACTIVE_PROFILE as _ACTIVE_PROFILE
 
 
@@ -100,28 +100,6 @@ def measure_request_latency(
         return time.time() - start, 0, {"error": str(e)}
 
 
-def calculate_percentiles(
-    latencies: List[float],
-) -> Dict[str, float]:
-    """Calculate latency percentiles using statistics.quantiles."""
-    if not latencies:
-        return {"p50": 0, "p95": 0, "p99": 0, "min": 0, "max": 0, "avg": 0, "count": 0}
-
-    n = len(latencies)
-    if n < 2:
-        val = round(latencies[0], 4)
-        return {"p50": val, "p95": val, "p99": val, "min": val, "max": val, "avg": val, "count": n}
-
-    q = statistics.quantiles(latencies, n=100, method="inclusive")
-    return {
-        "p50": round(q[49], 4),
-        "p95": round(q[94], 4),
-        "p99": round(q[98], 4),
-        "min": round(min(latencies), 4),
-        "max": round(max(latencies), 4),
-        "avg": round(statistics.mean(latencies), 4),
-        "count": n,
-    }
 
 
 def run_latency_test(

@@ -276,6 +276,44 @@ The chart default CPU limits for OCP and summary celery workers (250m request / 
 
 ---
 
+## Backend Bottleneck Analysis (COST-7605)
+
+### PERF-FINDING-026: Valkey Evictions Do Not Cause Chord Failures at Medium Workload
+
+**Status**: Documented — further testing at large profile recommended  
+**Severity**: Low (informational)  
+**Related Jira**: [COST-7605](https://redhat.atlassian.net/browse/COST-7605) (Backend bottleneck analysis)  
+**Test**: PERF-VK-001 (`test_valkey_eviction.py`)
+
+**Question**:
+Does Valkey key eviction under memory pressure cause Celery chord failures during ingestion? Chords store intermediate results in Valkey DB1 (`celery-task-meta-*` keys). If in-flight chord members are evicted, the chord callback never fires and processing stalls.
+
+**Method**:
+Constrained Valkey `maxmemory` via runtime `CONFIG SET` (no pod restart) and ran single-source medium-profile ingestion while monitoring evictions, task failures, and chord errors via a background `ValkeyMonitor` thread.
+
+| Variant | maxmemory | Evictions | Mem % | Processing | Task Failures | Chord Errors |
+|---------|-----------|-----------|-------|------------|---------------|--------------|
+| 512Mi-default | 536 MB | 0 | 0% | Complete (18s) | 0 | 0 |
+| 2Mi-tight | 2.0 MB | 0 (stale keys already purged) | 102% | Complete (18s) | 0 | 0 |
+| baseline+10K | 2.0 MB (baseline + 10KB) | **7 (0.1/s)** | 101% | Complete (18s) | 0 | 0 |
+
+**Findings**:
+1. **Evictions were triggered** at the `baseline+10K` level — maxmemory set to just 10KB above current used_memory. All 120 stale `celery-task-meta-*` keys were evicted by the `allkeys-lru` policy.
+2. **No chord failures occurred** despite active evictions. The LRU policy evicts stale results (completed tasks) before in-flight chord members, protecting active processing.
+3. **Medium workload is too light to stress Valkey**. A single source generates ~170 task results using ~49KB total (~288 bytes/key). Even at 2MB maxmemory, there is ample headroom for in-flight tasks.
+4. **Baseline Valkey memory usage is ~1.8MB** (process overhead), independent of workload. The 512Mi default provides >250x headroom.
+
+**Implications for sizing**:
+- The default `valkey.maxMemory: 512MB` is dramatically oversized for single-source deployments. Even 8MB would be sufficient.
+- Chord failure risk is theoretical at medium scale. It would require enough concurrent chords to fill Valkey memory with in-flight members — likely 50+ simultaneous sources at large profile.
+- The `allkeys-lru` policy (chart default) is the correct choice. A policy like `noeviction` would cause Celery write failures (MISCONF errors) instead, which is worse.
+
+**Next steps**:
+- Re-run at large/xlarge profile with 10+ concurrent sources to determine whether chord members can be evicted while still in use.
+- Consider adding a `volatile-lru` policy with explicit TTL on task results as a defense-in-depth measure (currently tracked by `CELERY_RESULT_EXPIRES=28800s`).
+
+---
+
 ## Environment Issues
 
 ### PERF-FINDING-010: ODF Default Resources Exhaust Cluster Memory
@@ -329,9 +367,10 @@ results are maintained in the [Sizing Guide](sizing-guide.md#performance-baselin
 | FINDING-022 | Ingress dedicated resource block | [FLPATH-4430](https://redhat.atlassian.net/browse/FLPATH-4430) | Mitigated |
 | FINDING-024 | Ingress multipart S3 upload | [FLPATH-4431](https://redhat.atlassian.net/browse/FLPATH-4431) | Product limitation |
 | FINDING-025 | Worker CPU/memory sizing | [COST-7598](https://redhat.atlassian.net/browse/COST-7598), [COST-7618](https://redhat.atlassian.net/browse/COST-7618) | Fixed in perf profiles |
+| FINDING-026 | Valkey evictions do not cause chord failures (medium) | [COST-7605](https://redhat.atlassian.net/browse/COST-7605) | Documented |
 
 **Parent epic**: [COST-7567](https://redhat.atlassian.net/browse/COST-7567) (CoP Performance Tuning & Hardware Sizing Guidelines)
 
 ---
 
-_Last Updated: 2026-06-29_
+_Last Updated: 2026-07-09_
