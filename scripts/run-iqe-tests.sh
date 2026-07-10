@@ -661,6 +661,21 @@ else
     echo "WARNING: Could not extract cluster CA certificates"
 fi
 
+# Pre-seed exchange rates so currency-filtered tests have valid rates available.
+# The get_daily_currency_rates Celery task runs on a schedule and may not have
+# executed yet on fresh/ephemeral deployments.
+echo ""
+echo "Seeding exchange rates via masu internal API..."
+MASU_INTERNAL_URL="http://${MASU_HOSTNAME}:${MASU_PORT}/api/cost-management/v1"
+EXCHANGE_RATE_RESPONSE=$(kubectl exec --request-timeout=30s -n "${NAMESPACE}" deploy/${HELM_RELEASE_NAME}-koku-api -c koku-api -- \
+    curl -sf --max-time 20 "${MASU_INTERNAL_URL}/update_exchange_rates/" 2>/dev/null || echo "")
+if [ -n "$EXCHANGE_RATE_RESPONSE" ]; then
+    RATE_COUNT=$(echo "$EXCHANGE_RATE_RESPONSE" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('updated_exchange_rates',{})))" 2>/dev/null || echo "0")
+    echo "✓ Exchange rates seeded (${RATE_COUNT} currencies)"
+else
+    echo "⚠ WARNING: Could not seed exchange rates. Currency-filtered tests may fail."
+fi
+
 echo ""
 echo "Creating IQE test pod..."
 
