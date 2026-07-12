@@ -114,6 +114,7 @@ spec:
         volumeMounts:
         - name: tmp
           mountPath: /tmp
+        {{- include "cost-onprem.kafka.tlsVolumeMount" . | nindent 8 }}
         {{- if and .Values.valkey.tls.enabled .Values.valkey.tls.caCertSecretName }}
         - name: redis-tls-ca
           mountPath: /etc/redis-tls
@@ -134,6 +135,7 @@ spec:
       volumes:
       - name: tmp
         emptyDir: {}
+      {{- include "cost-onprem.kafka.tlsVolume" . | nindent 6 }}
       {{- if and .Values.valkey.tls.enabled .Values.valkey.tls.caCertSecretName }}
       - name: redis-tls-ca
         secret:

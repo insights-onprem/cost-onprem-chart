@@ -83,9 +83,8 @@ spec:
               value: {{ include "cost-onprem.database.url" . }}
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: {{ include "cost-onprem.kafka.bootstrapServers" . | quote }}
-            - name: KAFKA_SECURITY_PROTOCOL
-              value: {{ include "cost-onprem.kafka.securityProtocol" . | quote }}
             {{- include "cost-onprem.kafka.saslEnv" . | nindent 12 }}
+            {{- include "cost-onprem.kafka.tlsEnv" . | nindent 12 }}
             - name: KAFKA_CONSUMER_GROUP_ID
               value: {{ .Values.ros.recommendationPoller.kafkaConsumerGroupId | quote }}
             - name: KAFKA_AUTO_COMMIT
