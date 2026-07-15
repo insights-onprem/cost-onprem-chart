@@ -1,5 +1,40 @@
 {
-  "last_check": null,
-  "pending_updates": [],
-  "update_history": []
+  "last_check": "2026-07-15T17:03:01Z",
+  "pending_updates": [
+    {
+      "image": "quay.io/redhat-services-prod/insights-management-tenant/insights-ocp-resource-optimization/ros-ocp-backend",
+      "previous_tag": "410b86b",
+      "new_tag": "c1b5cce",
+      "digest": "sha256:546336f1987a311155e915799e325b8049332ec67f5eb8472e7e129612e4d073",
+      "detected_at": "2026-07-15T17:03:01Z"
+    },
+    {
+      "image": "quay.io/redhat-services-prod/cost-mgmt-dev-tenant/koku",
+      "previous_tag": "d3c5bba",
+      "new_tag": "2ce6c7f",
+      "digest": "sha256:65b3f60e9e4cde57c0b71e7509accf83ed50d1e7760cbb111acfb7eef8af1536",
+      "detected_at": "2026-07-15T17:03:01Z"
+    },
+    {
+      "image": "quay.io/redhat-services-prod/kruize-autotune-tenant/autotune",
+      "previous_tag": "5eeae99",
+      "new_tag": "d1f0140",
+      "digest": "sha256:cc5ca407293d405fb58204f6b2a48a656c3fbb5f20d03788cb07090778fd9dd7",
+      "detected_at": "2026-07-15T17:03:01Z"
+    },
+    {
+      "image": "quay.io/redhat-services-prod/hcc-accessmanagement-tenant/insights-rbac",
+      "previous_tag": "b34eb9a",
+      "new_tag": "4c4488b",
+      "digest": "sha256:2acf3538a49a4a7c4817f9f3070286e79f17f557fc7f7574f5d6019904eb526e",
+      "detected_at": "2026-07-15T17:03:01Z"
+    },
+    {
+      "image": "quay.io/insights-onprem/koku-ui-onprem",
+      "previous_tag": "a15e49551a33ed1718f1434c012cc38a2174fc64",
+      "new_tag": "b1d82e5291897be83be574a56acd63f4ac54464d",
+      "digest": "sha256:4d47c85cee9d84ae471c9e5fc9fe0da3d3849ec6a4b572981113f8a3ee56b91d",
+      "detected_at": "2026-07-15T17:03:01Z"
+    }
+  ]
 }
