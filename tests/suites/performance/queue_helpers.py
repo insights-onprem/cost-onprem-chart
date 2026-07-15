@@ -11,7 +11,7 @@ def get_celery_queue_depths(namespace: str) -> dict:
     Returns a dict of {queue_name: length} for all active Celery queues,
     or an empty dict if the query fails.
     """
-    valkey_pod = get_pod_by_label(namespace, "app.kubernetes.io/name=valkey")
+    valkey_pod = get_pod_by_label(namespace, "app.kubernetes.io/component=cache")
     if not valkey_pod:
         return {}
 

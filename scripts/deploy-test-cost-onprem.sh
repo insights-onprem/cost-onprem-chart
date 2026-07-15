@@ -44,7 +44,7 @@ set -euo pipefail
 #   --include-ui              Include UI tests (requires Playwright system dependencies)
 #   --run-perf                Run performance tests after deployment (FLPATH-4036)
 #   --perf-profile PROFILE    Performance profile: baseline, small, medium, large (default: baseline)
-#   --perf-suite SUITES       Performance suite(s): all, api, ros, ingestion, scale, soak
+#   --perf-suite SUITES       Performance suite(s): all, api, ros, ingestion, scale, soak, valkey, db
 #                             Comma-separated for multiple (e.g., ros,ingestion). Default: all
 #   --perf-only               Run only performance tests (skip deployment and chart tests)
 #
@@ -1145,8 +1145,8 @@ main() {
         IFS=',' read -ra _suites <<< "${PERF_SUITE}"
         for _s in "${_suites[@]}"; do
             case "${_s}" in
-                api|ros|ingestion|scale|soak) ;;
-                *) log_error "Invalid --perf-suite value: ${_s} (valid: all, api, ros, ingestion, scale, soak)"
+                api|ros|ingestion|scale|soak|valkey|db) ;;
+                *) log_error "Invalid --perf-suite value: ${_s} (valid: all, api, ros, ingestion, scale, soak, valkey, db)"
                    exit 1 ;;
             esac
         done

@@ -372,6 +372,8 @@ run_performance_tests() {
                 ingestion) perf_args+=("--perf-ingestion") ;;
                 scale)     perf_args+=("--perf-scale") ;;
                 soak)      perf_args+=("--perf-soak") ;;
+                valkey)    perf_args+=("--perf-valkey") ;;
+                db)        perf_args+=("--perf-db") ;;
             esac
         done
     fi

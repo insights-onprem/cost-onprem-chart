@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import requests as _requests
+
 from utils import get_pod_by_label, run_oc_command
 
 from .data_classes import (
@@ -22,6 +24,8 @@ from .data_classes import (
     ResourceSnapshot,
     TimingMetric,
 )
+from .k8s_helpers import calculate_percentiles
+from .queue_helpers import get_celery_queue_depths
 
 
 # ---------------------------------------------------------------------------
@@ -631,3 +635,147 @@ def register_tracked_source(
         source_name=source_name,
     )
     return source, cluster_id, source_name
+
+
+# ---------------------------------------------------------------------------
+# API Probe Thread (for concurrent load testing)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class APIProbeSnapshot:
+    """Single probe sample: latencies for each endpoint at a point in time."""
+
+    timestamp: float = 0
+    report_baseline_s: float = 0
+    group_by_s: float = 0
+    cost_models_s: float = 0
+    errors: int = 0
+    queue_depth: int = 0
+
+
+class APIProbeThread:
+    """Background thread that continuously probes API endpoints.
+
+    Fires GET requests against a fixed set of Cost Management API endpoints
+    at a configurable interval and records per-sample latencies. Useful for
+    measuring API degradation while ingestion or other heavy workloads are
+    running concurrently.
+
+    Modeled on ValkeyMonitor from test_valkey_eviction.py — uses
+    threading.Event for clean shutdown and daemon=True for safety.
+
+    Usage::
+
+        session = create_authenticated_session(keycloak_config)
+        probe = APIProbeThread(session, gateway_url, namespace)
+        probe.start()
+        # ... do heavy work ...
+        summary = probe.stop()   # returns percentile stats per endpoint
+    """
+
+    def __init__(
+        self,
+        session: _requests.Session,
+        gateway_url: str,
+        namespace: str,
+        poll_interval: float = 2.0,
+    ):
+        self.session = session
+        self.namespace = namespace
+        self.poll_interval = poll_interval
+        self.snapshots: List[APIProbeSnapshot] = []
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+        base = gateway_url.rstrip("/")
+        self._urls = {
+            "report_baseline": f"{base}/api/cost-management/v1/reports/openshift/costs/",
+            "group_by": (
+                f"{base}/api/cost-management/v1/reports/openshift/costs/"
+                f"?group_by[project]=*&filter[time_scope_value]=-30"
+            ),
+            "cost_models": f"{base}/api/cost-management/v1/cost-models/",
+        }
+
+    def _probe_once(self) -> APIProbeSnapshot:
+        snap = APIProbeSnapshot(timestamp=time.time())
+        errors = 0
+
+        for attr, url in [
+            ("report_baseline_s", self._urls["report_baseline"]),
+            ("group_by_s", self._urls["group_by"]),
+            ("cost_models_s", self._urls["cost_models"]),
+        ]:
+            start = time.time()
+            try:
+                resp = self.session.get(url, timeout=30)
+                latency = time.time() - start
+                setattr(snap, attr, latency)
+                if resp.status_code != 200:
+                    errors += 1
+            except _requests.RequestException:
+                setattr(snap, attr, time.time() - start)
+                errors += 1
+
+        snap.errors = errors
+
+        depths = get_celery_queue_depths(self.namespace)
+        snap.queue_depth = sum(depths.values())
+
+        return snap
+
+    def _poll_loop(self):
+        while not self._stop.is_set():
+            try:
+                snap = self._probe_once()
+                self.snapshots.append(snap)
+
+                print(
+                    f"[api-probe] report={snap.report_baseline_s:.3f}s "
+                    f"group_by={snap.group_by_s:.3f}s "
+                    f"cost_models={snap.cost_models_s:.3f}s "
+                    f"queue={snap.queue_depth} errors={snap.errors}"
+                )
+            except Exception as e:
+                print(f"[api-probe] poll error: {e}")
+
+            self._stop.wait(self.poll_interval)
+
+    def start(self):
+        self._thread = threading.Thread(target=self._poll_loop, daemon=True)
+        self._thread.start()
+        print(f"[api-probe] Started (polling every {self.poll_interval}s)")
+
+    def stop(self) -> Dict[str, Any]:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=10)
+
+        if not self.snapshots:
+            return {"error": "no data collected"}
+
+        report_latencies = [s.report_baseline_s for s in self.snapshots]
+        group_by_latencies = [s.group_by_s for s in self.snapshots]
+        cost_model_latencies = [s.cost_models_s for s in self.snapshots]
+        total_errors = sum(s.errors for s in self.snapshots)
+        peak_queue = max(s.queue_depth for s in self.snapshots)
+
+        duration = self.snapshots[-1].timestamp - self.snapshots[0].timestamp
+
+        summary = {
+            "duration_seconds": round(duration, 1),
+            "probe_count": len(self.snapshots),
+            "total_errors": total_errors,
+            "peak_queue_depth": peak_queue,
+            "report_baseline": calculate_percentiles(report_latencies),
+            "group_by_project": calculate_percentiles(group_by_latencies),
+            "cost_models_list": calculate_percentiles(cost_model_latencies),
+        }
+
+        print(
+            f"[api-probe] Stopped. {len(self.snapshots)} samples over "
+            f"{duration:.0f}s. Peak queue depth: {peak_queue}. "
+            f"Errors: {total_errors}"
+        )
+        return summary

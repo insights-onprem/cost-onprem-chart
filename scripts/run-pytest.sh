@@ -27,6 +27,8 @@
 #   --perf-scale        Run scale tests only
 #   --perf-ros          Run ROS/Kruize performance tests only
 #   --perf-soak         Run soak/stability tests only
+#   --perf-valkey       Run Valkey eviction correlation tests only
+#   --perf-db           Run PostgreSQL resource sweep tests only
 #
 # Filter Options:
 #   --smoke             Run only smoke tests (quick validation)
@@ -133,6 +135,8 @@ show_help() {
     echo "  --perf-scale      Run scale tests (PERF-SCALE-*)"
     echo "  --perf-ros        Run ROS/Kruize performance tests (PERF-ROS-*)"
     echo "  --perf-soak       Run soak/stability tests (PERF-SOAK-*)"
+    echo "  --perf-valkey     Run Valkey eviction correlation tests (PERF-VK-*)"
+    echo "  --perf-db         Run PostgreSQL resource sweep tests (PERF-DB-*)"
     echo ""
     echo "UI Tests:"
     echo "  UI tests are included by default. Use --no-ui to exclude them."
@@ -364,6 +368,18 @@ main() {
                 include_ui=false
                 shift
                 ;;
+            --perf-valkey)
+                # Run Valkey eviction correlation tests (COST-7605 DB-3)
+                pytest_markers+=("performance and valkey_eviction")
+                include_ui=false
+                shift
+                ;;
+            --perf-db)
+                # Run PostgreSQL resource sweep tests (COST-7605 DB-1, DB-2)
+                pytest_markers+=("performance and db_sweep")
+                include_ui=false
+                shift
+                ;;
             # Filter options
             --smoke)
                 pytest_markers+=("smoke")
@@ -440,8 +456,14 @@ main() {
         # Run only UI tests
         pytest_args+=("-m" "ui")
     elif [[ ${#pytest_markers[@]} -gt 0 ]]; then
-        local marker_expr
-        marker_expr=$(IFS=" or "; echo "${pytest_markers[*]}")
+        local marker_expr=""
+        for _m in "${pytest_markers[@]}"; do
+            if [[ -n "$marker_expr" ]]; then
+                marker_expr="($marker_expr) or ($_m)"
+            else
+                marker_expr="$_m"
+            fi
+        done
         # Check if this is a performance test request
         if [[ "$marker_expr" == *"performance"* ]]; then
             # Performance tests - use marker as-is
