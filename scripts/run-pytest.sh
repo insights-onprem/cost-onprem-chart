@@ -29,6 +29,7 @@
 #   --perf-soak         Run soak/stability tests only
 #   --perf-valkey       Run Valkey eviction correlation tests only
 #   --perf-db           Run PostgreSQL resource sweep tests only
+#   --perf-kafka        Run Kafka throughput/scaling tests only
 #
 # Filter Options:
 #   --smoke             Run only smoke tests (quick validation)
@@ -137,6 +138,7 @@ show_help() {
     echo "  --perf-soak       Run soak/stability tests (PERF-SOAK-*)"
     echo "  --perf-valkey     Run Valkey eviction correlation tests (PERF-VK-*)"
     echo "  --perf-db         Run PostgreSQL resource sweep tests (PERF-DB-*)"
+    echo "  --perf-kafka      Run Kafka throughput/scaling tests (PERF-KAF-*)"
     echo ""
     echo "UI Tests:"
     echo "  UI tests are included by default. Use --no-ui to exclude them."
@@ -377,6 +379,12 @@ main() {
             --perf-db)
                 # Run PostgreSQL resource sweep tests (COST-7605 DB-1, DB-2)
                 pytest_markers+=("performance and db_sweep")
+                include_ui=false
+                shift
+                ;;
+            --perf-kafka)
+                # Run Kafka throughput/scaling tests (COST-7638)
+                pytest_markers+=("performance and kafka_throughput")
                 include_ui=false
                 shift
                 ;;

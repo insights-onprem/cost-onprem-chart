@@ -374,6 +374,7 @@ run_performance_tests() {
                 soak)      perf_args+=("--perf-soak") ;;
                 valkey)    perf_args+=("--perf-valkey") ;;
                 db)        perf_args+=("--perf-db") ;;
+                kafka)     perf_args+=("--perf-kafka") ;;
             esac
         done
     fi

@@ -15,6 +15,7 @@
 #
 # Environment Variables:
 #   NAMESPACE          - Target namespace (default: cost-onprem)
+#   KAFKA_NAMESPACE    - Kafka broker namespace (default: kafka)
 #   PROMETHEUS_URL     - Prometheus/Thanos URL (auto-detected if not set)
 #   OUTPUT_DIR         - Output directory (default: ./metrics-snapshots)
 #   S3_BUCKET            - S3 bucket for uploads (required for --upload)
@@ -54,6 +55,7 @@ trap cleanup_on_exit EXIT
 
 # Configuration
 NAMESPACE=${NAMESPACE:-cost-onprem}
+KAFKA_NAMESPACE=${KAFKA_NAMESPACE:-kafka}
 PROMETHEUS_URL=${PROMETHEUS_URL:-}
 OUTPUT_DIR=${OUTPUT_DIR:-./metrics-snapshots}
 S3_BUCKET=${S3_BUCKET:-}
@@ -250,6 +252,15 @@ METRIC_NAMES=(
     # Ingress metrics
     ingress_upload_rate
     kafka_consumer_lag
+    # Kafka broker metrics (KAF-1, COST-7638)
+    kafka_messages_in_per_sec
+    kafka_bytes_in_per_sec
+    kafka_bytes_out_per_sec
+    kafka_broker_cpu_cores
+    kafka_broker_memory_bytes
+    kafka_disk_write_bytes_per_sec
+    kafka_consumer_lag_listener
+    kafka_consumer_lag_ros
 )
 METRIC_QUERIES=(
     "sum(rate(http_requests_total{namespace=\"${NAMESPACE}\", job=~\".*koku.*\"}[5m]))"
@@ -286,6 +297,15 @@ METRIC_QUERIES=(
     "sum(container_memory_working_set_bytes{namespace=\"${NAMESPACE}\", pod=~\".*postgres.*|.*database.*|.*db.*\", container!=\"\", container!=\"POD\"}) / 1024 / 1024"
     "sum(rate(ingress_uploads_total{namespace=\"${NAMESPACE}\"}[5m]))"
     "sum(kafka_consumer_records_lag{namespace=\"${NAMESPACE}\"})"
+    # Kafka broker metrics — queries target KAFKA_NAMESPACE where brokers run
+    "sum(rate(kafka_server_brokertopicmetrics_messagesin_total{namespace=\"${KAFKA_NAMESPACE}\"}[5m]))"
+    "sum(rate(kafka_server_brokertopicmetrics_bytesin_total{namespace=\"${KAFKA_NAMESPACE}\"}[5m]))"
+    "sum(rate(kafka_server_brokertopicmetrics_bytesout_total{namespace=\"${KAFKA_NAMESPACE}\"}[5m]))"
+    "sum(rate(container_cpu_usage_seconds_total{namespace=\"${KAFKA_NAMESPACE}\", pod=~\".*kafka.*\", container!=\"\", container!=\"POD\"}[5m]))"
+    "sum(container_memory_working_set_bytes{namespace=\"${KAFKA_NAMESPACE}\", pod=~\".*kafka.*\", container!=\"\", container!=\"POD\"})"
+    "sum(rate(container_fs_writes_bytes_total{namespace=\"${KAFKA_NAMESPACE}\", pod=~\".*kafka.*\"}[5m]))"
+    "sum(kafka_consumergroup_lag{namespace=\"${NAMESPACE}\", consumergroup=~\".*listener.*\"})"
+    "sum(kafka_consumergroup_lag{namespace=\"${NAMESPACE}\", consumergroup=~\".*ros.*\"})"
 )
 
 # Collect all metrics and save to JSON
