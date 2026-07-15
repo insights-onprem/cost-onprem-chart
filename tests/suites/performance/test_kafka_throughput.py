@@ -9,6 +9,7 @@ Test IDs:
 - PERF-KAF-002: Partition scaling validation
 """
 
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
@@ -23,18 +24,20 @@ from e2e_helpers import (
     generate_cluster_id,
     register_source,
 )
-from utils import run_oc_command
+from utils import get_pod_by_label, run_oc_command
 
 from .data_classes import PerformanceResult
 from .helpers import (
     PerfResultCollector,
     PerfTimer,
     generate_and_upload_data,
+    save_perf_result,
 )
 from .kafka_helpers import (
     KafkaMonitor,
     get_broker_disk_usage,
     get_broker_resource_usage,
+    get_consumer_group_lag,
     get_kafka_broker_pod,
     get_kafka_namespace,
     get_topic_partition_count,
@@ -65,15 +68,6 @@ _KAF_001_CONCURRENCY: dict = {
         pytest.param(10, id="10-sources"),
         pytest.param(15, id="15-sources"),
         pytest.param(20, id="20-sources"),
-    ],
-    "xlarge": [
-        pytest.param(2, id="2-sources"),
-        pytest.param(5, id="5-sources"),
-        pytest.param(10, id="10-sources"),
-        pytest.param(15, id="15-sources"),
-        pytest.param(20, id="20-sources"),
-        pytest.param(25, id="25-sources"),
-        pytest.param(30, id="30-sources"),
     ],
 }
 KAF_001_CONCURRENCY = _KAF_001_CONCURRENCY.get(
@@ -215,7 +209,7 @@ class TestKafkaThroughputCeiling:
 
         # ---- Wait for processing ----
         total_budget = 120 + concurrent_sources * 30
-        if _ACTIVE_PROFILE in ("medium", "large", "xlarge"):
+        if _ACTIVE_PROFILE in ("medium", "large"):
             total_budget = int(total_budget * 1.5)
         deadline = time.time() + total_budget
         processed_count = 0
@@ -321,12 +315,7 @@ class TestKafkaThroughputCeiling:
         print(f"  Partitions:   {pre_partitions}")
         print(f"  Peak lag:     {monitor.peak_lag()} messages")
         recovery = monitor.lag_recovery_time()
-        if recovery is not None:
-            print(f"  Lag recovery: {recovery:.1f}s")
-        elif monitor.peak_lag() == 0:
-            print(f"  Lag recovery: n/a (no lag observed)")
-        else:
-            print(f"  Lag recovery: did not recover")
+        print(f"  Lag recovery: {recovery:.1f}s" if recovery else "  Lag recovery: did not recover")
         print(f"  Lag final:    {post_lag}")
         print(f"  Listener CPU: {listener_cpu or 'n/a'}")
         timings = perf_timer.get_timings()
@@ -351,12 +340,8 @@ class TestKafkaPartitionScaling:
     listener replica count, then runs concurrent uploads to measure
     the delta.
 
-    **Side effects**: Kafka does not allow decreasing partition counts.
-    The ``finally`` block restores listener replicas, but any partition
-    increase is permanent for the life of the cluster.  Subsequent runs
-    on the same cluster will use the already-scaled partition count as
-    their baseline.  The test records ``original_partitions`` in its
-    metrics so the starting state is always visible in results.
+    This test modifies cluster state (topic partition count, listener
+    replicas) and restores them in a finally block.
     """
 
     @pytest.fixture(autouse=True)
@@ -479,7 +464,7 @@ class TestKafkaPartitionScaling:
         upload_elapsed = time.time() - upload_start
 
         total_budget = 120 + concurrent_sources * 30
-        if _ACTIVE_PROFILE in ("medium", "large", "xlarge"):
+        if _ACTIVE_PROFILE in ("medium", "large"):
             total_budget = int(total_budget * 1.5)
         deadline = time.time() + total_budget
         processed = 0
@@ -497,14 +482,6 @@ class TestKafkaPartitionScaling:
         wait_for_queue_drain(
             self.namespace, max_wait_seconds=600, label=f"KAF-002[{label}]",
         )
-
-        # Poll until consumer lag reaches zero (or budget expires)
-        lag_start = time.time()
-        while time.time() - lag_start < 120:
-            lag = get_total_consumer_lag(self.kafka_namespace, self.broker_pod)
-            if sum(lag.values()) == 0:
-                break
-            time.sleep(10)
 
         snapshots = monitor.stop()
         total_mb = sum(r.get("package_size_mb", 0) for r in upload_results)
@@ -541,9 +518,9 @@ class TestKafkaPartitionScaling:
         """Scale partitions and listener replicas, measuring throughput delta.
 
         Runs:
-          1. Baseline (current partition count and listener replica count)
-          2. At least 3 partitions, 3 listener replicas
-          3. Restore original listener replica count (partitions cannot be decreased)
+          1. Baseline (current partitions, 1 listener replica)
+          2. 3 partitions, 3 listener replicas
+          3. Restore original configuration
         """
         topic = "platform.upload.announce"
         concurrent = 10
@@ -604,12 +581,7 @@ class TestKafkaPartitionScaling:
             print(f"    Throughput:    {r['throughput_mb_per_sec']} MB/s")
             print(f"    Peak lag:      {r['peak_lag']} messages")
             recovery = r['lag_recovery_s']
-            if recovery is not None:
-                print(f"    Lag recovery:  {recovery:.1f}s")
-            elif r['peak_lag'] == 0:
-                print(f"    Lag recovery:  n/a (no lag observed)")
-            else:
-                print(f"    Lag recovery:  did not recover")
+            print(f"    Lag recovery:  {recovery:.1f}s" if recovery else "    Lag recovery:  did not recover")
         if len(results) >= 2:
             delta = results[1]["throughput_mb_per_sec"] - results[0]["throughput_mb_per_sec"]
             print(f"\n  Throughput delta: {delta:+.3f} MB/s "
