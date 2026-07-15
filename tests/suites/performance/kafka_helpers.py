@@ -4,8 +4,10 @@ Provides helpers to query Kafka consumer group lag, broker metrics,
 and topic metadata from AMQ Streams brokers.
 """
 
+import json
 import os
 import re
+import subprocess
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -47,12 +49,6 @@ def get_consumer_group_lag(
     """Query consumer group lag via kafka-consumer-groups.sh.
 
     Returns {group_name: {topic: lag}} for groups matching *group_filter*.
-
-    Note: the output is parsed by splitting whitespace and assuming column 5
-    is ``LAG``.  This matches Kafka 3.x / Strimzi 0.38+ output format.  If
-    the column ordering changes in a future version (e.g. addition of a HOST
-    column), the parsed values will be silently wrong.  Using ``--csv`` would
-    be more robust but is not available in all Kafka distributions.
     """
     result = run_oc_command(
         ["exec", "-n", kafka_namespace, broker_pod, "--",
@@ -143,10 +139,7 @@ def get_broker_resource_usage(kafka_namespace: str) -> Dict[str, Any]:
 def get_broker_disk_usage(
     kafka_namespace: str, broker_pod: str
 ) -> Dict[str, Any]:
-    """Get Kafka data directory disk usage.
-
-    The path ``/var/lib/kafka/data-0`` is the Strimzi JBOD default.
-    """
+    """Get Kafka data directory disk usage."""
     result = run_oc_command(
         ["exec", "-n", kafka_namespace, broker_pod, "--",
          "df", "-BM", "/var/lib/kafka/data-0"],
@@ -244,13 +237,9 @@ class KafkaMonitor:
     def lag_recovery_time(self, threshold: int = 0) -> Optional[float]:
         """Seconds from peak lag until lag drops to *threshold*.
 
-        Returns ``None`` if lag never exceeded the threshold (nothing to
-        recover from) or if lag never recovered after peaking.
+        Returns None if lag never recovered.
         """
         if not self.snapshots:
-            return None
-        peak_val = max(s.total_lag() for s in self.snapshots)
-        if peak_val <= threshold:
             return None
         peak_idx = max(range(len(self.snapshots)),
                        key=lambda i: self.snapshots[i].total_lag())
