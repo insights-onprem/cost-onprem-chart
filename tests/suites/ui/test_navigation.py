@@ -62,8 +62,10 @@ class TestDefaultNavigation:
         authenticated_page.goto(ui_url)
         authenticated_page.wait_for_load_state("networkidle")
         
-        # Navigation list should be visible
-        nav_list = authenticated_page.locator("ul.pf-v6-c-nav__list")
+        # Primary nav list (direct child of Global nav; excludes IAM subnav)
+        nav_list = authenticated_page.locator(
+            'nav[aria-label="Global"] > ul.pf-v6-c-nav__list'
+        )
         expect(nav_list).to_be_visible()
         
         # Check that expected nav items exist
