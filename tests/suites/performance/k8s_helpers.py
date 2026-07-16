@@ -156,48 +156,6 @@ def merge_resources(original: dict, overrides: dict) -> dict:
     return merged
 
 
-def drop_caches(namespace: str, helm_release: str = "cost-onprem") -> None:
-    """Restart database and worker pods to flush warm caches.
-
-    Ensures a cold start by clearing PostgreSQL shared_buffers (via pod
-    restart) and Python in-memory state in Celery workers.  Blocks until
-    all rollouts are ready.
-    """
-    print("[cache-drop] Restarting database + workers for cold start")
-
-    db_sts = f"{helm_release}-database"
-    run_oc_command(
-        ["delete", "pod", f"{db_sts}-0", "-n", namespace, "--wait=false"],
-        check=False,
-    )
-
-    for component in ("celery-worker-ocp", "celery-worker-summary",
-                       "celery-worker-default", "celery-worker-cost-model",
-                       "celery-worker-priority"):
-        deploy = f"{helm_release}-{component}"
-        run_oc_command(
-            ["rollout", "restart", "deployment", deploy, "-n", namespace],
-            check=False,
-        )
-
-    run_oc_command(
-        ["rollout", "status", "statefulset", db_sts,
-         "-n", namespace, "--timeout=120s"],
-        check=False,
-    )
-    for component in ("celery-worker-ocp", "celery-worker-summary",
-                       "celery-worker-default", "celery-worker-cost-model",
-                       "celery-worker-priority"):
-        deploy = f"{helm_release}-{component}"
-        run_oc_command(
-            ["rollout", "status", "deployment", deploy,
-             "-n", namespace, "--timeout=120s"],
-            check=False,
-        )
-
-    print("[cache-drop] Cold start ready")
-
-
 def _delete_first_pod(namespace: str, owner_name: str) -> None:
     """Delete the first pod owned by a StatefulSet to force recreation.
 
