@@ -31,6 +31,7 @@ from .helpers import (
     PerfTimer,
     generate_and_upload_data,
 )
+from .k8s_helpers import drop_caches
 from .kafka_helpers import (
     KafkaMonitor,
     get_broker_disk_usage,
@@ -565,6 +566,9 @@ class TestKafkaPartitionScaling:
                     database_config, perf_cleanup, "baseline",
                 )
                 results.append(baseline)
+
+            # --- Drop caches for fair comparison ---
+            drop_caches(self.namespace, self.helm_release)
 
             # --- Run 2: scaled partitions + listeners ---
             target_partitions = max(original_partitions, 3)
