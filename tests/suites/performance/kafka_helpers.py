@@ -4,10 +4,8 @@ Provides helpers to query Kafka consumer group lag, broker metrics,
 and topic metadata from AMQ Streams brokers.
 """
 
-import json
 import os
 import re
-import subprocess
 import threading
 import time
 from dataclasses import asdict, dataclass, field
