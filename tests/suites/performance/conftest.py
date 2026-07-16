@@ -210,18 +210,6 @@ def authenticated_session(keycloak_config) -> requests.Session:
     return create_authenticated_session(keycloak_config)
 
 
-@pytest.fixture
-def cold_start(cluster_config: ClusterConfig):
-    """Restart database and worker pods to flush warm caches.
-
-    Use this fixture in any test that needs a cold start for fair timing
-    comparisons (e.g., before/after scaling tests).
-    """
-    from .k8s_helpers import drop_caches
-
-    drop_caches(cluster_config.namespace, cluster_config.helm_release_name)
-
-
 # ---------------------------------------------------------------------------
 # Function-Scoped Fixtures
 # ---------------------------------------------------------------------------
