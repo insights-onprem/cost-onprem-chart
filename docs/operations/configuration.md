@@ -949,10 +949,10 @@ The following topics must exist before the application starts processing data. T
 
 | Tier | Platform Partitions | Listener Replicas | Expected Throughput |
 |------|---------------------|-------------------|---------------------|
-| Small | 1 | 1 | *pending PERF-KAF-001 validation* |
-| Medium | 3 | 1–3 | *pending PERF-KAF-001 validation* |
-| Large | 6 | 3 | *pending PERF-KAF-002 validation* |
-| XLarge | 12 | 6 | *pending PERF-KAF-002 validation* |
+| Small | 1 | 1 | Kafka idle — pipeline-bound (FINDING-029) |
+| Medium | 3 | 1–3 | Kafka idle — pipeline-bound (FINDING-029) |
+| Large | 6 | 3 | Kafka idle — pipeline-bound (FINDING-029) |
+| XLarge | 12 | 6 | Kafka idle — pipeline-bound (FINDING-029) |
 
 **Validation checklist** for customer-managed Kafka:
 - [ ] All five topics exist with the recommended partition count

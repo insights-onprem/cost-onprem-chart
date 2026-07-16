@@ -351,8 +351,12 @@ class TestKafkaPartitionScaling:
     listener replica count, then runs concurrent uploads to measure
     the delta.
 
-    This test modifies cluster state (topic partition count, listener
-    replicas) and restores them in a finally block.
+    **Side effects**: Kafka does not allow decreasing partition counts.
+    The ``finally`` block restores listener replicas, but any partition
+    increase is permanent for the life of the cluster.  Subsequent runs
+    on the same cluster will use the already-scaled partition count as
+    their baseline.  The test records ``original_partitions`` in its
+    metrics so the starting state is always visible in results.
     """
 
     @pytest.fixture(autouse=True)
@@ -507,6 +511,14 @@ class TestKafkaPartitionScaling:
         wait_for_queue_drain(
             self.namespace, max_wait_seconds=600, label=f"KAF-002[{label}]",
         )
+
+        # Poll until consumer lag reaches zero (or budget expires)
+        lag_start = time.time()
+        while time.time() - lag_start < 120:
+            lag = get_total_consumer_lag(self.kafka_namespace, self.broker_pod)
+            if sum(lag.values()) == 0:
+                break
+            time.sleep(10)
 
         snapshots = monitor.stop()
         total_mb = sum(r.get("package_size_mb", 0) for r in upload_results)
