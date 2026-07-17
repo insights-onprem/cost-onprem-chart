@@ -185,6 +185,7 @@ def scale_deployment(namespace: str, name: str, replicas: int) -> bool:
         ["rollout", "status", "deployment", name,
          "-n", namespace, "--timeout=180s"],
         check=False,
+        timeout=210,
     )
     ok = result.returncode == 0
     status = "ready" if ok else "FAILED"
