@@ -68,6 +68,30 @@ def get_worker_cpu_utilization(
     return pods
 
 
+def _wait_for_pod_metrics(
+    namespace: str, label: str, expected_count: int,
+    timeout: int = 90, poll_interval: int = 10,
+) -> Dict[str, str]:
+    """Poll ``oc adm top pod`` until *expected_count* pods report metrics.
+
+    Metrics-server can lag behind pod readiness by 30-60s, so a simple
+    sleep is unreliable.  Returns whatever was last observed if the
+    timeout expires.
+    """
+    deadline = time.time() + timeout
+    result: Dict[str, str] = {}
+    while time.time() < deadline:
+        result = get_worker_cpu_utilization(namespace, label)
+        if len(result) >= expected_count:
+            return result
+        remaining = int(deadline - time.time())
+        print(f"  [metrics] {len(result)}/{expected_count} pods reporting, "
+              f"retrying ({remaining}s left)")
+        time.sleep(poll_interval)
+    print(f"  [metrics] timeout — got {len(result)}/{expected_count} pods")
+    return result
+
+
 def get_oomkill_events(namespace: str, deployment: str) -> List[Dict[str, str]]:
     """Check for OOMKilled containers in a deployment's pods.
 
@@ -611,11 +635,10 @@ class TestKruizeMultiReplica:
             for replicas in [1, 2]:
                 print(f"\n[ROS-001] Kruize at {replicas} replica(s)")
                 scale_deployment(self.namespace, deploy_name, replicas)
-                time.sleep(15)
 
-                # Lightweight throughput check: measure kruize API response time
-                kruize_cpu = get_worker_cpu_utilization(
-                    self.namespace, "app.kubernetes.io/component=ros-optimization",
+                kruize_label = "app.kubernetes.io/component=ros-optimization"
+                kruize_cpu = _wait_for_pod_metrics(
+                    self.namespace, kruize_label, replicas,
                 )
 
                 results.append({
