@@ -401,30 +401,16 @@ class TestKafkaPartitionScaling:
 
     def _scale_listener(self, replicas: int) -> None:
         """Scale the listener deployment."""
-        run_oc_command(
-            ["scale", "deployment", f"{self.helm_release}-koku-listener",
-             "-n", self.namespace, f"--replicas={replicas}"],
-            check=False,
+        from .k8s_helpers import scale_deployment
+        scale_deployment(
+            self.namespace, f"{self.helm_release}-koku-listener", replicas,
         )
-        run_oc_command(
-            ["rollout", "status", "deployment",
-             f"{self.helm_release}-koku-listener",
-             "-n", self.namespace, "--timeout=120s"],
-            check=False,
-        )
-        print(f"[KAF-002] Listener scaled to {replicas} replicas")
 
     def _get_listener_replicas(self) -> int:
-        result = run_oc_command(
-            ["get", "deployment", f"{self.helm_release}-koku-listener",
-             "-n", self.namespace,
-             "-o", "jsonpath={.spec.replicas}"],
-            check=False,
+        from .k8s_helpers import get_deployment_replicas
+        return get_deployment_replicas(
+            self.namespace, f"{self.helm_release}-koku-listener",
         )
-        try:
-            return int(result.stdout.strip())
-        except (ValueError, AttributeError):
-            return 1
 
     def _run_upload_batch(
         self,
