@@ -185,7 +185,6 @@ def scale_deployment(namespace: str, name: str, replicas: int) -> bool:
         ["rollout", "status", "deployment", name,
          "-n", namespace, "--timeout=180s"],
         check=False,
-        timeout=210,
     )
     ok = result.returncode == 0
     status = "ready" if ok else "FAILED"
@@ -250,11 +249,11 @@ def capture_pg_stats(
     )
     rows = execute_db_query(namespace, db_pod, db_name, db_user, bgwriter_query)
     if rows and rows[0]:
-        row = rows[0]
-        if len(row) >= 3:
-            snap.buffers_checkpoint = _safe_int(row[0])
-            snap.buffers_clean = _safe_int(row[1])
-            snap.buffers_backend = _safe_int(row[2])
+        parts = rows[0][0].split("|") if isinstance(rows[0], tuple) else str(rows[0]).split("|")
+        if len(parts) >= 3:
+            snap.buffers_checkpoint = _safe_int(parts[0])
+            snap.buffers_clean = _safe_int(parts[1])
+            snap.buffers_backend = _safe_int(parts[2])
 
     db_query = (
         f"SELECT blks_hit, blks_read, xact_commit, xact_rollback, "
@@ -263,15 +262,15 @@ def capture_pg_stats(
     )
     rows = execute_db_query(namespace, db_pod, db_name, db_user, db_query)
     if rows and rows[0]:
-        row = rows[0]
-        if len(row) >= 7:
-            snap.blks_hit = _safe_int(row[0])
-            snap.blks_read = _safe_int(row[1])
-            snap.xact_commit = _safe_int(row[2])
-            snap.xact_rollback = _safe_int(row[3])
-            snap.tup_returned = _safe_int(row[4])
-            snap.tup_fetched = _safe_int(row[5])
-            snap.deadlocks = _safe_int(row[6])
+        parts = rows[0][0].split("|") if isinstance(rows[0], tuple) else str(rows[0]).split("|")
+        if len(parts) >= 7:
+            snap.blks_hit = _safe_int(parts[0])
+            snap.blks_read = _safe_int(parts[1])
+            snap.xact_commit = _safe_int(parts[2])
+            snap.xact_rollback = _safe_int(parts[3])
+            snap.tup_returned = _safe_int(parts[4])
+            snap.tup_fetched = _safe_int(parts[5])
+            snap.deadlocks = _safe_int(parts[6])
 
     total_blocks = snap.blks_hit + snap.blks_read
     if total_blocks > 0:
