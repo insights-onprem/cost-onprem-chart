@@ -69,10 +69,14 @@ def get_worker_cpu_utilization(
 
 
 def get_oomkill_events(namespace: str, deployment: str) -> List[Dict[str, str]]:
-    """Check for OOMKilled containers in a deployment's pods."""
+    """Check for OOMKilled containers in a deployment's pods.
+
+    ``deployment`` is the full deployment name (e.g. ``cost-onprem-celery-worker-ocp``).
+    Pod names start with ``{deployment}-`` so we use that prefix to filter.
+    """
     result = run_oc_command(
         ["get", "pods", "-n", namespace,
-         "-l", f"app.kubernetes.io/name={deployment}",
+         "-l", "app.kubernetes.io/component=cost-worker",
          "-o", "jsonpath={range .items[*]}{.metadata.name}|"
                "{range .status.containerStatuses[*]}"
                "{.lastState.terminated.reason}{end}{'\\n'}{end}"],
@@ -81,10 +85,10 @@ def get_oomkill_events(namespace: str, deployment: str) -> List[Dict[str, str]]:
     events = []
     if result.returncode == 0:
         for line in result.stdout.strip().splitlines():
-            if "OOMKilled" in line:
-                parts = line.split("|", 1)
+            pod_name = line.split("|", 1)[0] if "|" in line else ""
+            if pod_name.startswith(f"{deployment}-") and "OOMKilled" in line:
                 events.append({
-                    "pod": parts[0] if parts else "unknown",
+                    "pod": pod_name,
                     "reason": "OOMKilled",
                 })
     return events
@@ -269,11 +273,11 @@ CEL_001_EXPERIMENTS = _CEL_001_EXPERIMENTS.get(
 WORKER_COMPONENTS = {
     "ocp": {
         "deployment_suffix": "celery-worker-ocp",
-        "label": "app.kubernetes.io/component=celery-worker-ocp",
+        "label": "cost-onprem.io/worker-queue=ocp",
     },
     "summary": {
         "deployment_suffix": "celery-worker-summary",
-        "label": "app.kubernetes.io/component=celery-worker-summary",
+        "label": "cost-onprem.io/worker-queue=summary",
     },
     "listener": {
         "deployment_suffix": "koku-listener",
@@ -496,7 +500,7 @@ class TestWorkerOOMThreshold:
         })
 
         restarts_before = get_pod_restart_counts(
-            self.namespace, "app.kubernetes.io/component=celery-worker-ocp",
+            self.namespace, "cost-onprem.io/worker-queue=ocp",
         )
 
         try:
@@ -524,7 +528,7 @@ class TestWorkerOOMThreshold:
                 )
 
             restarts_after = get_pod_restart_counts(
-                self.namespace, "app.kubernetes.io/component=celery-worker-ocp",
+                self.namespace, "cost-onprem.io/worker-queue=ocp",
             )
             oom_events = get_oomkill_events(self.namespace, deploy_name)
 
@@ -611,7 +615,7 @@ class TestKruizeMultiReplica:
 
                 # Lightweight throughput check: measure kruize API response time
                 kruize_cpu = get_worker_cpu_utilization(
-                    self.namespace, "app.kubernetes.io/component=kruize",
+                    self.namespace, "app.kubernetes.io/component=ros-optimization",
                 )
 
                 results.append({
@@ -677,20 +681,22 @@ def capture_warm_state_indicators(
     )
     if rows and rows[0]:
         try:
-            indicators["pg_active_connections"] = int(str(rows[0]).strip().split("|")[0].strip())
+            indicators["pg_active_connections"] = int(rows[0][0])
         except (ValueError, IndexError):
             indicators["pg_active_connections"] = -1
 
-    # Worker pod ages
+    # Worker pod ages — use the actual chart labels:
+    #   Workers: app.kubernetes.io/component=cost-worker, cost-onprem.io/worker-queue=<queue>
+    #   Listener: app.kubernetes.io/component=listener
     worker_ages: Dict[str, float] = {}
-    for component in ("celery-worker-ocp", "celery-worker-summary",
-                      "celery-worker-default", "celery-worker-cost-model",
-                      "koku-listener"):
-        deploy = f"{helm_release}-{component}"
+    label_selectors = [
+        f"app.kubernetes.io/instance={helm_release},app.kubernetes.io/component=cost-worker",
+        f"app.kubernetes.io/instance={helm_release},app.kubernetes.io/component=listener",
+    ]
+    for selector in label_selectors:
         result = run_oc_command(
             ["get", "pods", "-n", namespace,
-             "-l", f"app.kubernetes.io/instance={helm_release},"
-                   f"app.kubernetes.io/name={deploy}",
+             "-l", selector,
              "-o", "jsonpath={range .items[*]}{.metadata.name} "
                    "{.metadata.creationTimestamp}{'\\n'}{end}"],
             check=False,
