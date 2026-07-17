@@ -342,7 +342,7 @@ class TestCeleryReplicaSweep:
                 # Capture pre-run state
                 pg_before = capture_pg_stats(
                     self.namespace, database_config.pod_name,
-                    database_config.db_name, database_config.db_user,
+                    database_config.database, database_config.user,
                 )
 
                 with perf_timer.measure(f"run_{run_label}"):
@@ -362,7 +362,7 @@ class TestCeleryReplicaSweep:
                 # Capture post-run state
                 pg_after = capture_pg_stats(
                     self.namespace, database_config.pod_name,
-                    database_config.db_name, database_config.db_user,
+                    database_config.database, database_config.user,
                 )
                 db_cpu = get_db_cpu_utilization(
                     self.namespace, database_config.pod_name,
@@ -761,12 +761,12 @@ class TestColdWarmCharacterization:
 
             indicators_before = capture_warm_state_indicators(
                 self.namespace, database_config.pod_name,
-                database_config.db_name, database_config.db_user,
+                database_config.database, database_config.user,
                 self.helm_release,
             )
             pg_before = capture_pg_stats(
                 self.namespace, database_config.pod_name,
-                database_config.db_name, database_config.db_user,
+                database_config.database, database_config.user,
             )
 
             with perf_timer.measure(label):
@@ -785,12 +785,12 @@ class TestColdWarmCharacterization:
 
             indicators_after = capture_warm_state_indicators(
                 self.namespace, database_config.pod_name,
-                database_config.db_name, database_config.db_user,
+                database_config.database, database_config.user,
                 self.helm_release,
             )
             pg_after = capture_pg_stats(
                 self.namespace, database_config.pod_name,
-                database_config.db_name, database_config.db_user,
+                database_config.database, database_config.user,
             )
             db_cpu = get_db_cpu_utilization(
                 self.namespace, database_config.pod_name,
