@@ -1145,8 +1145,8 @@ main() {
         IFS=',' read -ra _suites <<< "${PERF_SUITE}"
         for _s in "${_suites[@]}"; do
             case "${_s}" in
-                api|ros|ingestion|scale|soak|valkey|db|kafka) ;;
-                *) log_error "Invalid --perf-suite value: ${_s} (valid: all, api, ros, ingestion, scale, soak, valkey, db, kafka)"
+                api|ros|ingestion|scale|soak|valkey|db|kafka|celery) ;;
+                *) log_error "Invalid --perf-suite value: ${_s} (valid: all, api, ros, ingestion, scale, soak, valkey, db, kafka, celery)"
                    exit 1 ;;
             esac
         done

@@ -17,7 +17,7 @@ Test IDs:
 
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -37,7 +37,7 @@ from e2e_helpers import (
     register_source,
     wait_for_processing_complete,
 )
-from utils import execute_db_query, get_pod_by_label, run_oc_command
+from utils import get_pod_by_label, run_oc_command
 
 from .data_classes import PerformanceResult
 from .helpers import (
@@ -47,7 +47,12 @@ from .helpers import (
     generate_and_upload_data,
 )
 from .k8s_helpers import (
+    PgStatSnapshot,
     calculate_percentiles,
+    capture_pg_stats,
+    diff_pg_stats,
+    get_db_cpu_utilization,
+    get_db_shared_buffers,
     get_resource_spec,
     merge_resources,
     patch_resource_spec,
@@ -55,129 +60,6 @@ from .k8s_helpers import (
 )
 from .profiles import ACTIVE_PROFILE as _ACTIVE_PROFILE, PROFILES
 from .tracker import PerfCleanupTracker
-
-
-# =============================================================================
-# pg_stat Metrics Collection
-# =============================================================================
-
-
-@dataclass
-class PgStatSnapshot:
-    """Point-in-time snapshot of PostgreSQL performance counters."""
-
-    timestamp: float = 0
-    # pg_stat_bgwriter
-    buffers_checkpoint: int = 0
-    buffers_clean: int = 0
-    buffers_backend: int = 0
-    # pg_stat_database (for the koku database)
-    blks_hit: int = 0
-    blks_read: int = 0
-    xact_commit: int = 0
-    xact_rollback: int = 0
-    tup_returned: int = 0
-    tup_fetched: int = 0
-    deadlocks: int = 0
-    # derived
-    cache_hit_ratio: float = 0.0
-
-
-def capture_pg_stats(
-    namespace: str, db_pod: str, db_name: str, db_user: str
-) -> PgStatSnapshot:
-    """Capture a snapshot of PostgreSQL performance statistics."""
-    snap = PgStatSnapshot(timestamp=time.time())
-
-    # pg_stat_bgwriter
-    bgwriter_query = (
-        "SELECT buffers_checkpoint, buffers_clean, buffers_backend "
-        "FROM pg_stat_bgwriter"
-    )
-    rows = execute_db_query(namespace, db_pod, db_name, db_user, bgwriter_query)
-    if rows and rows[0]:
-        parts = rows[0][0].split("|") if isinstance(rows[0], tuple) else str(rows[0]).split("|")
-        if len(parts) >= 3:
-            snap.buffers_checkpoint = _safe_int(parts[0])
-            snap.buffers_clean = _safe_int(parts[1])
-            snap.buffers_backend = _safe_int(parts[2])
-
-    # pg_stat_database for the koku DB
-    db_query = (
-        f"SELECT blks_hit, blks_read, xact_commit, xact_rollback, "
-        f"tup_returned, tup_fetched, deadlocks "
-        f"FROM pg_stat_database WHERE datname = '{db_name}'"
-    )
-    rows = execute_db_query(namespace, db_pod, db_name, db_user, db_query)
-    if rows and rows[0]:
-        parts = rows[0][0].split("|") if isinstance(rows[0], tuple) else str(rows[0]).split("|")
-        if len(parts) >= 7:
-            snap.blks_hit = _safe_int(parts[0])
-            snap.blks_read = _safe_int(parts[1])
-            snap.xact_commit = _safe_int(parts[2])
-            snap.xact_rollback = _safe_int(parts[3])
-            snap.tup_returned = _safe_int(parts[4])
-            snap.tup_fetched = _safe_int(parts[5])
-            snap.deadlocks = _safe_int(parts[6])
-
-    total_blocks = snap.blks_hit + snap.blks_read
-    if total_blocks > 0:
-        snap.cache_hit_ratio = round(snap.blks_hit / total_blocks, 4)
-
-    return snap
-
-
-def diff_pg_stats(before: PgStatSnapshot, after: PgStatSnapshot) -> Dict[str, Any]:
-    """Compute the delta between two pg_stat snapshots."""
-    delta_hit = after.blks_hit - before.blks_hit
-    delta_read = after.blks_read - before.blks_read
-    total = delta_hit + delta_read
-
-    return {
-        "duration_s": round(after.timestamp - before.timestamp, 1),
-        "blks_hit_delta": delta_hit,
-        "blks_read_delta": delta_read,
-        "cache_hit_ratio": round(delta_hit / total, 4) if total > 0 else 1.0,
-        "xact_commit_delta": after.xact_commit - before.xact_commit,
-        "xact_rollback_delta": after.xact_rollback - before.xact_rollback,
-        "tup_returned_delta": after.tup_returned - before.tup_returned,
-        "tup_fetched_delta": after.tup_fetched - before.tup_fetched,
-        "deadlocks_delta": after.deadlocks - before.deadlocks,
-        "buffers_backend_delta": after.buffers_backend - before.buffers_backend,
-    }
-
-
-def get_db_cpu_utilization(namespace: str, db_pod: str) -> Optional[float]:
-    """Read current CPU usage of the database pod in millicores."""
-    result = run_oc_command(
-        ["adm", "top", "pod", db_pod, "-n", namespace, "--no-headers"],
-        check=False,
-    )
-    if result.returncode != 0:
-        return None
-    parts = result.stdout.split()
-    if len(parts) >= 2:
-        cpu_str = parts[1]
-        if cpu_str.endswith("m"):
-            return int(cpu_str[:-1])
-        try:
-            return int(cpu_str) * 1000
-        except ValueError:
-            pass
-    return None
-
-
-def get_db_shared_buffers(
-    namespace: str, db_pod: str, db_name: str, db_user: str
-) -> str:
-    """Read the current shared_buffers setting."""
-    rows = execute_db_query(
-        namespace, db_pod, db_name, db_user, "SHOW shared_buffers"
-    )
-    if rows and rows[0]:
-        return str(rows[0][0]).strip() if isinstance(rows[0], tuple) else str(rows[0]).strip()
-    return "unknown"
-
 
 
 # =============================================================================
@@ -251,16 +133,6 @@ def _measure_endpoint(
 
 
 
-# =============================================================================
-# Utilities
-# =============================================================================
-
-
-def _safe_int(s: str) -> int:
-    try:
-        return int(s.strip())
-    except (ValueError, AttributeError):
-        return 0
 
 
 # =============================================================================

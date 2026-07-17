@@ -375,6 +375,7 @@ run_performance_tests() {
                 valkey)    perf_args+=("--perf-valkey") ;;
                 db)        perf_args+=("--perf-db") ;;
                 kafka)     perf_args+=("--perf-kafka") ;;
+                celery)    perf_args+=("--perf-celery") ;;
             esac
         done
     fi
