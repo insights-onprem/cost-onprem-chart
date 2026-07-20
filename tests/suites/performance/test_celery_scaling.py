@@ -25,7 +25,7 @@ from e2e_helpers import (
     register_source,
     wait_for_processing_complete,
 )
-from utils import run_oc_command
+from utils import execute_db_query, run_oc_command
 
 from .data_classes import PerformanceResult
 from .helpers import (
@@ -92,15 +92,11 @@ def _wait_for_pod_metrics(
     return result
 
 
-def get_oomkill_events(namespace: str, deployment: str) -> List[Dict[str, str]]:
-    """Check for OOMKilled containers in a deployment's pods.
-
-    ``deployment`` is the full deployment name (e.g. ``cost-onprem-celery-worker-ocp``).
-    Pod names start with ``{deployment}-`` so we use that prefix to filter.
-    """
+def get_oomkill_events(namespace: str, label: str) -> List[Dict[str, str]]:
+    """Check for OOMKilled containers in pods matching *label*."""
     result = run_oc_command(
         ["get", "pods", "-n", namespace,
-         "-l", "app.kubernetes.io/component=cost-worker",
+         "-l", label,
          "-o", "jsonpath={range .items[*]}{.metadata.name}|"
                "{range .status.containerStatuses[*]}"
                "{.lastState.terminated.reason}{end}{'\\n'}{end}"],
@@ -109,8 +105,8 @@ def get_oomkill_events(namespace: str, deployment: str) -> List[Dict[str, str]]:
     events = []
     if result.returncode == 0:
         for line in result.stdout.strip().splitlines():
-            pod_name = line.split("|", 1)[0] if "|" in line else ""
-            if pod_name.startswith(f"{deployment}-") and "OOMKilled" in line:
+            if "OOMKilled" in line:
+                pod_name = line.split("|", 1)[0]
                 events.append({
                     "pod": pod_name,
                     "reason": "OOMKilled",
@@ -294,6 +290,13 @@ CEL_001_EXPERIMENTS = _CEL_001_EXPERIMENTS.get(
     _ACTIVE_PROFILE, _CEL_001_EXPERIMENTS.get("medium", [])
 )
 
+_CEL_CONCURRENCY = {
+    "baseline": 3,
+    "medium": 5,
+    "large": 8,
+    "xlarge": 10,
+}
+
 WORKER_COMPONENTS = {
     "ocp": {
         "deployment_suffix": "celery-worker-ocp",
@@ -356,7 +359,7 @@ class TestCeleryReplicaSweep:
         deploy_name = f"{self.helm_release}-{info['deployment_suffix']}"
         original_replicas = get_deployment_replicas(self.namespace, deploy_name)
 
-        concurrent = 5
+        concurrent = _CEL_CONCURRENCY.get(_ACTIVE_PROFILE, 5)
         runs: List[Dict[str, Any]] = []
 
         try:
@@ -554,7 +557,9 @@ class TestWorkerOOMThreshold:
             restarts_after = get_pod_restart_counts(
                 self.namespace, "cost-onprem.io/worker-queue=ocp",
             )
-            oom_events = get_oomkill_events(self.namespace, deploy_name)
+            oom_events = get_oomkill_events(
+                self.namespace, "cost-onprem.io/worker-queue=ocp",
+            )
 
             new_restarts = {}
             for pod, count in restarts_after.items():
@@ -604,12 +609,13 @@ class TestWorkerOOMThreshold:
 class TestKruizeMultiReplica:
     """PERF-ROS-001: Multi-replica Kruize validation.
 
-    Scales Kruize to 2 replicas and runs the ROS suite to check whether
-    throughput degrades, confirming FINDING-004's single-replica recommendation.
+    Scales Kruize to 2 replicas and captures per-pod CPU utilization to
+    verify pod scheduling and readiness, confirming FINDING-004's
+    single-replica recommendation.
 
     This test produces comparison data only — it does NOT run the full ROS
-    experiment pipeline. Instead, it measures Kruize API response time at
-    1 vs 2 replicas using a lightweight probe.
+    experiment pipeline or drive API traffic.  It validates that the second
+    replica starts and reports metrics (via ``oc adm top pod``).
     """
 
     @pytest.fixture(autouse=True)
@@ -625,7 +631,7 @@ class TestKruizeMultiReplica:
         perf_result: PerformanceResult,
         perf_collector: PerfResultCollector,
     ):
-        """Compare Kruize throughput at 1 vs 2 replicas."""
+        """Compare Kruize pod scheduling and CPU at 1 vs 2 replicas."""
         deploy_name = f"{self.helm_release}-kruize"
         original_replicas = get_deployment_replicas(self.namespace, deploy_name)
 
@@ -697,7 +703,6 @@ def capture_warm_state_indicators(
     indicators["pg_xact_commit"] = pg.xact_commit
 
     # Active connection count
-    from utils import execute_db_query
     rows = execute_db_query(
         namespace, db_pod, db_name, db_user,
         "SELECT count(*) FROM pg_stat_activity WHERE state = 'active'",
@@ -781,7 +786,7 @@ class TestColdWarmCharacterization:
         ingress_pod: str,
     ):
         """Run two sequential batches, capturing warm-state indicators around each."""
-        concurrent = 5
+        concurrent = _CEL_CONCURRENCY.get(_ACTIVE_PROFILE, 5)
         batches: List[Dict[str, Any]] = []
 
         for batch_num in (1, 2):
