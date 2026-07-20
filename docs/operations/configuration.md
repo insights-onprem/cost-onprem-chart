@@ -945,6 +945,21 @@ The following topics must exist before the application starts processing data. T
 - **Retention**: At least 7 days (`retention.ms: 604800000`)
 - **Segment rotation**: 1 day (`segment.ms: 86400000`)
 
+**Per-tier partition and throughput recommendations** (see [sizing-guide.md](../performance/sizing-guide.md) for full resource table):
+
+| Tier | Platform Partitions | Listener Replicas | Expected Throughput |
+|------|---------------------|-------------------|---------------------|
+| Small | 1 | 1 | Kafka idle — pipeline-bound (FINDING-029) |
+| Medium | 3 | 1–3 | Kafka idle — pipeline-bound (FINDING-029) |
+| Large | 6 | 3 | Kafka idle — pipeline-bound (FINDING-029) |
+| XLarge | 12 | 6 | Kafka idle — pipeline-bound (FINDING-029) |
+
+**Validation checklist** for customer-managed Kafka:
+- [ ] All five topics exist with the recommended partition count
+- [ ] Consumer groups can connect and consume (`kafka-consumer-groups.sh --list`)
+- [ ] Upload a small payload and verify processing completes end-to-end
+- [ ] Consumer lag returns to 0 within 60 seconds of upload completion
+
 #### Kafka connection settings
 
 The Helm chart does **not** deploy Kafka — it only configures applications to connect to it. Connection settings are in `values.yaml`:

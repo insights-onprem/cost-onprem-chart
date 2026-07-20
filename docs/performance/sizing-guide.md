@@ -255,6 +255,21 @@ worker CPU allocation (1000m/2000m).
 The default 100 Gi is sized for sustained multi-day production ingestion.
 For perf testing clusters, 10 Gi saves 270 Gi of ODF PV capacity.
 
+### Kafka Broker Resources (COST-7638)
+
+| Tier | Brokers | CPU Req/Limit | Memory Req/Limit | Disk | Platform Partitions | Announce Partitions |
+|------|---------|---------------|-------------------|------|---------------------|---------------------|
+| Small | 1 | 250m/1 | 1Gi/2Gi | 20Gi | 1 | 1 |
+| Medium | 1 | 500m/2 | 2Gi/4Gi | 50Gi | 3 | 3 |
+| Large | 3 | 1/2 | 2Gi/4Gi | 100Gi | 6 | 6 |
+| XLarge | 3 | 2/4 | 4Gi/8Gi | 200Gi | 12 | 12 |
+
+> **Note**: Single-broker tiers (Small/Medium) are validated — PERF-KAF-001
+> confirmed zero consumer lag through 30 concurrent sources on a single broker
+> (FINDING-029). The multi-broker recommendations for Large/XLarge provide
+> availability, not throughput, and require a cluster with multiple Kafka replicas
+> to validate HA behavior.
+
 ---
 
 ## Helm Values Examples

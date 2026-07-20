@@ -403,6 +403,48 @@ Patched the database StatefulSet memory across three levels (4Gi → 8Gi → 16G
 
 ---
 
+## Kafka Scaling Analysis (COST-7638)
+
+### PERF-FINDING-029: Kafka Has Massive Throughput Headroom — Not the Bottleneck
+
+**Status**: Validated at medium, large, and xlarge profiles
+**Severity**: Informational — sizing confirmation
+**Category**: Kafka throughput
+**Jira**: [COST-7638](https://redhat.atlassian.net/browse/COST-7638)
+
+**Method**: Uploaded 2–30 concurrent sources (baseline NISE data, 7 days) while a
+background `KafkaMonitor` polled consumer group lag every 5 seconds. Measured at
+medium (4 levels), large (5 levels), and xlarge (7 levels) profiles.
+
+| Concurrency | Peak Consumer Lag | Broker-0 CPU | Processing Wait |
+|-------------|-------------------|--------------|-----------------|
+| 2 sources | 0 | ~1200m | 1.3s |
+| 5 sources | 0 | ~800m | 142s |
+| 10 sources | 0 | ~850m | 221s |
+| 15 sources | 0 | ~850m | 461–516s |
+| 20 sources | 0 | ~520–800m | 487–559s |
+| 25 sources | 0 | 1432m | 510s |
+| 30 sources | 0 | 825m | 474s |
+
+Consumer lag remained at **zero across all concurrency levels and profiles**.
+Kafka consumed and delivered messages faster than the 5-second sampling interval.
+Only broker-0 served traffic; brokers 1–2 were idle replicas (~35m CPU).
+
+Disk usage: 1,320–1,428 MB out of 10,240 MB (13%) — flat across all runs.
+
+**Where the bottleneck actually is**: Processing wait time scales linearly with
+concurrency. The Celery worker pipeline (ocp/summary workers processing in
+PostgreSQL) is the constraint, not Kafka or the listener.
+
+**Implications for sizing**:
+- Single-broker Kafka is sufficient through xlarge workloads
+- The 3-broker default deployment provides availability, not throughput
+- Partition count does not matter until the downstream pipeline can saturate Kafka
+- Kafka resource recommendations in the sizing guide are conservative — a single
+  broker at 500m/2Gi CPU/memory handles all validated workloads
+
+---
+
 ## Environment Issues
 
 ### PERF-FINDING-010: ODF Default Resources Exhaust Cluster Memory
@@ -459,9 +501,11 @@ results are maintained in the [Sizing Guide](sizing-guide.md#performance-baselin
 | FINDING-026 | Valkey evictions do not cause chord failures | [COST-7605](https://redhat.atlassian.net/browse/COST-7605) | Validated (medium + large) |
 | FINDING-027 | PostgreSQL CPU diminishing returns above 4000m | [COST-7605](https://redhat.atlassian.net/browse/COST-7605) | Validated (medium + large) |
 | FINDING-028 | PostgreSQL memory no benefit above 4Gi for current workloads | [COST-7605](https://redhat.atlassian.net/browse/COST-7605) | Validated (medium + large) |
+| FINDING-029 | Kafka has massive throughput headroom — not the bottleneck | [COST-7638](https://redhat.atlassian.net/browse/COST-7638) | Validated (medium + large + xlarge) |
+| FINDING-030 | Sequential batches ~49% faster — cache warmth suspected | [COST-7638](https://redhat.atlassian.net/browse/COST-7638) | Pending — needs drop_caches + fresh deploy validation |
 
 **Parent epic**: [COST-7567](https://redhat.atlassian.net/browse/COST-7567) (CoP Performance Tuning & Hardware Sizing Guidelines)
 
 ---
 
-_Last Updated: 2026-07-10_
+_Last Updated: 2026-07-16_

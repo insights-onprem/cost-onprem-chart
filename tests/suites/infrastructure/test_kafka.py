@@ -11,7 +11,6 @@ Source Reference: scripts/e2e_validator/phases/kafka_validation.py
 """
 
 import json
-import os
 import subprocess
 from typing import List, Optional
 
@@ -19,46 +18,10 @@ import pytest
 
 from utils import get_pod_by_label, run_oc_command
 
-
-# =============================================================================
-# Helper Functions
-# =============================================================================
-
-def get_kafka_namespace() -> str:
-    """Get Kafka namespace from environment or default."""
-    return os.environ.get("KAFKA_NAMESPACE", "kafka")
-
-
-def get_kafka_broker_pod(kafka_namespace: str) -> Optional[str]:
-    """Get the first Kafka broker pod name.
-    
-    Uses strimzi.io/broker-role=true to find actual broker pods,
-    not the entity-operator which also has strimzi.io/kind=Kafka.
-    
-    Args:
-        kafka_namespace: Namespace where Kafka is deployed
-        
-    Returns:
-        Pod name or None if not found
-    """
-    try:
-        # Use broker-role label to get actual Kafka broker, not entity-operator
-        result = subprocess.run(
-            [
-                "kubectl", "get", "pods",
-                "-n", kafka_namespace,
-                "-l", "strimzi.io/broker-role=true",
-                "-o", "jsonpath={.items[0].metadata.name}",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-        return None
-    except (subprocess.TimeoutExpired, Exception):
-        return None
+from suites.performance.kafka_helpers import (
+    get_kafka_namespace,
+    get_kafka_broker_pod,
+)
 
 
 def get_kafka_pods_status(kafka_namespace: str) -> dict:
