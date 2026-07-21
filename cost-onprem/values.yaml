@@ -241,10 +241,8 @@ costManagement:
   # ---------------------------------------------------------------------------
   listener:
     enabled: true
-    # On-prem: 1 replica to fit cluster constraints (SaaS uses 2)
-    replicas: 1
+    replicas: 2
     resources:
-      # Aligned with SaaS Clowder configuration
       requests:
         cpu: 150m
         memory: 300Mi
@@ -333,7 +331,7 @@ costManagement:
             memory: 512Mi
 
       summary:
-        replicas: 1
+        replicas: 2
         queue: summary
         concurrency: 5
         resources:
@@ -371,7 +369,7 @@ costManagement:
             memory: 1Gi
 
       ocp:
-        replicas: 1
+        replicas: 2
         queue: ocp
         concurrency: 5
         resources:
@@ -958,8 +956,8 @@ jwtAuth:
     port: 9080
 
     # Route-level timeouts for the ingress (file upload) endpoint.
-    ingressTimeout: "30s"
-    ingressPerTryTimeout: "10s"
+    ingressTimeout: "180s"
+    ingressPerTryTimeout: "60s"
     servicePort: 80  # Service port exposed to other components (nginx, etc.)
     adminPort: 9901
     logLevel: info
@@ -1094,7 +1092,7 @@ service:
 gatewayRoute:
   annotations:
     # OpenShift-specific route annotations
-    haproxy.router.openshift.io/timeout: "30s"
+    haproxy.router.openshift.io/timeout: "180s"
     haproxy.router.openshift.io/rewrite-target: ""
   hosts:
     - host: ""  # Empty host uses cluster's default route domain
@@ -1110,14 +1108,14 @@ gatewayRoute:
 # Resource Defaults
 # -----------------------------------------------------------------------------
 resources:
-  # PostgreSQL resources
+  # PostgreSQL resources (PERF-FINDING-027/028: minimum viable for any real workload)
   database:
     requests:
-      memory: "256Mi"
-      cpu: "100m"
-    limits:
-      memory: "512Mi"
+      memory: "1Gi"
       cpu: "500m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
 
   # Standard application services (ROS API, Ingress, Poller, Housekeeper)
   # Aligned with SaaS Clowder configuration (ros-ocp-backend/clowdapp.yaml)
