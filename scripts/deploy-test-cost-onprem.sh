@@ -47,6 +47,7 @@ set -euo pipefail
 #   --perf-suite SUITES       Performance suite(s): all, api, ros, ingestion, scale, soak, valkey, db
 #                             Comma-separated for multiple (e.g., ros,ingestion). Default: all
 #   --perf-only               Run only performance tests (skip deployment and chart tests)
+#   --skip-profile-config     Skip apply_perf_profile_config() — test with chart defaults only
 #
 #   Observability options (FLPATH-4061):
 #   --deploy-observability    Deploy postgres_exporter, valkey-exporter, and celery-exporter for metrics
@@ -149,6 +150,7 @@ TEST_RUN_ID="${TEST_RUN_ID:-}"
 SAVE_VERSIONS="${SAVE_VERSIONS:-false}"
 VERSION_INFO_FILE="${VERSION_INFO_FILE:-version_info.json}"
 LISTENER_CPU_LIMIT="${LISTENER_CPU_LIMIT:-}"
+SKIP_PROFILE_CONFIG="${SKIP_PROFILE_CONFIG:-false}"
 
 # S4 deployment configuration
 DEPLOY_S4="${DEPLOY_S4:-false}"
@@ -939,6 +941,7 @@ print_summary() {
     if [[ "${PERF_ONLY}" == "true" ]] || [[ "${RUN_PERF}" == "true" ]]; then
         local perf_opts="profile: ${PERF_PROFILE}"
         [[ "${PERF_SUITE}" != "all" ]] && perf_opts="${perf_opts}, suite: ${PERF_SUITE}"
+        [[ "${SKIP_PROFILE_CONFIG}" == "true" ]] && perf_opts="${perf_opts}, skip-profile-config"
         [[ "${COLLECT_METRICS}" == "true" ]] && perf_opts="${perf_opts}, collect-metrics: ${METRICS_INTERVAL}s"
         [[ "${UPLOAD_METRICS}" == "true" ]] && perf_opts="${perf_opts}, upload-to-s3"
         echo "  ✓ Run Performance Tests (${perf_opts})"
@@ -1099,6 +1102,10 @@ main() {
             --listener-cpu)
                 LISTENER_CPU_LIMIT="$2"
                 shift 2
+                ;;
+            --skip-profile-config)
+                SKIP_PROFILE_CONFIG=true
+                shift
                 ;;
             --save-versions)
                 SAVE_VERSIONS=true
