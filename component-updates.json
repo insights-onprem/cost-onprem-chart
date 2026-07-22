@@ -1,5 +1,19 @@
 {
-  "last_check": null,
-  "pending_updates": [],
-  "update_history": []
+  "last_check": "2026-07-22T17:05:49Z",
+  "pending_updates": [
+    {
+      "image": "quay.io/redhat-services-prod/cost-mgmt-dev-tenant/koku",
+      "previous_tag": "d3c5bba",
+      "new_tag": "ff7f996",
+      "digest": "sha256:d92ef3acd2d64c1c0604d852f23e509c84b6992dd107d0b2e53eaa3fae9e7b34",
+      "detected_at": "2026-07-22T17:05:49Z"
+    },
+    {
+      "image": "quay.io/redhat-services-prod/hcc-accessmanagement-tenant/insights-rbac",
+      "previous_tag": "b34eb9a",
+      "new_tag": "a875683",
+      "digest": "sha256:5d1aa864645d320f9cc5b11cb8b0e5afe285b3abea95b43bea04b8747d4605d1",
+      "detected_at": "2026-07-22T17:05:49Z"
+    }
+  ]
 }
