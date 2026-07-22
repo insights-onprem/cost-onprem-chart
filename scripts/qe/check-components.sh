@@ -422,51 +422,78 @@ run_detect_updates() {
                     previous_digest=$(cat "$cache_file")
                 fi
 
+                local digest_changed="false"
                 if [[ "$latest_digest" != "$previous_digest" ]] || [[ -z "$previous_digest" ]]; then
-                    local concrete_tag
-                    concrete_tag=$(quay_resolve_tag "$repo_path" "$latest_digest")
-
-                    if [[ -z "$concrete_tag" ]]; then
-                        warn "Could not resolve concrete tag for $image (digest: ${latest_digest:0:20}...)"
-                        # Don't cache — retry resolution on next run
-                        continue
-                    fi
-
-                    if [[ "$current_tag" == "$concrete_tag" ]]; then
-                        info "SKIP: $image already at $concrete_tag"
-                        echo "$latest_digest" > "$cache_file"
-                        continue
-                    fi
-
-                    local component_name
-                    component_name=$(basename "$image")
-
-                    # Patch values.yaml with the new tag
-                    if patch_values_tag "$image" "$concrete_tag"; then
-                        has_updates="true"
-                        log "UPDATED: $image: $current_tag → $concrete_tag"
-                    else
-                        err "FAILED to patch $image, skipping"
-                        continue
-                    fi
-
-                    pending_updates=$(echo "$pending_updates" | jq \
-                        --arg img "$image" \
-                        --arg old "$current_tag" \
-                        --arg new "$concrete_tag" \
-                        --arg digest "$latest_digest" \
-                        --arg ts "$timestamp" \
-                        '. + [{
-                            "image": $img,
-                            "previous_tag": $old,
-                            "new_tag": $new,
-                            "digest": $digest,
-                            "detected_at": $ts
-                        }]')
-
-                    summary="${summary}| ${component_name} | ${current_tag} | ${concrete_tag} |\n"
-                    echo "$latest_digest" > "$cache_file"
+                    digest_changed="true"
                 fi
+
+                # Resolve the concrete tag for the latest digest.
+                # When the digest is unchanged we can check a cached tag
+                # first to avoid an extra API call.
+                local concrete_tag=""
+                local tag_cache_file="${cache_file}.tag"
+
+                if [[ "$digest_changed" == "true" ]]; then
+                    concrete_tag=$(quay_resolve_tag "$repo_path" "$latest_digest")
+                else
+                    # Digest unchanged — use cached concrete tag if available
+                    if [[ -f "$tag_cache_file" ]]; then
+                        concrete_tag=$(cat "$tag_cache_file")
+                    fi
+                    # If values.yaml already matches, nothing to do
+                    if [[ -n "$concrete_tag" && "$current_tag" == "$concrete_tag" ]]; then
+                        continue
+                    fi
+                    # Tag doesn't match — previous PR was likely never merged.
+                    # Re-resolve to be safe.
+                    concrete_tag=$(quay_resolve_tag "$repo_path" "$latest_digest")
+                fi
+
+                if [[ -z "$concrete_tag" ]]; then
+                    warn "Could not resolve concrete tag for $image (digest: ${latest_digest:0:20}...)"
+                    continue
+                fi
+
+                if [[ "$current_tag" == "$concrete_tag" ]]; then
+                    info "SKIP: $image already at $concrete_tag"
+                    echo "$latest_digest" > "$cache_file"
+                    echo "$concrete_tag" > "$tag_cache_file"
+                    continue
+                fi
+
+                local component_name
+                component_name=$(basename "$image")
+
+                # Patch values.yaml with the new tag
+                if patch_values_tag "$image" "$concrete_tag"; then
+                    has_updates="true"
+                    if [[ "$digest_changed" == "false" ]]; then
+                        log "CATCH-UP: $image: $current_tag → $concrete_tag (previous update not merged)"
+                    else
+                        log "UPDATED: $image: $current_tag → $concrete_tag"
+                    fi
+                else
+                    err "FAILED to patch $image, skipping"
+                    continue
+                fi
+
+                pending_updates=$(echo "$pending_updates" | jq \
+                    --arg img "$image" \
+                    --arg old "$current_tag" \
+                    --arg new "$concrete_tag" \
+                    --arg digest "$latest_digest" \
+                    --arg ts "$timestamp" \
+                    '. + [{
+                        "image": $img,
+                        "previous_tag": $old,
+                        "new_tag": $new,
+                        "digest": $digest,
+                        "detected_at": $ts
+                    }]')
+
+                summary="${summary}| ${component_name} | ${current_tag} | ${concrete_tag} |\n"
+                echo "$latest_digest" > "$cache_file"
+                echo "$concrete_tag" > "$tag_cache_file"
                 ;;
             redhat)
                 info "SKIP: Red Hat registry not active — $image:$current_tag"
