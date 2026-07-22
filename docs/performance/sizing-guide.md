@@ -22,8 +22,12 @@ with clean (0-failure) automated runs. Stress profiles have not yet been execute
 
 ## Component Resource Recommendations
 
-CPU, memory, and replica values for core pipeline components are applied
-dynamically by `apply_perf_profile_config()` during performance test runs.
+**Chart defaults = Small profile** (as of COST-7599). A fresh install with no
+`values.yaml` overrides provides the small-profile resource allocations listed
+below. Medium, large, and xlarge profiles require explicit overrides — see the
+[Helm Values Examples](#helm-values-examples) section. Performance test runs
+can apply overrides dynamically via `apply_perf_profile_config()`.
+
 Kruize memory and Database resources should be set in `values.yaml` at
 deployment time. All values have been validated through successful end-to-end
 test suites at each profile level.
@@ -59,13 +63,23 @@ contention and degrades throughput.
 | Large | 3 | 150m | 300m | 2Gi | 4Gi |
 | XLarge | 3 | 150m | 300m | 2Gi | 4Gi |
 
-**Key finding (PERF-FINDING-002)**: The listener is the **first-to-saturate
-component** at every scale. At the 300m CPU limit, it runs at 157% throttled
-during medium-profile ingestion. The `--listener-cpu max` flag in the deploy
-script dynamically boosts CPU to all available node headroom during perf runs.
-Production deployments handling burst ingestion should raise the CPU limit to
-at least 1000m. Listener CPU is managed separately via the `--listener-cpu`
-flag and is not part of `apply_perf_profile_config()`.
+**Key finding (PERF-FINDING-002, PERF-FINDING-035)**: The listener is the
+**first-to-saturate component** at every scale. At the 300m CPU limit, it runs
+at 157% throttled during medium-profile ingestion. The chart default (150m/300m)
+is sufficient for small-profile daily ingestion (1 cluster, single-source
+uploads up to ~70MB). For medium+ workloads — especially bulk ingestion
+(90-day historical imports, >100MB uploads, or 10+ concurrent sources) — the
+listener CPU must be increased.
+
+**Listener CPU sizing guidance**:
+- **Daily CMMO uploads (1-2 clusters)**: Chart default 300m is sufficient
+- **Bulk ingestion or historical import**: Raise to 1000m+
+- **Medium profile perf runs**: Use `--listener-cpu max` or `--listener-cpu 1000m`
+- VTC-001a characterization (pending) will provide a formula: "Xm per concurrent
+  ingestion source"
+
+Listener CPU is managed separately via the `--listener-cpu` flag and is not
+part of `apply_perf_profile_config()`.
 
 ### Celery Workers
 
@@ -160,14 +174,13 @@ buffer pool.
 
 ### Timeout Settings
 
-The default gateway timeout (30s) is insufficient for medium and larger profiles.
-These are applied by `apply_perf_profile_config()` during perf runs and should
-be set in `values.yaml` for production deployments.
+The chart default gateway timeout is 180s (updated from 30s in COST-7599).
+Large/xlarge profiles should increase to 600s for bulk uploads.
 
 | Profile | HAProxy Timeout | Envoy Route Timeout | Envoy Per-Try Timeout |
 |---------|-----------------|---------------------|----------------------|
-| Small | 30s (default) | 30s (default) | 30s (default) |
-| Medium | 180s | 180s | 180s |
+| Small | 180s (default) | 180s (default) | 60s (default) |
+| Medium | 180s (default) | 180s (default) | 60s (default) |
 | Large | 600s | 600s | 300s |
 | XLarge | 600s | 600s | 300s |
 
@@ -286,12 +299,19 @@ For perf testing clusters, 10 Gi saves 270 Gi of ODF PV capacity.
 
 ## Helm Values Examples
 
-### Small Profile
+### Small Profile (Chart Defaults)
+
+No overrides needed — the chart defaults match the small profile as of
+COST-7599. A fresh `helm install` produces these settings:
 
 ```yaml
+# These are the chart defaults — no values.yaml overrides required
 resources:
+  database:
+    requests: { cpu: "500m", memory: "1Gi" }
+    limits:   { cpu: "2000m", memory: "4Gi" }
   kruize:
-    requests: { cpu: "500m" }
+    requests: { cpu: "1000m" }
     limits:   { cpu: "2000m" }
 
 costManagement:
@@ -303,7 +323,19 @@ costManagement:
         replicas: 2
       summary:
         replicas: 2
+
+jwtAuth:
+  envoy:
+    ingressTimeout: 180s
+    ingressPerTryTimeout: 60s
+
+gatewayRoute:
+  annotations:
+    haproxy.router.openshift.io/timeout: "180s"
 ```
+
+**Validated**: Jenkins #83 — 25/25 passed with `--skip-profile-config
+--listener-cpu none` (pure chart defaults, no runtime overrides).
 
 ### Medium Profile
 
@@ -474,6 +506,9 @@ gatewayRoute:
   timeout changes require gateway pod restart.
 - **Ingress shares `resources.application`** (PERF-FINDING-022): Cannot size
   ingress memory independently from other services.
+- **Listener CPU characterization pending** (VTC-001a): The exact CPU-to-
+  concurrency mapping has not been determined. Current guidance is qualitative
+  ("300m for daily, 1000m+ for bulk"). VTC-001a will produce a formula.
 - **Stress profiles (P99, max) not yet validated**: Profiles beyond xlarge
   have not been tested.
 
@@ -488,4 +523,4 @@ gatewayRoute:
 
 ---
 
-_Based on FLPATH-4036 / COST-7567 performance testing. Last updated: 2026-06-25._
+_Based on FLPATH-4036 / COST-7567 performance testing. Last updated: 2026-07-22._

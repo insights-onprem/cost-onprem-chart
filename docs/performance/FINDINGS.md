@@ -678,6 +678,100 @@ validation confirms the recommendation is not due to a scheduling limitation.
 
 ---
 
+## Chart Default Validation (COST-7599)
+
+### PERF-FINDING-035: Chart Defaults (Small Profile) Pass Without Runtime Overrides
+
+**Status**: Validated — small passes; medium partially fails (expected)
+**Severity**: Informational — validates COST-7599 goal
+**Related Jira**: [COST-7599](https://redhat.atlassian.net/browse/COST-7599) (Validate tuned configuration), [COST-7618](https://redhat.atlassian.net/browse/COST-7618) (Sizing guide)
+
+**Background**:
+COST-7599 embedded the small-profile sizing findings into `values.yaml` chart
+defaults, so customers get optimal sizing out of the box. The key changes from
+the old defaults:
+
+| Setting | Old Default | New Default (Small) |
+|---------|-------------|---------------------|
+| Listener replicas | 1 | 2 |
+| OCP worker replicas | 1 | 2 |
+| Summary worker replicas | 1 | 2 |
+| Database CPU | 100m/500m | 500m/2000m |
+| Database memory | 256Mi/512Mi | 1Gi/4Gi |
+| HAProxy timeout | 30s | 180s |
+| Envoy ingress timeout | 30s | 180s |
+| Envoy per-try timeout | 10s | 60s |
+| Listener CPU | 150m/300m | 150m/300m (unchanged — see VTC-001a) |
+
+**Method**:
+Deployed with `USE_LOCAL_CHART=true` to apply new defaults, then ran
+performance tests with `--skip-profile-config --listener-cpu none` to ensure
+zero runtime modifications. This tests exactly what a customer gets from a
+fresh `helm install`.
+
+**Small profile** (Jenkins #83 — `0-2-20-rc5-small-api+ingestion-1784667967`):
+
+| Suite | Tests | Passed | Duration |
+|-------|-------|--------|----------|
+| API | 16 | 16 | ~2 min |
+| Ingestion | 9 | 9 | ~40 min |
+| **Total** | **25** | **25** | **41m 51s** |
+
+Key metrics at chart defaults:
+- API p95 latency: 14-20ms (report baseline), 51-1457ms (concurrent users)
+- Ingestion: 8.85 MB in 16s, 93 MB in 78s, 68 MB in 31s
+- Upload throughput: 7.7-16.9 MB/s
+- Processing window: within 6-hour window
+- Valkey: 2.7-7.7 MB memory, 21-35 cmds/sec
+
+**Medium profile** (Jenkins #84 — `0-2-20-rc5-medium-api+ingestion-1784729493`):
+
+| Suite | Tests | Passed | Failed | Duration |
+|-------|-------|--------|--------|----------|
+| API | 16 | 16 | 0 | ~2 min |
+| Ingestion | 12 | 10 | **2** | ~2h 13m |
+| **Total** | **28** | **26** | **2** | **2h 15m 45s** |
+
+Failed tests (both listener CPU starvation):
+- `ing_002[90-days]`: 90-day burst data never processed — "manifest not yet
+  visible" for 1504s until timeout. Listener at 300m cannot keep up with
+  ~140MB single-source burst.
+- `ing_004[100MB]`: 101.49 MB upload succeeded (93.6 MB/s) but processing
+  never started — "manifest not yet visible" for 3302s until timeout.
+
+Tests that passed at medium with chart defaults:
+- All 16 API tests (no listener CPU dependency)
+- `ing_001[medium]`, `ing_002[30-days]`, `ing_002[60-days]` — smaller data volumes
+- `ing_003[2,5,10]` — concurrent small uploads
+- `ing_004[50MB]` — 68MB file processed in 31s
+- `ing_005` — high-frequency streaming uploads
+- `ing_006[medium]` — 2-cluster processing window
+
+**Findings**:
+1. **Chart defaults work for small-profile workloads.** All 25 tests pass
+   with zero runtime overrides — customers get a working system out of the box.
+2. **Chart defaults partially work at medium scale.** 26/28 tests pass —
+   the failures are specifically from large data volumes (90-day burst, 100MB
+   single upload) that saturate the 300m listener CPU.
+3. **Listener CPU is the sole bottleneck at medium.** All API tests pass.
+   Ingestion tests with smaller data volumes pass. Only bulk ingestion tests
+   fail — the pattern is "manifest not yet visible" (listener never picks up
+   the upload), not slow processing.
+4. **The threshold is between 70MB and 100MB single upload** at chart default
+   CPU. The 68MB upload (ing_004[50MB]) processed in 31s. The 101MB upload
+   (ing_004[100MB]) never started processing.
+
+**Implications**:
+- The chart default listener CPU (150m/300m) is correct for the target use
+  case (daily CMMO uploads, 1-2 clusters). Raising it would over-provision
+  for 37% of customers.
+- Customers doing bulk ingestion (historical imports, backlog recovery, 90-day
+  data loads) need to increase listener CPU — this should be documented as
+  an operational procedure, not a default change.
+- VTC-001a (pending) will characterize the exact CPU-to-concurrency curve.
+
+---
+
 ## Environment Issues
 
 ### PERF-FINDING-010: ODF Default Resources Exhaust Cluster Memory
@@ -740,9 +834,10 @@ results are maintained in the [Sizing Guide](sizing-guide.md#performance-baselin
 | FINDING-032 | Sequential batches 19-24% faster — warm PostgreSQL cache confirmed | [COST-7598](https://redhat.atlassian.net/browse/COST-7598) | Validated (medium + large + xlarge) |
 | FINDING-033 | OCP workers survive at 256Mi — OOM floor at 128-256Mi | [COST-7598](https://redhat.atlassian.net/browse/COST-7598) | Validated (medium + large + xlarge) |
 | FINDING-034 | Multi-replica Kruize confirms single-replica recommendation | [COST-7598](https://redhat.atlassian.net/browse/COST-7598) | Validated (medium + large + xlarge) |
+| FINDING-035 | Chart defaults (small) pass without runtime overrides | [COST-7599](https://redhat.atlassian.net/browse/COST-7599) | Validated (small pass, medium partial) |
 
 **Parent epic**: [COST-7567](https://redhat.atlassian.net/browse/COST-7567) (CoP Performance Tuning & Hardware Sizing Guidelines)
 
 ---
 
-_Last Updated: 2026-07-21_
+_Last Updated: 2026-07-22_
