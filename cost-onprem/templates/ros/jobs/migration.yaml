@@ -46,12 +46,22 @@ spec:
             ELAPSED=0
             
             echo "Waiting for database at ${DB_HOST}:${DB_PORT}..."
-            while ! timeout 5 bash -c "cat < /dev/null > /dev/tcp/${DB_HOST}/${DB_PORT}" 2>/dev/null; do
+            while true; do
               if [ $ELAPSED -ge $MAX_WAIT ]; then
                 echo "ERROR: Database not ready after ${MAX_WAIT} seconds"
                 exit 1
               fi
-              echo "Database not ready (${ELAPSED}s elapsed), waiting..."
+              if timeout 5 bash -c "cat < /dev/null > /dev/tcp/${DB_HOST}/${DB_PORT}" 2>/dev/null; then
+                # TCP port may be open briefly during shutdown; wait and recheck
+                sleep 5
+                ELAPSED=$((ELAPSED + 5))
+                if timeout 5 bash -c "cat < /dev/null > /dev/tcp/${DB_HOST}/${DB_PORT}" 2>/dev/null; then
+                  break
+                fi
+                echo "Database port closed after recheck (restart in progress, ${ELAPSED}s elapsed)..."
+              else
+                echo "Database not reachable (${ELAPSED}s elapsed), waiting..."
+              fi
               sleep 5
               ELAPSED=$((ELAPSED + 5))
             done
