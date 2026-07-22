@@ -433,25 +433,34 @@ run_detect_updates() {
                 local concrete_tag=""
                 local tag_cache_file="${cache_file}.tag"
 
+                local update_reason="updated"
+
                 if [[ "$digest_changed" == "true" ]]; then
                     concrete_tag=$(quay_resolve_tag "$repo_path" "$latest_digest")
+                    if [[ -z "$concrete_tag" ]]; then
+                        warn "Could not resolve concrete tag for $image (digest: ${latest_digest:0:20}...)"
+                        rm -f "$tag_cache_file"
+                        continue
+                    fi
                 else
                     # Digest unchanged — use cached concrete tag if available
                     if [[ -f "$tag_cache_file" ]]; then
                         concrete_tag=$(cat "$tag_cache_file")
+                    else
+                        info "No tag cache for $image, resolving from digest"
                     fi
                     # If values.yaml already matches, nothing to do
                     if [[ -n "$concrete_tag" && "$current_tag" == "$concrete_tag" ]]; then
                         continue
                     fi
                     # Tag doesn't match — previous PR was likely never merged.
-                    # Re-resolve to be safe.
                     concrete_tag=$(quay_resolve_tag "$repo_path" "$latest_digest")
-                fi
-
-                if [[ -z "$concrete_tag" ]]; then
-                    warn "Could not resolve concrete tag for $image (digest: ${latest_digest:0:20}...)"
-                    continue
+                    if [[ -z "$concrete_tag" ]]; then
+                        warn "Could not resolve concrete tag for $image (digest: ${latest_digest:0:20}...)"
+                        rm -f "$tag_cache_file"
+                        continue
+                    fi
+                    update_reason="catch-up"
                 fi
 
                 if [[ "$current_tag" == "$concrete_tag" ]]; then
@@ -467,7 +476,7 @@ run_detect_updates() {
                 # Patch values.yaml with the new tag
                 if patch_values_tag "$image" "$concrete_tag"; then
                     has_updates="true"
-                    if [[ "$digest_changed" == "false" ]]; then
+                    if [[ "$update_reason" == "catch-up" ]]; then
                         log "CATCH-UP: $image: $current_tag → $concrete_tag (previous update not merged)"
                     else
                         log "UPDATED: $image: $current_tag → $concrete_tag"
@@ -483,12 +492,14 @@ run_detect_updates() {
                     --arg new "$concrete_tag" \
                     --arg digest "$latest_digest" \
                     --arg ts "$timestamp" \
+                    --arg reason "$update_reason" \
                     '. + [{
                         "image": $img,
                         "previous_tag": $old,
                         "new_tag": $new,
                         "digest": $digest,
-                        "detected_at": $ts
+                        "detected_at": $ts,
+                        "reason": $reason
                     }]')
 
                 summary="${summary}| ${component_name} | ${current_tag} | ${concrete_tag} |\n"
