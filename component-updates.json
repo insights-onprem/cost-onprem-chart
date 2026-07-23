@@ -1,5 +1,12 @@
 {
-  "last_check": null,
-  "pending_updates": [],
-  "update_history": []
+  "last_check": "2026-07-23T01:45:01Z",
+  "pending_updates": [
+    {
+      "image": "quay.io/redhat-services-prod/cost-mgmt-dev-tenant/koku",
+      "previous_tag": "d3c5bba",
+      "new_tag": "943aaa4",
+      "digest": "sha256:ee3daa0f96fe61dd773cafed8cd1bfc357e2997de57980e2f8cd4253ea929e67",
+      "detected_at": "2026-07-23T01:45:01Z"
+    }
+  ]
 }
