@@ -747,28 +747,65 @@ Tests that passed at medium with chart defaults:
 - `ing_005` — high-frequency streaming uploads
 - `ing_006[medium]` — 2-cluster processing window
 
+**VTC-001a Characterization** (Jenkins #85, #86, #87):
+
+The initial hypothesis from #84 was that listener CPU was the sole medium-scale
+bottleneck. Three follow-up runs tested this — first by raising listener CPU
+with chart defaults, then by applying the full medium profile without a listener
+CPU boost:
+
+| Run | Listener CPU | Other Resources | Result |
+|-----|-------------|-----------------|--------|
+| #84 | 300m (default) | Chart defaults only (`--skip-profile-config`) | 26/28 — 2 failures |
+| #85 | 500m | Chart defaults only (`--skip-profile-config`) | 26/28 — same 2 failures |
+| #86 | 1000m | Chart defaults only (`--skip-profile-config`) | 26/28 — same 2 failures |
+| **#87** | **300m (default)** | **Full medium profile** (`--listener-cpu none`) | **28/28 PASS** |
+
+Raising listener CPU from 300m to 500m and 1000m with all other settings at
+chart defaults did **not** fix the failures. Applying the full medium profile
+overrides (2x worker replicas, increased worker CPU/memory, 200MB upload limit,
+1Gi/2Gi ingress memory) with listener CPU at the chart default 300m fixed
+everything.
+
+**Run #87 key metrics** (medium profile, listener CPU = 300m):
+- `ing_002[90-days]`: PASS — 5.5 min, 138.6 MB at 15.9 MB/s, 47s processing
+- `ing_004[100MB]`: PASS — 4.2 min, 101.4 MB at 15.4 MB/s, 31s processing
+- All 28 tests passed, 0 KPI violations, 42 min total
+
 **Findings**:
 1. **Chart defaults work for small-profile workloads.** All 25 tests pass
    with zero runtime overrides — customers get a working system out of the box.
-2. **Chart defaults partially work at medium scale.** 26/28 tests pass —
-   the failures are specifically from large data volumes (90-day burst, 100MB
-   single upload) that saturate the 300m listener CPU.
-3. **Listener CPU is the sole bottleneck at medium.** All API tests pass.
-   Ingestion tests with smaller data volumes pass. Only bulk ingestion tests
-   fail — the pattern is "manifest not yet visible" (listener never picks up
-   the upload), not slow processing.
-4. **The threshold is between 70MB and 100MB single upload** at chart default
-   CPU. The 68MB upload (ing_004[50MB]) processed in 31s. The 101MB upload
-   (ing_004[100MB]) never started processing.
+2. **Chart defaults partially work at medium scale.** 26/28 tests pass with
+   chart defaults alone — the failures are from large data volumes that need
+   more downstream resources, not more listener CPU.
+3. **Listener CPU is NOT the medium-scale bottleneck.** Runs #85 and #86
+   proved that raising listener CPU to 500m and 1000m (3× the default) with
+   chart-default workers/replicas does not fix the failures. Run #87 proved
+   the converse: full medium profile resources with default 300m listener CPU
+   passes everything.
+4. **The actual bottleneck is the downstream pipeline.** Single-replica workers
+   at low CPU/memory, combined with limited upload buffer and ingress memory,
+   cannot drain the processing queue fast enough for large burst workloads.
+   When workers are scaled (2x replicas, 1000m CPU limit, 2Gi memory) and
+   upload limits are raised (200MB), the pipeline keeps up at 300m listener CPU.
+5. **The threshold is upload + worker provisioning, not listener CPU.** The
+   68MB upload (ing_004[50MB]) processed in 31s at chart defaults. The 101MB
+   upload (ing_004[100MB]) stalled at chart defaults but processed in 31s
+   with medium profile resources — same listener CPU both times.
 
 **Implications**:
-- The chart default listener CPU (150m/300m) is correct for the target use
-  case (daily CMMO uploads, 1-2 clusters). Raising it would over-provision
-  for 37% of customers.
-- Customers doing bulk ingestion (historical imports, backlog recovery, 90-day
-  data loads) need to increase listener CPU — this should be documented as
-  an operational procedure, not a default change.
-- VTC-001a (pending) will characterize the exact CPU-to-concurrency curve.
+- The chart default listener CPU (150m/300m) is correct for all validated
+  workloads through medium profile, provided other resources are appropriately
+  sized.
+- Medium-profile customers need the replica and resource overrides (workers,
+  ingress, upload limits), NOT a listener CPU increase.
+- Listener CPU boost (500m+) provides faster ingestion throughput as a
+  performance optimization for large/xlarge profiles and bulk operations,
+  but is not a correctness requirement at medium scale.
+- This corrects the initial reading of FINDING-002: while the listener does
+  run at high CPU utilization during bulk ingestion, this throttling slows
+  ingestion but does not prevent it when the downstream pipeline has adequate
+  resources.
 
 ---
 
@@ -834,10 +871,10 @@ results are maintained in the [Sizing Guide](sizing-guide.md#performance-baselin
 | FINDING-032 | Sequential batches 19-24% faster — warm PostgreSQL cache confirmed | [COST-7598](https://redhat.atlassian.net/browse/COST-7598) | Validated (medium + large + xlarge) |
 | FINDING-033 | OCP workers survive at 256Mi — OOM floor at 128-256Mi | [COST-7598](https://redhat.atlassian.net/browse/COST-7598) | Validated (medium + large + xlarge) |
 | FINDING-034 | Multi-replica Kruize confirms single-replica recommendation | [COST-7598](https://redhat.atlassian.net/browse/COST-7598) | Validated (medium + large + xlarge) |
-| FINDING-035 | Chart defaults (small) pass without runtime overrides | [COST-7599](https://redhat.atlassian.net/browse/COST-7599) | Validated (small pass, medium partial) |
+| FINDING-035 | Chart defaults pass small; medium needs worker/ingress scaling, not listener CPU | [COST-7599](https://redhat.atlassian.net/browse/COST-7599) | Validated (VTC-001a complete) |
 
 **Parent epic**: [COST-7567](https://redhat.atlassian.net/browse/COST-7567) (CoP Performance Tuning & Hardware Sizing Guidelines)
 
 ---
 
-_Last Updated: 2026-07-22_
+_Last Updated: 2026-07-23_
