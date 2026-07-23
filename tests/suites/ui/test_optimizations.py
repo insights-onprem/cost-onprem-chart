@@ -25,6 +25,30 @@ import re
 import pytest
 from playwright.sync_api import Page, expect
 
+OPTIMIZATIONS_PATH = "/openshift/cost-management/optimizations"
+
+TABLE_SELECTOR = "table, [role='grid'], .pf-c-table, .pf-v6-c-table"
+EMPTY_STATE_SELECTOR = ".pf-c-empty-state, .pf-v6-c-empty-state, .empty-state"
+CONTENT_SELECTOR = f"{TABLE_SELECTOR}, {EMPTY_STATE_SELECTOR}"
+
+# On ephemeral CI clusters the ROS pipeline is async and the API can be slow
+# to respond while data is still being processed.
+CONTENT_TIMEOUT_MS = 30000
+
+
+def _goto_optimizations(page: Page, ui_url: str) -> None:
+    """Navigate to the optimizations page and wait for content to render."""
+    page.goto(f"{ui_url}{OPTIMIZATIONS_PATH}")
+    page.wait_for_load_state("networkidle")
+    expect(page.locator(CONTENT_SELECTOR).first).to_be_visible(
+        timeout=CONTENT_TIMEOUT_MS
+    )
+
+
+def _has_table(page: Page) -> bool:
+    """Return True if the page contains a data table (not just empty state)."""
+    return page.locator(TABLE_SELECTOR).count() > 0
+
 
 # =============================================================================
 # Test Classes
@@ -45,15 +69,7 @@ class TestOptimizationsDisplay:
         self, authenticated_page: Page, ui_url: str
     ):
         """Verify optimizations page loads and shows either data or empty state."""
-        authenticated_page.goto(f"{ui_url}/openshift/cost-management/optimizations")
-        authenticated_page.wait_for_load_state("networkidle")
-        
-        # Page should show either a data table or empty state
-        content = authenticated_page.locator(
-            "table, [role='grid'], .pf-c-table, .pf-v6-c-table, "
-            ".pf-c-empty-state, .pf-v6-c-empty-state, .empty-state"
-        )
-        expect(content.first).to_be_visible(timeout=15000)
+        _goto_optimizations(authenticated_page, ui_url)
 
     def test_optimizations_table_visible_when_data_exists(
         self, authenticated_page: Page, ui_url: str
@@ -62,23 +78,10 @@ class TestOptimizationsDisplay:
         
         This test requires data to be present (run e2e tests first with E2E_CLEANUP_AFTER=false).
         """
-        authenticated_page.goto(f"{ui_url}/openshift/cost-management/optimizations")
-        authenticated_page.wait_for_load_state("networkidle")
-        
-        # Look for table or data grid component
-        table_locator = authenticated_page.locator(
-            "table, [role='grid'], .pf-c-table, .pf-v6-c-table"
-        )
-        
-        # If no table found, check for empty state and skip
-        if table_locator.count() == 0:
-            empty_state = authenticated_page.locator(
-                ".pf-c-empty-state, .pf-v6-c-empty-state, .empty-state"
-            )
-            if empty_state.count() > 0:
-                pytest.skip("No optimization data available - run e2e tests first with E2E_CLEANUP_AFTER=false")
-        
-        expect(table_locator.first).to_be_visible(timeout=10000)
+        _goto_optimizations(authenticated_page, ui_url)
+
+        if not _has_table(authenticated_page):
+            pytest.skip("No optimization data available - run e2e tests first with E2E_CLEANUP_AFTER=false")
 
 
 @pytest.mark.ui
@@ -94,43 +97,33 @@ class TestOptimizationDetails:
         self, authenticated_page: Page, ui_url: str
     ):
         """Verify clicking an optimization row navigates to details."""
-        authenticated_page.goto(f"{ui_url}/openshift/cost-management/optimizations")
-        authenticated_page.wait_for_load_state("networkidle")
-        
-        # Find first clickable row/link in the table
+        _goto_optimizations(authenticated_page, ui_url)
+
         optimization_link = authenticated_page.locator(
             "table tbody tr a, [role='row'] a, table tbody tr[role='row']"
         ).first
-        
+
         if optimization_link.count() == 0:
             pytest.skip("No optimization rows available - run e2e tests first with E2E_CLEANUP_AFTER=false")
-        
-        # Click to view details
+
         optimization_link.click()
         authenticated_page.wait_for_load_state("networkidle")
-        
-        # URL should change to breakdown/details view
+
         expect(authenticated_page).to_have_url(re.compile(r".*(breakdown|detail|id=).*"), timeout=10000)
 
     def test_optimization_page_shows_resource_info(
         self, authenticated_page: Page, ui_url: str
     ):
         """Verify optimizations page shows CPU/memory related content."""
-        authenticated_page.goto(f"{ui_url}/openshift/cost-management/optimizations")
-        authenticated_page.wait_for_load_state("networkidle")
-        
-        # Look for CPU/memory related content (case insensitive)
+        _goto_optimizations(authenticated_page, ui_url)
+
         resource_info = authenticated_page.locator(
             "text=/cpu|memory|cores|gib|container|pod|request|limit/i"
         )
-        
+
         if resource_info.count() == 0:
-            # Check if page has empty state instead
-            empty_state = authenticated_page.locator(
-                ".pf-c-empty-state, .pf-v6-c-empty-state, .empty-state"
-            )
-            if empty_state.count() > 0:
+            if authenticated_page.locator(EMPTY_STATE_SELECTOR).count() > 0:
                 pytest.skip("No optimization data - run e2e tests first with E2E_CLEANUP_AFTER=false")
             pytest.skip("No resource information visible on page")
-        
+
         expect(resource_info.first).to_be_visible()
