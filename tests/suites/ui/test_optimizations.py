@@ -83,6 +83,8 @@ class TestOptimizationsDisplay:
         if not _has_table(authenticated_page):
             pytest.skip("No optimization data available - run e2e tests first with E2E_CLEANUP_AFTER=false")
 
+        expect(authenticated_page.locator(TABLE_SELECTOR).first).to_be_visible()
+
 
 @pytest.mark.ui
 @pytest.mark.ros
