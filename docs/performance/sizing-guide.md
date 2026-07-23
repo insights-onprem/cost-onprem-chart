@@ -63,20 +63,20 @@ contention and degrades throughput.
 | Large | 3 | 150m | 300m | 2Gi | 4Gi |
 | XLarge | 3 | 150m | 300m | 2Gi | 4Gi |
 
-**Key finding (PERF-FINDING-002, PERF-FINDING-035)**: The listener is the
-**first-to-saturate component** at every scale. At the 300m CPU limit, it runs
-at 157% throttled during medium-profile ingestion. The chart default (150m/300m)
-is sufficient for small-profile daily ingestion (1 cluster, single-source
-uploads up to ~70MB). For medium+ workloads — especially bulk ingestion
-(90-day historical imports, >100MB uploads, or 10+ concurrent sources) — the
-listener CPU must be increased.
+**Key finding (PERF-FINDING-002, PERF-FINDING-035 VTC-001a)**: The listener
+runs at high CPU utilization during bulk ingestion (157% throttled at 300m).
+However, VTC-001a characterization proved that **listener CPU is not the
+medium-scale bottleneck** — the downstream pipeline (worker replicas, worker
+CPU/memory, ingress memory, upload limits) is what determines whether bulk
+workloads succeed or stall. Run #87 passed all 28 medium-profile tests at
+the chart default 300m listener CPU when medium profile resources were applied.
 
 **Listener CPU sizing guidance**:
-- **Daily CMMO uploads (1-2 clusters)**: Chart default 300m is sufficient
-- **Bulk ingestion or historical import**: Raise to 1000m+
-- **Medium profile perf runs**: Use `--listener-cpu max` or `--listener-cpu 1000m`
-- VTC-001a characterization (pending) will provide a formula: "Xm per concurrent
-  ingestion source"
+- **All workloads through medium profile**: Chart default 300m is sufficient
+  when other resources are properly provisioned (see medium profile overrides)
+- **Performance optimization for large/xlarge**: Raise to 1000m+ for faster
+  ingestion throughput during bulk operations
+- **Perf testing**: Use `--listener-cpu max` to remove CPU as a variable
 
 Listener CPU is managed separately via the `--listener-cpu` flag and is not
 part of `apply_perf_profile_config()`.
@@ -160,13 +160,90 @@ not a resource constraint.
 Database resources are not dynamically adjusted by `apply_perf_profile_config()` —
 they should be set via `values.yaml` at deployment time.
 
-**Empirical validation (COST-7605)**: CPU and memory sweeps at medium and large profiles
-confirm these recommendations are well-positioned. API query latency is sub-10ms at all
-tested CPU levels (2000m–8000m), with diminishing returns above 4000m (PERF-FINDING-027).
-Memory beyond 4Gi provides no latency benefit for current workloads since the dataset
-fits entirely in shared_buffers at 1GB (PERF-FINDING-028). Larger memory allocations
-are recommended for extended retention periods where the working set may exceed the
-buffer pool.
+### PostgreSQL Tuning Guide
+
+The chart deploys a single PostgreSQL StatefulSet. PostgreSQL auto-tunes
+`shared_buffers` to approximately 25% of the container memory limit — no
+manual tuning is required. The recommendations above are validated by CPU
+and memory sweeps at medium and large profiles (COST-7605).
+
+#### CPU Sizing
+
+| CPU Limit | Report Baseline p95 | Complex Group-by p95 | Cache Hit Ratio |
+|-----------|---------------------|----------------------|-----------------|
+| 2000m | 5.6–7.2ms | 3.3–5.9ms | 100% |
+| 4000m | 4.7–5.1ms | 4.3–4.4ms | 100% |
+| 8000m | 4.9–6.2ms | 3.3–4.7ms | 100% |
+
+(Ranges span medium and large profile results — PERF-FINDING-027)
+
+**Guidance**:
+- All latencies are **sub-10ms** at every tested CPU level. PostgreSQL is not
+  the API bottleneck for typical workloads.
+- **2000m → 4000m** provides a modest improvement (~30% on report queries).
+  This comes from PostgreSQL's ability to parallelize query planning and
+  background tasks (autovacuum, checkpointing).
+- **4000m → 8000m** shows no consistent improvement — the variation is
+  measurement noise at sub-10ms latencies. Diminishing returns are clear.
+- The chart default (500m/2000m for small, 1000m/4000m for medium) is
+  well-positioned. Going beyond 4000m limit provides no measurable API
+  benefit for current workload sizes.
+- For deployments with **extended retention (90-day+)** or **concurrent
+  heavy queries**, re-evaluate at 4000m–8000m as the working set grows.
+
+#### Memory Sizing
+
+| Memory Limit | shared_buffers (auto) | Report Baseline p95 | Blocks Read (disk) | Cache Hit Ratio |
+|--------------|-----------------------|---------------------|--------------------|-----------------|
+| 4Gi | ~1 GB | 5.9–7.3ms | 0 | 100% |
+| 8Gi | ~2 GB | 5.0–7.0ms | 0 | 100% |
+| 16Gi | ~4 GB | 4.5–5.9ms | 0 | 100% |
+
+(Ranges span medium and large profile results — PERF-FINDING-028)
+
+**Guidance**:
+- **Zero disk reads** at all memory levels. The Koku database fits entirely
+  in `shared_buffers` at 1 GB (the smallest tested level). No cache misses
+  occur with current workloads.
+- **No consistent latency improvement** with more memory — the ~2ms variation
+  is measurement noise, not a real signal.
+- **Size memory for the dataset, not for query speed.** The benefit of larger
+  `shared_buffers` only materializes when the working set exceeds the buffer
+  pool.
+- The chart default (1Gi/4Gi for small) provides comfortable headroom.
+  Medium (2Gi/8Gi) and large (4Gi/16Gi) are sized for dataset growth, not
+  because current data demands it.
+- **Rule of thumb**: Ensure `shared_buffers` (≈25% of memory limit) exceeds
+  the total database size. Check with:
+
+```sql
+SELECT pg_size_pretty(pg_database_size('koku'));
+```
+
+#### When to Increase Database Resources
+
+| Scenario | CPU Recommendation | Memory Recommendation |
+|----------|--------------------|-----------------------|
+| ≤2 clusters, 30-day retention | 500m/2000m (default) | 1Gi/4Gi (default) |
+| 2-7 clusters, 30-day retention | 1000m/4000m | 2Gi/8Gi |
+| 7+ clusters or 90-day retention | 2000m/4000m | 4Gi/16Gi |
+| Heavy concurrent API queries | 4000m/8000m | 8Gi/32Gi |
+| Extended retention (90-day+) at scale | 4000m/8000m | 8Gi/32Gi+ |
+
+For extended retention deployments where the database exceeds shared_buffers,
+monitor cache hit ratio:
+
+```sql
+SELECT
+  round(blks_hit::numeric / nullif(blks_hit + blks_read, 0) * 100, 2) AS cache_hit_pct,
+  blks_hit, blks_read
+FROM pg_stat_database
+WHERE datname = 'koku';
+```
+
+If `cache_hit_pct` drops below 99%, increase memory to bring `shared_buffers`
+above the working set. If query latency increases but cache hit is high,
+increase CPU.
 
 ---
 
@@ -506,9 +583,11 @@ gatewayRoute:
   timeout changes require gateway pod restart.
 - **Ingress shares `resources.application`** (PERF-FINDING-022): Cannot size
   ingress memory independently from other services.
-- **Listener CPU characterization pending** (VTC-001a): The exact CPU-to-
-  concurrency mapping has not been determined. Current guidance is qualitative
-  ("300m for daily, 1000m+ for bulk"). VTC-001a will produce a formula.
+- **Listener CPU is a throughput lever, not a correctness requirement**
+  (VTC-001a, FINDING-035): The chart default 300m listener CPU is sufficient
+  for all workloads through medium profile when other resources are properly
+  provisioned. Raising listener CPU improves bulk ingestion speed at large/xlarge
+  but is not required for the pipeline to complete.
 - **Stress profiles (P99, max) not yet validated**: Profiles beyond xlarge
   have not been tested.
 
@@ -523,4 +602,4 @@ gatewayRoute:
 
 ---
 
-_Based on FLPATH-4036 / COST-7567 performance testing. Last updated: 2026-07-22._
+_Based on FLPATH-4036 / COST-7567 performance testing. Last updated: 2026-07-23._
