@@ -1,5 +1,45 @@
 {
-  "last_check": null,
-  "pending_updates": [],
-  "update_history": []
+  "last_check": "2026-07-23T17:07:38Z",
+  "pending_updates": [
+    {
+      "image": "quay.io/redhat-services-prod/insights-management-tenant/insights-ocp-resource-optimization/ros-ocp-backend",
+      "previous_tag": "410b86b",
+      "new_tag": "9632aa1",
+      "digest": "sha256:8e515b86c767572735776d1f29f3de1af58d58171d5aae753173a4eba190cd24",
+      "detected_at": "2026-07-23T17:07:38Z",
+      "reason": "catch-up"
+    },
+    {
+      "image": "quay.io/redhat-services-prod/cost-mgmt-dev-tenant/koku",
+      "previous_tag": "d3c5bba",
+      "new_tag": "ab3583d",
+      "digest": "sha256:fd0c5c0d729d42cc8443e1fddd17c2f29d2056684ab78f13031795f9a6f87c92",
+      "detected_at": "2026-07-23T17:07:38Z",
+      "reason": "updated"
+    },
+    {
+      "image": "quay.io/redhat-services-prod/kruize-autotune-tenant/autotune",
+      "previous_tag": "5eeae99",
+      "new_tag": "d1f0140",
+      "digest": "sha256:cc5ca407293d405fb58204f6b2a48a656c3fbb5f20d03788cb07090778fd9dd7",
+      "detected_at": "2026-07-23T17:07:38Z",
+      "reason": "catch-up"
+    },
+    {
+      "image": "quay.io/redhat-services-prod/hcc-accessmanagement-tenant/insights-rbac",
+      "previous_tag": "b34eb9a",
+      "new_tag": "3cced7c",
+      "digest": "sha256:aaea2069919aaad341804506ccc48ff6f8ea0cd96dee2aca24e9ced2e5adc11c",
+      "detected_at": "2026-07-23T17:07:38Z",
+      "reason": "updated"
+    },
+    {
+      "image": "quay.io/insights-onprem/koku-ui-onprem",
+      "previous_tag": "b1d82e5291897be83be574a56acd63f4ac54464d",
+      "new_tag": "30590c7293d43d650dfe0968683ab00618b84ef6",
+      "digest": "sha256:18ad4e9be4661dcc96ed740360e504d0f7303bb57ee5876c018eddc9223bc6a8",
+      "detected_at": "2026-07-23T17:07:38Z",
+      "reason": "catch-up"
+    }
+  ]
 }
