@@ -1,16 +1,19 @@
 """
-Kubernetes resource patching and statistics helpers for performance tests.
+Kubernetes resource patching, PostgreSQL stats, and statistics helpers
+for performance tests.
 
-Shared by test_valkey_eviction.py, test_db_resource_sweep.py, and
-test_api_latency.py.
+Shared by test_valkey_eviction.py, test_db_resource_sweep.py,
+test_celery_scaling.py, and test_api_latency.py.
 """
 
 import json
 import statistics
 import subprocess
+import time
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from utils import run_oc_command
+from utils import execute_db_query, run_oc_command
 
 
 # =============================================================================
@@ -164,3 +167,166 @@ def _delete_first_pod(namespace: str, owner_name: str) -> None:
         ["delete", "pod", pod_name, "-n", namespace, "--wait=false"],
         check=False,
     )
+
+
+# =============================================================================
+# Deployment Scaling
+# =============================================================================
+
+
+def scale_deployment(namespace: str, name: str, replicas: int) -> bool:
+    """Scale a Deployment and wait for rollout."""
+    run_oc_command(
+        ["scale", "deployment", name, "-n", namespace,
+         f"--replicas={replicas}"],
+        check=False,
+    )
+    result = run_oc_command(
+        ["rollout", "status", "deployment", name,
+         "-n", namespace, "--timeout=180s"],
+        check=False,
+        timeout=210,
+    )
+    ok = result.returncode == 0
+    status = "ready" if ok else "FAILED"
+    print(f"[scale] {name} → {replicas} replicas: {status}")
+    return ok
+
+
+def get_deployment_replicas(namespace: str, name: str) -> int:
+    result = run_oc_command(
+        ["get", "deployment", name, "-n", namespace,
+         "-o", "jsonpath={.spec.replicas}"],
+        check=False,
+    )
+    try:
+        return int(result.stdout.strip())
+    except (ValueError, AttributeError):
+        return 1
+
+
+# =============================================================================
+# PostgreSQL Stats Collection
+# =============================================================================
+
+
+def _safe_int(s: str) -> int:
+    try:
+        return int(s.strip())
+    except (ValueError, AttributeError):
+        return 0
+
+
+@dataclass
+class PgStatSnapshot:
+    """Point-in-time snapshot of PostgreSQL performance counters."""
+
+    timestamp: float = 0
+    # pg_stat_bgwriter
+    buffers_checkpoint: int = 0
+    buffers_clean: int = 0
+    buffers_backend: int = 0
+    # pg_stat_database (for the koku database)
+    blks_hit: int = 0
+    blks_read: int = 0
+    xact_commit: int = 0
+    xact_rollback: int = 0
+    tup_returned: int = 0
+    tup_fetched: int = 0
+    deadlocks: int = 0
+    # derived
+    cache_hit_ratio: float = 0.0
+
+
+def capture_pg_stats(
+    namespace: str, db_pod: str, db_name: str, db_user: str
+) -> PgStatSnapshot:
+    """Capture a snapshot of PostgreSQL performance statistics."""
+    snap = PgStatSnapshot(timestamp=time.time())
+
+    bgwriter_query = (
+        "SELECT buffers_checkpoint, buffers_clean, buffers_backend "
+        "FROM pg_stat_bgwriter"
+    )
+    rows = execute_db_query(namespace, db_pod, db_name, db_user, bgwriter_query)
+    if rows and rows[0]:
+        row = rows[0]
+        if len(row) >= 3:
+            snap.buffers_checkpoint = _safe_int(row[0])
+            snap.buffers_clean = _safe_int(row[1])
+            snap.buffers_backend = _safe_int(row[2])
+
+    db_query = (
+        f"SELECT blks_hit, blks_read, xact_commit, xact_rollback, "
+        f"tup_returned, tup_fetched, deadlocks "
+        f"FROM pg_stat_database WHERE datname = '{db_name}'"
+    )
+    rows = execute_db_query(namespace, db_pod, db_name, db_user, db_query)
+    if rows and rows[0]:
+        row = rows[0]
+        if len(row) >= 7:
+            snap.blks_hit = _safe_int(row[0])
+            snap.blks_read = _safe_int(row[1])
+            snap.xact_commit = _safe_int(row[2])
+            snap.xact_rollback = _safe_int(row[3])
+            snap.tup_returned = _safe_int(row[4])
+            snap.tup_fetched = _safe_int(row[5])
+            snap.deadlocks = _safe_int(row[6])
+
+    total_blocks = snap.blks_hit + snap.blks_read
+    if total_blocks > 0:
+        snap.cache_hit_ratio = round(snap.blks_hit / total_blocks, 4)
+
+    return snap
+
+
+def diff_pg_stats(before: PgStatSnapshot, after: PgStatSnapshot) -> Dict[str, Any]:
+    """Compute the delta between two pg_stat snapshots."""
+    delta_hit = after.blks_hit - before.blks_hit
+    delta_read = after.blks_read - before.blks_read
+    total = delta_hit + delta_read
+
+    return {
+        "duration_s": round(after.timestamp - before.timestamp, 1),
+        "blks_hit_delta": delta_hit,
+        "blks_read_delta": delta_read,
+        "cache_hit_ratio": round(delta_hit / total, 4) if total > 0 else 1.0,
+        "xact_commit_delta": after.xact_commit - before.xact_commit,
+        "xact_rollback_delta": after.xact_rollback - before.xact_rollback,
+        "tup_returned_delta": after.tup_returned - before.tup_returned,
+        "tup_fetched_delta": after.tup_fetched - before.tup_fetched,
+        "deadlocks_delta": after.deadlocks - before.deadlocks,
+        "buffers_backend_delta": after.buffers_backend - before.buffers_backend,
+    }
+
+
+def get_db_cpu_utilization(namespace: str, db_pod: str) -> Optional[float]:
+    """Read current CPU usage of the database pod in millicores."""
+    result = run_oc_command(
+        ["adm", "top", "pod", db_pod, "-n", namespace, "--no-headers"],
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    parts = result.stdout.split()
+    if len(parts) >= 2:
+        cpu_str = parts[1]
+        if cpu_str.endswith("m"):
+            return int(cpu_str[:-1])
+        try:
+            return int(cpu_str) * 1000
+        except ValueError:
+            pass
+    return None
+
+
+def get_db_shared_buffers(
+    namespace: str, db_pod: str, db_name: str, db_user: str
+) -> str:
+    """Read the current shared_buffers setting."""
+    rows = execute_db_query(
+        namespace, db_pod, db_name, db_user, "SHOW shared_buffers"
+    )
+    if rows and rows[0]:
+        return str(rows[0][0]).strip() if isinstance(rows[0], tuple) else str(rows[0]).strip()
+    return "unknown"

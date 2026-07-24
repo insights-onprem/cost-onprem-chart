@@ -139,6 +139,7 @@ show_help() {
     echo "  --perf-valkey     Run Valkey eviction correlation tests (PERF-VK-*)"
     echo "  --perf-db         Run PostgreSQL resource sweep tests (PERF-DB-*)"
     echo "  --perf-kafka      Run Kafka throughput/scaling tests (PERF-KAF-*)"
+    echo "  --perf-celery     Run Celery worker scaling tests (PERF-CEL-*)"
     echo ""
     echo "UI Tests:"
     echo "  UI tests are included by default. Use --no-ui to exclude them."
@@ -385,6 +386,12 @@ main() {
             --perf-kafka)
                 # Run Kafka throughput/scaling tests (COST-7638)
                 pytest_markers+=("performance and kafka_throughput")
+                include_ui=false
+                shift
+                ;;
+            --perf-celery)
+                # Run Celery worker scaling tests (COST-7598)
+                pytest_markers+=("performance and celery_scaling")
                 include_ui=false
                 shift
                 ;;

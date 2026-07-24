@@ -95,6 +95,18 @@ sufficient for all validated profiles.
 (112 min → 97.6 min). XLarge uses 1000m/2000m to handle tag-based cost model
 processing.
 
+**Replica scaling (PERF-FINDING-031)**: Scaling beyond 2 replicas shows
+diminishing returns at medium workloads. PostgreSQL write throughput is the
+bottleneck, not worker compute. Listener work concentrates on a single pod
+due to Kafka partition assignment. OCP workers distribute load across replicas
+but total processing time is unchanged. Summary workers are consistently idle
+at medium scale.
+
+**OOM threshold (PERF-FINDING-033)**: OCP workers survived at 256Mi memory
+with no OOMKill events at medium workload. The chart default (512Mi/1Gi) provides
+comfortable headroom. Larger workloads may require more — large profile
+validation pending.
+
 ### ROS Processor
 
 | Profile | Replicas | Memory Request | Memory Limit |
