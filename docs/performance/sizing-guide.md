@@ -5,6 +5,38 @@ results (FLPATH-4036, COST-7567). Profile definitions are derived from productio
 data analysis by Pau Garcia Quiles (April 2026) and validated through automated
 performance runs on a 3-worker OCP 4.20 cluster (54 CPU / 183 Gi).
 
+## Changelog
+
+### COST-7599: Chart Defaults Updated to Small Profile (2026-07-23)
+
+The following `values.yaml` defaults were changed based on performance testing
+findings. A fresh `helm install` now produces a deployment sized for the small
+profile without any overrides.
+
+| Setting | Previous Default | New Default | Evidence |
+|---------|-----------------|-------------|----------|
+| Listener replicas | 1 | 2 | FINDING-003: concurrent source processing |
+| OCP worker replicas | 1 | 2 | FINDING-031: worker scaling analysis |
+| Summary worker replicas | 1 | 2 | FINDING-031: worker scaling analysis |
+| Database CPU (req/lim) | 100m / 500m | 500m / 2000m | FINDING-027: CPU sweep at medium/large |
+| Database memory (req/lim) | 256Mi / 512Mi | 1Gi / 4Gi | FINDING-028: memory sweep at medium/large |
+| HAProxy route timeout | 30s | 180s | FINDING-001: large upload timeouts |
+| Envoy ingress timeout | 30s | 180s | FINDING-001: large upload timeouts |
+| Envoy per-try timeout | 10s | 60s | FINDING-001: large upload timeouts |
+| Listener CPU (req/lim) | 150m / 300m | 150m / 300m (unchanged) | FINDING-035/VTC-001a: not the bottleneck |
+
+**Migration jobs** were also hardened with robust PostgreSQL readiness checks
+to prevent `BackoffLimitExceeded` failures during upgrades that change database
+resources.
+
+**Key insight (FINDING-035)**: Listener CPU at the chart default 300m is
+sufficient for all workloads through medium profile. The medium-scale bottleneck
+is the downstream pipeline (worker replicas, worker CPU/memory, ingress memory,
+upload limits), not the listener. See [FINDINGS.md](./FINDINGS.md#perf-finding-035)
+for the full VTC-001a characterization.
+
+---
+
 ## Quick Reference
 
 | Profile | Clusters | Nodes | CPU Cores | Memory | % of Customers |
@@ -68,8 +100,8 @@ runs at high CPU utilization during bulk ingestion (157% throttled at 300m).
 However, VTC-001a characterization proved that **listener CPU is not the
 medium-scale bottleneck** — the downstream pipeline (worker replicas, worker
 CPU/memory, ingress memory, upload limits) is what determines whether bulk
-workloads succeed or stall. Run #87 passed all 28 medium-profile tests at
-the chart default 300m listener CPU when medium profile resources were applied.
+workloads succeed or stall. All 28 medium-profile tests passed at the chart
+default 300m listener CPU when medium profile resources were applied.
 
 **Listener CPU sizing guidance**:
 - **All workloads through medium profile**: Chart default 300m is sufficient
@@ -411,8 +443,8 @@ gatewayRoute:
     haproxy.router.openshift.io/timeout: "180s"
 ```
 
-**Validated**: Jenkins #83 — 25/25 passed with `--skip-profile-config
---listener-cpu none` (pure chart defaults, no runtime overrides).
+**Validated**: 25/25 passed with `--skip-profile-config --listener-cpu none`
+(pure chart defaults, no runtime overrides).
 
 ### Medium Profile
 

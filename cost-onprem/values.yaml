@@ -237,7 +237,8 @@ costManagement:
       INITIAL_INGEST_OVERRIDE: "False"
 
   # ---------------------------------------------------------------------------
-  # Kafka Listener
+  # Kafka Listener (PERF-FINDING-003/035: 2 replicas for concurrent sources;
+  # default 300m CPU sufficient through medium profile)
   # ---------------------------------------------------------------------------
   listener:
     enabled: true
@@ -331,6 +332,7 @@ costManagement:
             memory: 512Mi
 
       summary:
+        # PERF-FINDING-031: 2 replicas for parallel summary processing
         replicas: 2
         queue: summary
         concurrency: 5
@@ -369,6 +371,7 @@ costManagement:
             memory: 1Gi
 
       ocp:
+        # PERF-FINDING-031: 2 replicas for parallel OCP processing
         replicas: 2
         queue: ocp
         concurrency: 5
@@ -956,6 +959,7 @@ jwtAuth:
     port: 9080
 
     # Route-level timeouts for the ingress (file upload) endpoint.
+    # PERF-FINDING-001: 30s default caused 504 errors on large uploads.
     ingressTimeout: "180s"
     ingressPerTryTimeout: "60s"
     servicePort: 80  # Service port exposed to other components (nginx, etc.)
@@ -1091,7 +1095,8 @@ service:
 # OpenShift Routes
 gatewayRoute:
   annotations:
-    # OpenShift-specific route annotations
+    # OpenShift-specific route annotations (PERF-FINDING-001: 30s default
+    # caused 504 errors on large uploads)
     haproxy.router.openshift.io/timeout: "180s"
     haproxy.router.openshift.io/rewrite-target: ""
   hosts:

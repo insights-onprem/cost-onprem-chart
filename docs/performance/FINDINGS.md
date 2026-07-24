@@ -176,7 +176,7 @@ With the FLPATH-4302 CPU increase (1000m/2000m), Kruize throughput jumped to **3
 **Problem**:
 Envoy reads its config file at startup only — it does not watch for changes. When `helm upgrade` modifies the gateway ConfigMap (e.g. increasing `ingressTimeout` from 30s to 600s), the running gateway pod continues using the old values. This rendered all timeout overrides from `apply_perf_profile_config()` ineffective, causing HTTP 504 failures on medium/large profile uploads despite correct values in the ConfigMap.
 
-**Evidence**: Run `#37` — Envoy ConfigMap showed 600s timeouts, but uploads failed at ~30s (the old default). All ING-001[medium/large], ING-002, ING-003[10], ING-004 tests failed with instant 504/500 errors.
+**Evidence**: Envoy ConfigMap showed 600s timeouts, but uploads failed at ~30s (the old default). All ING-001[medium/large], ING-002, ING-003[10], ING-004 tests failed with instant 504/500 errors.
 
 **Mitigation**: `perf-testing.sh` now explicitly runs `oc rollout restart` on the gateway deployment after helm upgrade.
 
@@ -209,7 +209,7 @@ The `INGRESS_MAXUPLOADMEM` default is 32 MB. For uploads >32 MB, insights-ingres
 **Problem**:
 The ingress pod (`insights-ingress-go`) uses the shared `resources.application` block (1Gi memory limit). Processing large uploads requires multipart parsing, tar extraction, and S3 staging — all memory-intensive. Uploads >100 MB or 10+ concurrent uploads cause HTTP 500 errors from the ingress pod due to memory exhaustion.
 
-**Evidence** (Run `#38`, large profile):
+**Evidence** (large profile):
 - ING-004[100] (101 MB) passed but ING-004[50] failed immediately after — residual memory pressure
 - ING-001[large] (~200+ MB package) — HTTP 500 on all attempts
 - ING-003[10] (10 concurrent uploads) — all 10 uploads returned HTTP 500
@@ -242,7 +242,7 @@ Uploads up to 138 MB succeed individually (ING-002[90-days] = 138.74 MB at 2.44 
 
 **What was tried**:
 - Pod memory: `resources.application` increased to 2Gi/4Gi — no effect on the 500s (pod uses only ~49 Mi at idle, 0 restarts, 0 OOM events)
-- `INGRESS_MAXUPLOADMEM`: Increased from 128 MB to 512 MB in run #42 — **made things worse**. Go's `ParseMultipartForm(512MB)` pre-allocates heap per request, and the oversized allocation destabilized the pipeline (ING-002[30-days], previously reliable, failed with "manifest not yet visible" after 1500s). Reverted to 128 MB.
+- `INGRESS_MAXUPLOADMEM`: Increased from 128 MB to 512 MB — **made things worse**. Go's `ParseMultipartForm(512MB)` pre-allocates heap per request, and the oversized allocation destabilized the pipeline (ING-002[30-days], previously reliable, failed with "manifest not yet visible" after 1500s). Reverted to 128 MB.
 - Node headroom: Worker nodes at 53-67% memory requests, no evictions — cluster resources are not the constraint
 
 **Recommended upstream enhancement**: `insights-ingress-go` should use multipart S3 uploads (e.g., minio-go `PutObject` with `PartSize` option or the AWS SDK S3 upload manager) for payloads exceeding a configurable threshold. This is the standard pattern for large object uploads to S3-compatible backends.
@@ -262,7 +262,7 @@ Uploads up to 138 MB succeed individually (ING-002[90-days] = 138.74 MB at 2.44 
 **Problem**:
 The chart default CPU limits for OCP and summary celery workers (250m request / 500m limit) throttle data processing throughput. When the listener ingests data faster than workers can process it, the pipeline backs up.
 
-**Evidence** (Run #40 → #41, large profile):
+**Evidence** (large profile, before/after worker CPU boost):
 - Worker CPU boosted from 250m/500m to 500m/1000m (request/limit)
 - Worker memory boosted from 512Mi/1Gi to 1Gi/2Gi
 - Total run time: 112 min → 97.6 min (**15% faster**)
@@ -709,7 +709,7 @@ performance tests with `--skip-profile-config --listener-cpu none` to ensure
 zero runtime modifications. This tests exactly what a customer gets from a
 fresh `helm install`.
 
-**Small profile** (Jenkins #83 — `0-2-20-rc5-small-api+ingestion-1784667967`):
+**Small profile** (`api,ingestion` with `--skip-profile-config --listener-cpu none`):
 
 | Suite | Tests | Passed | Duration |
 |-------|-------|--------|----------|
@@ -724,7 +724,7 @@ Key metrics at chart defaults:
 - Processing window: within 6-hour window
 - Valkey: 2.7-7.7 MB memory, 21-35 cmds/sec
 
-**Medium profile** (Jenkins #84 — `0-2-20-rc5-medium-api+ingestion-1784729493`):
+**Medium profile** (`api,ingestion` with `--skip-profile-config --listener-cpu none`):
 
 | Suite | Tests | Passed | Failed | Duration |
 |-------|-------|--------|--------|----------|
@@ -747,19 +747,19 @@ Tests that passed at medium with chart defaults:
 - `ing_005` — high-frequency streaming uploads
 - `ing_006[medium]` — 2-cluster processing window
 
-**VTC-001a Characterization** (Jenkins #85, #86, #87):
+**VTC-001a: Listener CPU Characterization**:
 
-The initial hypothesis from #84 was that listener CPU was the sole medium-scale
+The initial hypothesis was that listener CPU was the sole medium-scale
 bottleneck. Three follow-up runs tested this — first by raising listener CPU
 with chart defaults, then by applying the full medium profile without a listener
 CPU boost:
 
 | Run | Listener CPU | Other Resources | Result |
 |-----|-------------|-----------------|--------|
-| #84 | 300m (default) | Chart defaults only (`--skip-profile-config`) | 26/28 — 2 failures |
-| #85 | 500m | Chart defaults only (`--skip-profile-config`) | 26/28 — same 2 failures |
-| #86 | 1000m | Chart defaults only (`--skip-profile-config`) | 26/28 — same 2 failures |
-| **#87** | **300m (default)** | **Full medium profile** (`--listener-cpu none`) | **28/28 PASS** |
+| Baseline | 300m (default) | Chart defaults only (`--skip-profile-config`) | 26/28 — 2 failures |
+| +500m | 500m | Chart defaults only (`--skip-profile-config`) | 26/28 — same 2 failures |
+| +1000m | 1000m | Chart defaults only (`--skip-profile-config`) | 26/28 — same 2 failures |
+| **Full medium** | **300m (default)** | **Full medium profile** (`--listener-cpu none`) | **28/28 PASS** |
 
 Raising listener CPU from 300m to 500m and 1000m with all other settings at
 chart defaults did **not** fix the failures. Applying the full medium profile
@@ -767,7 +767,7 @@ overrides (2x worker replicas, increased worker CPU/memory, 200MB upload limit,
 1Gi/2Gi ingress memory) with listener CPU at the chart default 300m fixed
 everything.
 
-**Run #87 key metrics** (medium profile, listener CPU = 300m):
+**Full medium profile key metrics** (listener CPU = 300m):
 - `ing_002[90-days]`: PASS — 5.5 min, 138.6 MB at 15.9 MB/s, 47s processing
 - `ing_004[100MB]`: PASS — 4.2 min, 101.4 MB at 15.4 MB/s, 31s processing
 - All 28 tests passed, 0 KPI violations, 42 min total
@@ -780,7 +780,7 @@ everything.
    more downstream resources, not more listener CPU.
 3. **Listener CPU is NOT the medium-scale bottleneck.** Runs #85 and #86
    proved that raising listener CPU to 500m and 1000m (3× the default) with
-   chart-default workers/replicas does not fix the failures. Run #87 proved
+   chart-default workers/replicas does not fix the failures. The full medium run proved
    the converse: full medium profile resources with default 300m listener CPU
    passes everything.
 4. **The actual bottleneck is the downstream pipeline.** Single-replica workers
