@@ -15,14 +15,14 @@
 #   Prefixed branches: automated/component-update-YYYYMMDD-HHMMSS
 #   Only one automated PR exists at a time; old PRs/branches are closed/deleted.
 #
-# Schedule: Every 4 hours
+# Schedule: Daily at 06:00 UTC
 # Manual: Run via workflow_dispatch with mode selection
 
 name: Check Components
 
 on:
   schedule:
-    - cron: '0 */4 * * *'
+    - cron: '0 6 * * *'
   workflow_dispatch:
     inputs:
       mode:
