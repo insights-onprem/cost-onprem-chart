@@ -5,6 +5,38 @@ results (FLPATH-4036, COST-7567). Profile definitions are derived from productio
 data analysis by Pau Garcia Quiles (April 2026) and validated through automated
 performance runs on a 3-worker OCP 4.20 cluster (54 CPU / 183 Gi).
 
+## Changelog
+
+### COST-7599: Chart Defaults Updated to Small Profile (2026-07-23)
+
+The following `values.yaml` defaults were changed based on performance testing
+findings. A fresh `helm install` now produces a deployment sized for the small
+profile without any overrides.
+
+| Setting | Previous Default | New Default | Evidence |
+|---------|-----------------|-------------|----------|
+| Listener replicas | 1 | 2 | FINDING-003: concurrent source processing |
+| OCP worker replicas | 1 | 2 | FINDING-031: worker scaling analysis |
+| Summary worker replicas | 1 | 2 | FINDING-031: worker scaling analysis |
+| Database CPU (req/lim) | 100m / 500m | 500m / 2000m | FINDING-027: CPU sweep at medium/large |
+| Database memory (req/lim) | 256Mi / 512Mi | 1Gi / 4Gi | FINDING-028: memory sweep at medium/large |
+| HAProxy route timeout | 30s | 180s | FINDING-001: large upload timeouts |
+| Envoy ingress timeout | 30s | 180s | FINDING-001: large upload timeouts |
+| Envoy per-try timeout | 10s | 60s | FINDING-001: large upload timeouts |
+| Listener CPU (req/lim) | 150m / 300m | 150m / 300m (unchanged) | FINDING-035/VTC-001a: not the bottleneck |
+
+**Migration jobs** were also hardened with robust PostgreSQL readiness checks
+to prevent `BackoffLimitExceeded` failures during upgrades that change database
+resources.
+
+**Key insight (FINDING-035)**: Listener CPU at the chart default 300m is
+sufficient for all workloads through medium profile. The medium-scale bottleneck
+is the downstream pipeline (worker replicas, worker CPU/memory, ingress memory,
+upload limits), not the listener. See [FINDINGS.md](./FINDINGS.md#perf-finding-035)
+for the full VTC-001a characterization.
+
+---
+
 ## Quick Reference
 
 | Profile | Clusters | Nodes | CPU Cores | Memory | % of Customers |
@@ -22,8 +54,12 @@ with clean (0-failure) automated runs. Stress profiles have not yet been execute
 
 ## Component Resource Recommendations
 
-CPU, memory, and replica values for core pipeline components are applied
-dynamically by `apply_perf_profile_config()` during performance test runs.
+**Chart defaults = Small profile** (as of COST-7599). A fresh install with no
+`values.yaml` overrides provides the small-profile resource allocations listed
+below. Medium, large, and xlarge profiles require explicit overrides — see the
+[Helm Values Examples](#helm-values-examples) section. Performance test runs
+can apply overrides dynamically via `apply_perf_profile_config()`.
+
 Kruize memory and Database resources should be set in `values.yaml` at
 deployment time. All values have been validated through successful end-to-end
 test suites at each profile level.
@@ -59,13 +95,23 @@ contention and degrades throughput.
 | Large | 3 | 150m | 300m | 2Gi | 4Gi |
 | XLarge | 3 | 150m | 300m | 2Gi | 4Gi |
 
-**Key finding (PERF-FINDING-002)**: The listener is the **first-to-saturate
-component** at every scale. At the 300m CPU limit, it runs at 157% throttled
-during medium-profile ingestion. The `--listener-cpu max` flag in the deploy
-script dynamically boosts CPU to all available node headroom during perf runs.
-Production deployments handling burst ingestion should raise the CPU limit to
-at least 1000m. Listener CPU is managed separately via the `--listener-cpu`
-flag and is not part of `apply_perf_profile_config()`.
+**Key finding (PERF-FINDING-002, PERF-FINDING-035 VTC-001a)**: The listener
+runs at high CPU utilization during bulk ingestion (157% throttled at 300m).
+However, VTC-001a characterization proved that **listener CPU is not the
+medium-scale bottleneck** — the downstream pipeline (worker replicas, worker
+CPU/memory, ingress memory, upload limits) is what determines whether bulk
+workloads succeed or stall. All 28 medium-profile tests passed at the chart
+default 300m listener CPU when medium profile resources were applied.
+
+**Listener CPU sizing guidance**:
+- **All workloads through medium profile**: Chart default 300m is sufficient
+  when other resources are properly provisioned (see medium profile overrides)
+- **Performance optimization for large/xlarge**: Raise to 1000m+ for faster
+  ingestion throughput during bulk operations
+- **Perf testing**: Use `--listener-cpu max` to remove CPU as a variable
+
+Listener CPU is managed separately via the `--listener-cpu` flag and is not
+part of `apply_perf_profile_config()`.
 
 ### Celery Workers
 
@@ -146,13 +192,90 @@ not a resource constraint.
 Database resources are not dynamically adjusted by `apply_perf_profile_config()` —
 they should be set via `values.yaml` at deployment time.
 
-**Empirical validation (COST-7605)**: CPU and memory sweeps at medium and large profiles
-confirm these recommendations are well-positioned. API query latency is sub-10ms at all
-tested CPU levels (2000m–8000m), with diminishing returns above 4000m (PERF-FINDING-027).
-Memory beyond 4Gi provides no latency benefit for current workloads since the dataset
-fits entirely in shared_buffers at 1GB (PERF-FINDING-028). Larger memory allocations
-are recommended for extended retention periods where the working set may exceed the
-buffer pool.
+### PostgreSQL Tuning Guide
+
+The chart deploys a single PostgreSQL StatefulSet. PostgreSQL auto-tunes
+`shared_buffers` to approximately 25% of the container memory limit — no
+manual tuning is required. The recommendations above are validated by CPU
+and memory sweeps at medium and large profiles (COST-7605).
+
+#### CPU Sizing
+
+| CPU Limit | Report Baseline p95 | Complex Group-by p95 | Cache Hit Ratio |
+|-----------|---------------------|----------------------|-----------------|
+| 2000m | 5.6–7.2ms | 3.3–5.9ms | 100% |
+| 4000m | 4.7–5.1ms | 4.3–4.4ms | 100% |
+| 8000m | 4.9–6.2ms | 3.3–4.7ms | 100% |
+
+(Ranges span medium and large profile results — PERF-FINDING-027)
+
+**Guidance**:
+- All latencies are **sub-10ms** at every tested CPU level. PostgreSQL is not
+  the API bottleneck for typical workloads.
+- **2000m → 4000m** provides a modest improvement (~30% on report queries).
+  This comes from PostgreSQL's ability to parallelize query planning and
+  background tasks (autovacuum, checkpointing).
+- **4000m → 8000m** shows no consistent improvement — the variation is
+  measurement noise at sub-10ms latencies. Diminishing returns are clear.
+- The chart default (500m/2000m for small, 1000m/4000m for medium) is
+  well-positioned. Going beyond 4000m limit provides no measurable API
+  benefit for current workload sizes.
+- For deployments with **extended retention (90-day+)** or **concurrent
+  heavy queries**, re-evaluate at 4000m–8000m as the working set grows.
+
+#### Memory Sizing
+
+| Memory Limit | shared_buffers (auto) | Report Baseline p95 | Blocks Read (disk) | Cache Hit Ratio |
+|--------------|-----------------------|---------------------|--------------------|-----------------|
+| 4Gi | ~1 GB | 5.9–7.3ms | 0 | 100% |
+| 8Gi | ~2 GB | 5.0–7.0ms | 0 | 100% |
+| 16Gi | ~4 GB | 4.5–5.9ms | 0 | 100% |
+
+(Ranges span medium and large profile results — PERF-FINDING-028)
+
+**Guidance**:
+- **Zero disk reads** at all memory levels. The Koku database fits entirely
+  in `shared_buffers` at 1 GB (the smallest tested level). No cache misses
+  occur with current workloads.
+- **No consistent latency improvement** with more memory — the ~2ms variation
+  is measurement noise, not a real signal.
+- **Size memory for the dataset, not for query speed.** The benefit of larger
+  `shared_buffers` only materializes when the working set exceeds the buffer
+  pool.
+- The chart default (1Gi/4Gi for small) provides comfortable headroom.
+  Medium (2Gi/8Gi) and large (4Gi/16Gi) are sized for dataset growth, not
+  because current data demands it.
+- **Rule of thumb**: Ensure `shared_buffers` (≈25% of memory limit) exceeds
+  the total database size. Check with:
+
+```sql
+SELECT pg_size_pretty(pg_database_size('koku'));
+```
+
+#### When to Increase Database Resources
+
+| Scenario | CPU Recommendation | Memory Recommendation |
+|----------|--------------------|-----------------------|
+| ≤2 clusters, 30-day retention | 500m/2000m (default) | 1Gi/4Gi (default) |
+| 2-7 clusters, 30-day retention | 1000m/4000m | 2Gi/8Gi |
+| 7+ clusters or 90-day retention | 2000m/4000m | 4Gi/16Gi |
+| Heavy concurrent API queries | 4000m/8000m | 8Gi/32Gi |
+| Extended retention (90-day+) at scale | 4000m/8000m | 8Gi/32Gi+ |
+
+For extended retention deployments where the database exceeds shared_buffers,
+monitor cache hit ratio:
+
+```sql
+SELECT
+  round(blks_hit::numeric / nullif(blks_hit + blks_read, 0) * 100, 2) AS cache_hit_pct,
+  blks_hit, blks_read
+FROM pg_stat_database
+WHERE datname = 'koku';
+```
+
+If `cache_hit_pct` drops below 99%, increase memory to bring `shared_buffers`
+above the working set. If query latency increases but cache hit is high,
+increase CPU.
 
 ---
 
@@ -160,14 +283,13 @@ buffer pool.
 
 ### Timeout Settings
 
-The default gateway timeout (30s) is insufficient for medium and larger profiles.
-These are applied by `apply_perf_profile_config()` during perf runs and should
-be set in `values.yaml` for production deployments.
+The chart default gateway timeout is 180s (updated from 30s in COST-7599).
+Large/xlarge profiles should increase to 600s for bulk uploads.
 
 | Profile | HAProxy Timeout | Envoy Route Timeout | Envoy Per-Try Timeout |
 |---------|-----------------|---------------------|----------------------|
-| Small | 30s (default) | 30s (default) | 30s (default) |
-| Medium | 180s | 180s | 180s |
+| Small | 180s (default) | 180s (default) | 60s (default) |
+| Medium | 180s (default) | 180s (default) | 60s (default) |
 | Large | 600s | 600s | 300s |
 | XLarge | 600s | 600s | 300s |
 
@@ -286,12 +408,19 @@ For perf testing clusters, 10 Gi saves 270 Gi of ODF PV capacity.
 
 ## Helm Values Examples
 
-### Small Profile
+### Small Profile (Chart Defaults)
+
+No overrides needed — the chart defaults match the small profile as of
+COST-7599. A fresh `helm install` produces these settings:
 
 ```yaml
+# These are the chart defaults — no values.yaml overrides required
 resources:
+  database:
+    requests: { cpu: "500m", memory: "1Gi" }
+    limits:   { cpu: "2000m", memory: "4Gi" }
   kruize:
-    requests: { cpu: "500m" }
+    requests: { cpu: "1000m" }
     limits:   { cpu: "2000m" }
 
 costManagement:
@@ -303,7 +432,19 @@ costManagement:
         replicas: 2
       summary:
         replicas: 2
+
+jwtAuth:
+  envoy:
+    ingressTimeout: 180s
+    ingressPerTryTimeout: 60s
+
+gatewayRoute:
+  annotations:
+    haproxy.router.openshift.io/timeout: "180s"
 ```
+
+**Validated**: 25/25 passed with `--skip-profile-config --listener-cpu none`
+(pure chart defaults, no runtime overrides).
 
 ### Medium Profile
 
@@ -474,6 +615,11 @@ gatewayRoute:
   timeout changes require gateway pod restart.
 - **Ingress shares `resources.application`** (PERF-FINDING-022): Cannot size
   ingress memory independently from other services.
+- **Listener CPU is a throughput lever, not a correctness requirement**
+  (VTC-001a, FINDING-035): The chart default 300m listener CPU is sufficient
+  for all workloads through medium profile when other resources are properly
+  provisioned. Raising listener CPU improves bulk ingestion speed at large/xlarge
+  but is not required for the pipeline to complete.
 - **Stress profiles (P99, max) not yet validated**: Profiles beyond xlarge
   have not been tested.
 
@@ -488,4 +634,4 @@ gatewayRoute:
 
 ---
 
-_Based on FLPATH-4036 / COST-7567 performance testing. Last updated: 2026-06-25._
+_Based on FLPATH-4036 / COST-7567 performance testing. Last updated: 2026-07-23._

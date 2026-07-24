@@ -46,12 +46,24 @@ spec:
             ELAPSED=0
             
             echo "Waiting for database at ${DB_HOST}:${DB_PORT}..."
-            while ! timeout 5 bash -c "cat < /dev/null > /dev/tcp/${DB_HOST}/${DB_PORT}" 2>/dev/null; do
+            while true; do
               if [ $ELAPSED -ge $MAX_WAIT ]; then
                 echo "ERROR: Database not ready after ${MAX_WAIT} seconds"
                 exit 1
               fi
-              echo "Database not ready (${ELAPSED}s elapsed), waiting..."
+              if timeout 5 bash -c "cat < /dev/null > /dev/tcp/${DB_HOST}/${DB_PORT}" 2>/dev/null; then
+                # ROS is a Go binary — no Python/Django available for a query-level
+                # readiness check like koku/RBAC use. Double-TCP recheck detects the
+                # case where the port is briefly open during a PostgreSQL restart.
+                sleep 5
+                ELAPSED=$((ELAPSED + 5))
+                if timeout 5 bash -c "cat < /dev/null > /dev/tcp/${DB_HOST}/${DB_PORT}" 2>/dev/null; then
+                  break
+                fi
+                echo "Database port closed after recheck (restart in progress, ${ELAPSED}s elapsed)..."
+                continue
+              fi
+              echo "Database not reachable (${ELAPSED}s elapsed), waiting..."
               sleep 5
               ELAPSED=$((ELAPSED + 5))
             done

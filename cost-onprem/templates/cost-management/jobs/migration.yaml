@@ -48,12 +48,32 @@ spec:
             ELAPSED=0
             
             echo "Waiting for database at ${DB_HOST}:${DB_PORT}..."
-            while ! timeout 5 bash -c "cat < /dev/null > /dev/tcp/${DB_HOST}/${DB_PORT}" 2>/dev/null; do
+            cd /opt/koku/koku
+            while true; do
               if [ $ELAPSED -ge $MAX_WAIT ]; then
                 echo "ERROR: Database not ready after ${MAX_WAIT} seconds"
                 exit 1
               fi
-              echo "Database not ready (${ELAPSED}s elapsed), waiting..."
+              if timeout 5 bash -c "cat < /dev/null > /dev/tcp/${DB_HOST}/${DB_PORT}" 2>/dev/null; then
+                if python << 'DB_CHECK' 2>/dev/null
+            import os, sys
+            os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'koku.settings')
+            import django; django.setup()
+            from django.db import connections
+            try:
+                conn = connections['default']
+                conn.ensure_connection()
+                conn.close()
+            except Exception:
+                sys.exit(1)
+            DB_CHECK
+                then
+                  break
+                fi
+                echo "Database port open but not accepting queries (${ELAPSED}s elapsed), waiting..."
+              else
+                echo "Database not reachable (${ELAPSED}s elapsed), waiting..."
+              fi
               sleep 5
               ELAPSED=$((ELAPSED + 5))
             done
@@ -61,7 +81,6 @@ spec:
 
             # Set up environment
             mkdir -p /tmp/prometheus
-            cd /opt/koku/koku
 
             # Acquire migration lock using PostgreSQL advisory lock
             # This ensures only ONE pod can run migrations at a time

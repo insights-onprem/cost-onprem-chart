@@ -22,8 +22,8 @@ _PERF_TESTING_SOURCED=1
 ################################################################################
 
 # apply_perf_profile_config: Brings the live cluster into the correct state for
-# the given PERF_PROFILE before tests run.  Called unconditionally at the start
-# of run_performance_tests() — whether this is a fresh deploy or --skip-deploy.
+# the given PERF_PROFILE before tests run.  Called at the start of
+# run_performance_tests() unless --skip-profile-config is set (COST-7599).
 #
 # Two-phase approach:
 #   Phase 1 — helm upgrade --reuse-values --set …
@@ -39,21 +39,24 @@ _PERF_TESTING_SOURCED=1
 #     Kruize is always kept at replicas=1 (scaling degrades throughput,
 #     see PERF-FINDING-004).
 #
-# Profile matrix:
-#   baseline/small : replicas=1, chart resource defaults
-#   medium         : replicas=2; raised resources, 200MB upload, 180s timeouts
+# Profile matrix (chart defaults = small since COST-7599):
+#   baseline/small : chart defaults (no-op — 2 replicas, 180s timeouts, etc.)
+#   medium         : replicas=2; raised CPU/memory, 200MB upload
 #   large          : replicas=3; raised resources, 500MB upload, 600s timeouts
 #   xlarge         : replicas=3; higher worker CPU (1000m/2000m) for tag processing
 apply_perf_profile_config() {
     local release="${HELM_RELEASE_NAME:-cost-onprem}"
     local namespace="${NAMESPACE:-cost-onprem}"
 
+    # Baseline defaults match the chart's values.yaml (small profile).
+    # After COST-7599 these are the new chart defaults — the baseline/small
+    # case below is intentionally a no-op.
     local ros_processor_replicas=1
-    local listener_replicas=1
-    local ocp_worker_replicas=1
-    local summary_worker_replicas=1
+    local listener_replicas=2
+    local ocp_worker_replicas=2
+    local summary_worker_replicas=2
 
-    local kruize_cpu_req="500m"   kruize_cpu_lim="1000m"
+    local kruize_cpu_req="1000m"  kruize_cpu_lim="2000m"
     local ros_mem_req="1Gi"       ros_mem_lim="1Gi"
     local listener_mem_req="300Mi" listener_mem_lim="600Mi"
     local ocp_worker_cpu_req="250m"  ocp_worker_cpu_lim="500m"
@@ -62,19 +65,12 @@ apply_perf_profile_config() {
     local max_upload_size="104857600"   # 100MB chart default
     local max_upload_mem="33554432"    # 32MB chart default (in-memory buffer before spilling to disk)
     local app_mem_req="1Gi"  app_mem_lim="1Gi"   # resources.application (ingress pod + others)
-    local haproxy_timeout="30s"
-    local ingress_timeout="30s"   ingress_per_try_timeout="30s"
+    local haproxy_timeout="180s"
+    local ingress_timeout="180s"   ingress_per_try_timeout="60s"
 
     case "${PERF_PROFILE}" in
         small)
-            # Small customer profile (1 cluster, 15 nodes, up to 10 concurrent sources).
-            # Default single-replica pipeline can't drain 5+ sources in time.
-            listener_replicas=2
-            ocp_worker_replicas=2
-            summary_worker_replicas=2
-            # Keep Kruize CPU request at default so it always schedules;
-            # raise limit so it can burst under ROS load (PERF-FINDING-006).
-            kruize_cpu_lim="2000m"
+            # Small profile now matches chart defaults — no overrides needed.
             ;;
         medium)
             ros_processor_replicas=2
@@ -328,34 +324,63 @@ run_performance_tests() {
 
     export PERF_PROFILE="${PERF_PROFILE}"
 
-    # Apply profile-specific replica scaling before tests run.
-    apply_perf_profile_config
+    # --skip-profile-config: test with whatever the chart deployed — no runtime
+    # overrides.  Used by COST-7599 to validate that values.yaml defaults are
+    # self-sufficient.  When set, both apply_perf_profile_config() and the
+    # automatic listener CPU boost are skipped.  An explicit --listener-cpu value
+    # is still honoured (e.g. --listener-cpu 500m sets exactly that value without
+    # the profile config touching anything else).
+    if [[ "${SKIP_PROFILE_CONFIG:-false}" == "true" ]]; then
+        log_warning "Skipping apply_perf_profile_config() (--skip-profile-config)"
+        log_info "Tests will run against chart defaults — no replica scaling, resource overrides, or timeout changes"
 
-    # Listener CPU boost — always applied for perf tests unless explicitly disabled.
-    # The listener is the principal processing bottleneck: at the chart default (300m)
-    # it throttles every ingestion test, producing results that measure the CPU cap
-    # rather than actual pipeline throughput.
-    local perf_listener_cpu="${LISTENER_CPU_LIMIT:-max}"
-    if [[ "${perf_listener_cpu}" != "none" ]] && [[ "${CPU_BOOST_APPLIED:-false}" != "true" ]]; then
-        local effective_cpu_limit="${perf_listener_cpu}"
-        if [[ "${perf_listener_cpu}" == "max" ]]; then
-            calculate_max_listener_cpu
-            effective_cpu_limit="${MAX_LISTENER_CPU}m"
-            log_info "Listener CPU boost: calculated max = ${effective_cpu_limit}"
-        fi
-        if validate_cpu_limit "${effective_cpu_limit}"; then
-            log_step "Boosting listener CPU to ${effective_cpu_limit} for performance tests"
-            if set_listener_cpu "${effective_cpu_limit}"; then
-                CPU_BOOST_APPLIED=true
-                log_success "Listener CPU boosted to ${effective_cpu_limit} (was ${ORIGINAL_LISTENER_CPU_LIMIT})"
-            else
-                log_warning "Could not boost listener CPU — results may reflect the 300m throttle"
+        # Still allow an explicit --listener-cpu value so VTC-001a can sweep
+        # specific CPU levels without the rest of the profile config.
+        if [[ -n "${LISTENER_CPU_LIMIT:-}" ]] && [[ "${LISTENER_CPU_LIMIT}" != "none" ]] \
+                && [[ "${CPU_BOOST_APPLIED:-false}" != "true" ]]; then
+            local explicit_cpu="${LISTENER_CPU_LIMIT}"
+            if [[ "${explicit_cpu}" == "max" ]]; then
+                calculate_max_listener_cpu
+                explicit_cpu="${MAX_LISTENER_CPU}m"
+            fi
+            if validate_cpu_limit "${explicit_cpu}"; then
+                log_step "Setting listener CPU to ${explicit_cpu} (explicit override, no profile config)"
+                if set_listener_cpu "${explicit_cpu}"; then
+                    CPU_BOOST_APPLIED=true
+                    log_success "Listener CPU set to ${explicit_cpu} (was ${ORIGINAL_LISTENER_CPU_LIMIT})"
+                fi
             fi
         fi
-    elif [[ "${CPU_BOOST_APPLIED:-false}" == "true" ]]; then
-        log_info "Listener CPU already boosted by run_tests() — skipping duplicate boost"
     else
-        log_warning "Listener CPU boost disabled (--listener-cpu none) — results will reflect chart defaults"
+        # Apply profile-specific replica scaling before tests run.
+        apply_perf_profile_config
+
+        # Listener CPU boost — always applied for perf tests unless explicitly
+        # disabled.  The listener is the principal processing bottleneck: at the
+        # chart default (300m) it throttles every ingestion test, producing results
+        # that measure the CPU cap rather than actual pipeline throughput.
+        local perf_listener_cpu="${LISTENER_CPU_LIMIT:-max}"
+        if [[ "${perf_listener_cpu}" != "none" ]] && [[ "${CPU_BOOST_APPLIED:-false}" != "true" ]]; then
+            local effective_cpu_limit="${perf_listener_cpu}"
+            if [[ "${perf_listener_cpu}" == "max" ]]; then
+                calculate_max_listener_cpu
+                effective_cpu_limit="${MAX_LISTENER_CPU}m"
+                log_info "Listener CPU boost: calculated max = ${effective_cpu_limit}"
+            fi
+            if validate_cpu_limit "${effective_cpu_limit}"; then
+                log_step "Boosting listener CPU to ${effective_cpu_limit} for performance tests"
+                if set_listener_cpu "${effective_cpu_limit}"; then
+                    CPU_BOOST_APPLIED=true
+                    log_success "Listener CPU boosted to ${effective_cpu_limit} (was ${ORIGINAL_LISTENER_CPU_LIMIT})"
+                else
+                    log_warning "Could not boost listener CPU — results may reflect the 300m throttle"
+                fi
+            fi
+        elif [[ "${CPU_BOOST_APPLIED:-false}" == "true" ]]; then
+            log_info "Listener CPU already boosted by run_tests() — skipping duplicate boost"
+        else
+            log_warning "Listener CPU boost disabled (--listener-cpu none) — results will reflect chart defaults"
+        fi
     fi
 
     start_metrics_collection
