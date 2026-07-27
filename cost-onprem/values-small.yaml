@@ -1,0 +1,89 @@
+# Small profile overlay — Cost On-Prem
+# =====================================
+# COST-7618 / sizing-guide.md
+#
+# Chart defaults already match the small profile (COST-7599). This file is
+# optional for helm install; it exists so profiles can be compared side-by-side
+# and so a future operator can map spec.profile: small to an explicit baseline.
+#
+# Usage (optional — identical to chart defaults):
+#   helm upgrade --install cost-onprem ./cost-onprem \
+#     -n cost-onprem -f openshift-values.yaml \
+#     -f cost-onprem/values-small.yaml
+#
+# Target workload: ~1 cluster, ~15 nodes, ~200 CPU cores (37% of customers)
+
+resources:
+  database:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+  kruize:
+    requests:
+      cpu: "1000m"
+      memory: "1Gi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+  rosProcessor:
+    requests:
+      memory: "1Gi"
+    limits:
+      memory: "1Gi"
+  application:
+    requests:
+      memory: "1Gi"
+    limits:
+      memory: "1Gi"
+
+costManagement:
+  listener:
+    replicas: 2
+    resources:
+      requests:
+        cpu: 150m
+        memory: 300Mi
+      limits:
+        cpu: 300m
+        memory: 600Mi
+  celery:
+    workers:
+      ocp:
+        replicas: 2
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+      summary:
+        replicas: 2
+        resources:
+          requests:
+            cpu: 250m
+            memory: 1Gi
+          limits:
+            cpu: 500m
+            memory: 2Gi
+
+ros:
+  processor:
+    replicas: 1
+
+ingress:
+  upload:
+    maxUploadSize: 104857600  # 100MB
+    maxMemory: 33554432       # 32MB
+
+jwtAuth:
+  envoy:
+    ingressTimeout: "180s"
+    ingressPerTryTimeout: "60s"
+
+gatewayRoute:
+  annotations:
+    haproxy.router.openshift.io/timeout: "180s"

@@ -507,8 +507,8 @@ PERF_PROFILE=xlarge pytest -m "performance and ingestion" tests/suites/performan
 
 ## Next Steps
 
-1. [ ] Run medium profile for a clean validated baseline (target: 0 failures)
+1. [x] Run medium profile for a clean validated baseline (target: 0 failures) — 28/28 api+ingestion, 4/4 ros passed
 2. [ ] Execute stress_p99 profile (33 clusters) to find the actual breaking point
 3. [ ] Execute 7-day soak test (SC-5) — requires dedicated cluster time
-4. [ ] Publish sizing guide to product documentation (COST-7618)
-5. [ ] File tickets for untracked findings (FINDING-013, -020, -022, -024)
+4. [x] Publish sizing profile overlays + operator mapping draft (COST-7618) — see `cost-onprem/values-*.yaml` and `operator-profile-crd-mapping.md`
+5. [x] File tickets for untracked findings — FLPATH-4428 (013), FLPATH-4429 (020), FLPATH-4430 (022), FLPATH-4431 (024)

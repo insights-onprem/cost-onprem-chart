@@ -1,0 +1,86 @@
+# Medium profile overlay — Cost On-Prem
+# ======================================
+# COST-7618 / sizing-guide.md
+# Aligned with apply_perf_profile_config() medium case in
+# scripts/lib/perf-testing.sh, plus database sizing from the sizing guide.
+#
+# Usage:
+#   helm upgrade --install cost-onprem ./cost-onprem \
+#     -n cost-onprem -f openshift-values.yaml \
+#     -f cost-onprem/values-medium.yaml
+#
+# Target workload: ~2 clusters, ~49 nodes, ~544 CPU cores (35% of customers)
+#
+# Evidence: PERF-FINDING-022 (ingress memory), PERF-FINDING-035 (listener CPU
+# at chart default is sufficient when medium resources are applied).
+
+resources:
+  database:
+    requests:
+      cpu: "1000m"
+      memory: "2Gi"
+    limits:
+      cpu: "4000m"
+      memory: "8Gi"
+  kruize:
+    # Always 1 replica (PERF-FINDING-004). CPU limit ≥2000m required.
+    requests:
+      cpu: "1000m"
+    limits:
+      cpu: "2000m"
+  rosProcessor:
+    requests:
+      memory: "2Gi"
+    limits:
+      memory: "4Gi"
+  application:
+    # Shared by ingress + other app services (PERF-FINDING-022)
+    requests:
+      memory: "1Gi"
+    limits:
+      memory: "2Gi"
+
+costManagement:
+  listener:
+    replicas: 2
+    resources:
+      requests:
+        memory: "1Gi"
+      limits:
+        memory: "2Gi"
+  celery:
+    workers:
+      ocp:
+        replicas: 2
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+      summary:
+        replicas: 2
+        resources:
+          requests:
+            cpu: "250m"
+          limits:
+            cpu: "1000m"
+
+ros:
+  processor:
+    replicas: 2
+
+ingress:
+  upload:
+    maxUploadSize: 209715200  # 200MB
+    maxMemory: 67108864       # 64MB
+
+jwtAuth:
+  envoy:
+    ingressTimeout: "180s"
+    ingressPerTryTimeout: "180s"
+
+gatewayRoute:
+  annotations:
+    haproxy.router.openshift.io/timeout: "180s"

@@ -35,6 +35,9 @@ set -euo pipefail
 #   --use-local-chart         Use local Helm chart instead of GitHub release
 #   --devel                   Include pre-release (rc) charts in Helm installation
 #   --chart-version VERSION   Pin a specific Helm chart version (e.g., 0.2.9, 0.3.0-rc1)
+#   --sizing-profile PROFILE  Apply a sizing profile on deploy: small, medium, large, xlarge.
+#                             Passes cost-onprem/values-<PROFILE>.yaml as an additional -f overlay.
+#                             Small = chart defaults (no-op); medium+ adds resource/replica overrides.
 #
 #   Test options:
 #   --iqe-marker EXPR         Pytest marker for IQE tests (default: cost_ocp_on_prem)
@@ -175,6 +178,7 @@ SCRIPT_DEPLOY_S4="deploy-s4-test.sh"  # S4 (Super Simple Storage Service)
 SCRIPT_INSTALL_HELM="install-helm-chart.sh"
 SCRIPT_SETUP_TLS="setup-cost-mgmt-tls.sh"
 OPENSHIFT_VALUES_FILE="${OPENSHIFT_VALUES_FILE:-openshift-values.yaml}"
+SIZING_PROFILE="${SIZING_PROFILE:-}"
 
 # Step flags (default: run all steps)
 SKIP_RHBK=false  # Red Hat Build of Keycloak
@@ -601,6 +605,18 @@ deploy_helm_chart() {
     download_openshift_values "${values_file}"
     export VALUES_FILE="${values_file}"
 
+    # Sizing profile overlay (--sizing-profile small|medium|large|xlarge)
+    if [[ -n "${SIZING_PROFILE}" ]]; then
+        local sizing_file="${PROJECT_ROOT}/cost-onprem/values-${SIZING_PROFILE}.yaml"
+        if [[ ! -f "${sizing_file}" ]]; then
+            log_error "Sizing profile '${SIZING_PROFILE}' not found at: ${sizing_file}"
+            log_error "Valid profiles: small, medium, large, xlarge"
+            exit 1
+        fi
+        export SIZING_VALUES_FILE="${sizing_file}"
+        log_info "Sizing profile: ${SIZING_PROFILE} (${sizing_file})"
+    fi
+
     # Export environment variables for Helm script
     export NAMESPACE="${NAMESPACE}"
     export JWT_AUTH_ENABLED="true"
@@ -922,6 +938,7 @@ print_summary() {
     echo "  Namespace:           ${NAMESPACE}"
     [[ "${DEPLOY_S4}" == "true" ]] && echo "  S4 Namespace:        ${S4_NAMESPACE}"
     [[ "${OPENSHIFT_VALUES_FILE}" != "openshift-values.yaml" ]] && echo "  Values File:         ${OPENSHIFT_VALUES_FILE}"
+    [[ -n "${SIZING_PROFILE}" ]] && echo "  Sizing Profile:      ${SIZING_PROFILE}"
     echo "  Use Local Chart:     ${USE_LOCAL_CHART}"
     [[ "${USE_HELM_DEVEL}" == "true" ]] && echo "  Include Pre-release: ${USE_HELM_DEVEL}"
     [[ -n "${CHART_VERSION}" ]] && echo "  Chart Version:       ${CHART_VERSION}"
@@ -977,6 +994,7 @@ main() {
     echo ""
 
     # Parse command line arguments
+    local -a ORIGINAL_ARGS=("$@")
     while [[ $# -gt 0 ]]; do
         case $1 in
             --skip-rhbk)
@@ -1025,6 +1043,10 @@ main() {
                 ;;
             --chart-version)
                 CHART_VERSION="$2"
+                shift 2
+                ;;
+            --sizing-profile)
+                SIZING_PROFILE="$2"
                 shift 2
                 ;;
             --verbose)
@@ -1157,6 +1179,24 @@ main() {
                    exit 1 ;;
             esac
         done
+    fi
+
+    # When --sizing-profile is set, the deploy-time overlay already configures
+    # resources/replicas/timeouts.  Auto-enable --skip-profile-config so
+    # apply_perf_profile_config() doesn't overwrite at test time — unless the
+    # user explicitly passed --perf-profile to override.
+    if [[ -n "${SIZING_PROFILE}" ]] && [[ "${SKIP_PROFILE_CONFIG}" == "false" ]]; then
+        # Detect whether --perf-profile was explicitly passed (vs the default)
+        local perf_profile_explicit=false
+        for _arg in "${ORIGINAL_ARGS[@]:-}"; do
+            [[ "${_arg}" == "--perf-profile" ]] && perf_profile_explicit=true
+        done
+        if [[ "${perf_profile_explicit}" == "false" ]]; then
+            SKIP_PROFILE_CONFIG=true
+            log_info "Auto-enabled --skip-profile-config (--sizing-profile ${SIZING_PROFILE} sets resources at deploy time)"
+        else
+            log_warning "--sizing-profile ${SIZING_PROFILE} and --perf-profile ${PERF_PROFILE} both set; perf profile will override sizing at test time"
+        fi
     fi
 
     # In tests-only / skip-deploy mode, skip all deployment steps

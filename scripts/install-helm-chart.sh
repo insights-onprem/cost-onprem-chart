@@ -1181,6 +1181,17 @@ deploy_helm_chart() {
         fi
     fi
 
+    # Add sizing profile overlay (applied after VALUES_FILE so it wins on merge)
+    if [ -n "${SIZING_VALUES_FILE:-}" ]; then
+        if [ -f "$SIZING_VALUES_FILE" ]; then
+            echo_info "Using sizing profile overlay: $SIZING_VALUES_FILE"
+            helm_cmd="$helm_cmd -f \"$SIZING_VALUES_FILE\""
+        else
+            echo_error "Sizing profile overlay not found: $SIZING_VALUES_FILE"
+            return 1
+        fi
+    fi
+
     # -------------------------------------------------------------------------
     # Cluster-detected values (FLPATH-3181: chart no longer uses lookup())
     # The install script is the single source of truth for cluster-specific

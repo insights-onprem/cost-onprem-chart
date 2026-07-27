@@ -1,0 +1,87 @@
+# Large profile overlay — Cost On-Prem
+# =====================================
+# COST-7618 / sizing-guide.md
+# Aligned with apply_perf_profile_config() large case in
+# scripts/lib/perf-testing.sh, plus database sizing from the sizing guide.
+#
+# Usage:
+#   helm upgrade --install cost-onprem ./cost-onprem \
+#     -n cost-onprem -f openshift-values.yaml \
+#     -f cost-onprem/values-large.yaml
+#
+# Target workload: ~7 clusters, ~133 nodes, ~1,964 CPU cores (21% of customers)
+#
+# After helm upgrade, restart the gateway deployment so Envoy picks up timeout
+# ConfigMap changes (PERF-FINDING-020):
+#   oc rollout restart deployment/cost-onprem-gateway -n cost-onprem
+
+resources:
+  database:
+    requests:
+      cpu: "2000m"
+      memory: "4Gi"
+    limits:
+      cpu: "4000m"
+      memory: "16Gi"
+  kruize:
+    requests:
+      cpu: "1000m"
+      memory: "2Gi"
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+  rosProcessor:
+    requests:
+      memory: "2Gi"
+    limits:
+      memory: "4Gi"
+  application:
+    requests:
+      memory: "2Gi"
+    limits:
+      memory: "4Gi"
+
+costManagement:
+  listener:
+    replicas: 3
+    resources:
+      requests:
+        memory: "2Gi"
+      limits:
+        memory: "4Gi"
+  celery:
+    workers:
+      ocp:
+        replicas: 3
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+      summary:
+        replicas: 3
+        resources:
+          requests:
+            cpu: "500m"
+          limits:
+            cpu: "1000m"
+
+ros:
+  processor:
+    replicas: 3
+
+ingress:
+  upload:
+    maxUploadSize: 524288000  # 500MB
+    maxMemory: 134217728      # 128MB — larger values destabilize the pipeline
+
+jwtAuth:
+  envoy:
+    ingressTimeout: "600s"
+    ingressPerTryTimeout: "300s"
+
+gatewayRoute:
+  annotations:
+    haproxy.router.openshift.io/timeout: "600s"

@@ -183,6 +183,10 @@ jobs:
           run_case         "--perf-only --deploy-observability"        "--perf-only --deploy-observability"        "Performance-only"      false   false  true   false
           run_case         "--perf-only --collect-metrics"             "--perf-only --collect-metrics"             "Performance-only"      false   false  true   false
 
+          # Sizing profile (COST-7618)
+          run_case         "--sizing-profile medium"                   "--sizing-profile medium"                  "Full deployment"       true    true   false  false
+          run_case         "--sizing-profile large"                    "--sizing-profile large"                   "Full deployment"       true    true   false  false
+
           # Chart version flags
           run_case         "--devel"                                   "--devel"                                  "Full deployment"       true    true   false  false
           run_case         "--chart-version 0.2.19"                    "--chart-version 0.2.19"                   "Full deployment"       true    true   false  false

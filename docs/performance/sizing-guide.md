@@ -35,6 +35,14 @@ is the downstream pipeline (worker replicas, worker CPU/memory, ingress memory,
 upload limits), not the listener. See [FINDINGS.md](./FINDINGS.md#perf-finding-035)
 for the full VTC-001a characterization.
 
+### COST-7618: Profile Values Overlays (2026-07-27)
+
+Published declarative Helm overlays for each sizing profile under
+[`cost-onprem/`](../../cost-onprem/). These are the deploy-time
+equivalent of `apply_perf_profile_config()`, plus database sizing. Soft
+recommendation for mapping overlays to a future operator CRD:
+[operator-profile-crd-mapping.md](./operator-profile-crd-mapping.md).
+
 ---
 
 ## Quick Reference
@@ -56,9 +64,9 @@ with clean (0-failure) automated runs. Stress profiles have not yet been execute
 
 **Chart defaults = Small profile** (as of COST-7599). A fresh install with no
 `values.yaml` overrides provides the small-profile resource allocations listed
-below. Medium, large, and xlarge profiles require explicit overrides — see the
-[Helm Values Examples](#helm-values-examples) section. Performance test runs
-can apply overrides dynamically via `apply_perf_profile_config()`.
+below. Medium, large, and xlarge profiles require explicit overlays — see
+[Helm Values Overlays](#helm-values-overlays). Performance test runs can apply
+the same settings dynamically via `apply_perf_profile_config()`.
 
 Kruize memory and Database resources should be set in `values.yaml` at
 deployment time. All values have been validated through successful end-to-end
@@ -293,15 +301,13 @@ Large/xlarge profiles should increase to 600s for bulk uploads.
 | Large | 600s | 600s | 300s |
 | XLarge | 600s | 600s | 300s |
 
-**Configuration** (`values.yaml`):
+**Configuration** (see large/xlarge overlays for full context):
 
 ```yaml
-gateway:
+jwtAuth:
   envoy:
-    routes:
-      ingress:
-        timeout: 600s
-        per_try_timeout: 300s
+    ingressTimeout: "600s"
+    ingressPerTryTimeout: "300s"
 
 gatewayRoute:
   annotations:
@@ -406,204 +412,39 @@ For perf testing clusters, 10 Gi saves 270 Gi of ODF PV capacity.
 
 ---
 
-## Helm Values Examples
+## Helm Values Overlays
 
-### Small Profile (Chart Defaults)
+Declarative profile overlays live in
+`cost-onprem/` alongside `values.yaml`. They use the same chart keys as
+`apply_perf_profile_config()` and add database sizing (which the perf script
+does not change at runtime).
 
-No overrides needed — the chart defaults match the small profile as of
-COST-7599. A fresh `helm install` produces these settings:
+| Profile | Overlay | Notes |
+|---------|---------|-------|
+| Small | [values-small.yaml](../../cost-onprem/values-small.yaml) | ≡ chart defaults (COST-7599); optional `-f` |
+| Medium | [values-medium.yaml](../../cost-onprem/values-medium.yaml) | Required for medium workloads |
+| Large | [values-large.yaml](../../cost-onprem/values-large.yaml) | Restart gateway after upgrade (FINDING-020) |
+| XLarge | [values-xlarge.yaml](../../cost-onprem/values-xlarge.yaml) | Same replicas as large; higher worker CPU/memory |
 
-```yaml
-# These are the chart defaults — no values.yaml overrides required
-resources:
-  database:
-    requests: { cpu: "500m", memory: "1Gi" }
-    limits:   { cpu: "2000m", memory: "4Gi" }
-  kruize:
-    requests: { cpu: "1000m" }
-    limits:   { cpu: "2000m" }
+```bash
+# Medium example (manual)
+helm upgrade --install cost-onprem ./cost-onprem \
+  -n cost-onprem \
+  -f openshift-values.yaml \
+  -f cost-onprem/values-medium.yaml \
+  --wait
 
-costManagement:
-  listener:
-    replicas: 2
-  celeryWorker:
-    workers:
-      ocp:
-        replicas: 2
-      summary:
-        replicas: 2
-
-jwtAuth:
-  envoy:
-    ingressTimeout: 180s
-    ingressPerTryTimeout: 60s
-
-gatewayRoute:
-  annotations:
-    haproxy.router.openshift.io/timeout: "180s"
+# Via deploy script
+./scripts/deploy-test-cost-onprem.sh --namespace cost-onprem --sizing-profile medium
 ```
 
-**Validated**: 25/25 passed with `--skip-profile-config --listener-cpu none`
-(pure chart defaults, no runtime overrides).
+**Small validated** with `--skip-profile-config --listener-cpu none` (pure
+chart defaults, no runtime overrides). Medium through xlarge validated via
+profile-config performance runs.
 
-### Medium Profile
-
-```yaml
-resources:
-  kruize:
-    requests: { cpu: "500m" }
-    limits:   { cpu: "2000m" }
-  rosProcessor:
-    requests: { memory: "2Gi" }
-    limits:   { memory: "4Gi" }
-  application:
-    requests: { memory: "1Gi" }
-    limits:   { memory: "2Gi" }
-
-costManagement:
-  listener:
-    replicas: 2
-    resources:
-      requests: { memory: "1Gi" }
-      limits:   { memory: "2Gi" }
-  celeryWorker:
-    workers:
-      ocp:
-        replicas: 2
-        resources:
-          requests: { cpu: "250m" }
-          limits:   { cpu: "1000m" }
-      summary:
-        replicas: 2
-        resources:
-          requests: { cpu: "250m" }
-          limits:   { cpu: "1000m" }
-
-ros:
-  processor:
-    replicas: 2
-
-ingress:
-  upload:
-    maxSize: "200MB"
-    maxMemory: "64MB"
-
-gateway:
-  envoy:
-    routes:
-      ingress:
-        timeout: 180s
-        per_try_timeout: 180s
-gatewayRoute:
-  annotations:
-    haproxy.router.openshift.io/timeout: "180s"
-```
-
-### Large Profile
-
-```yaml
-resources:
-  kruize:
-    requests: { cpu: "500m" }
-    limits:   { cpu: "2000m" }
-  rosProcessor:
-    requests: { memory: "2Gi" }
-    limits:   { memory: "4Gi" }
-  application:
-    requests: { memory: "2Gi" }
-    limits:   { memory: "4Gi" }
-
-costManagement:
-  listener:
-    replicas: 3
-    resources:
-      requests: { memory: "2Gi" }
-      limits:   { memory: "4Gi" }
-  celeryWorker:
-    workers:
-      ocp:
-        replicas: 3
-        resources:
-          requests: { cpu: "500m" }
-          limits:   { cpu: "1000m", memory: "2Gi" }
-      summary:
-        replicas: 3
-        resources:
-          requests: { cpu: "500m" }
-          limits:   { cpu: "1000m" }
-
-ros:
-  processor:
-    replicas: 3
-
-ingress:
-  upload:
-    maxSize: "500MB"
-    maxMemory: "128MB"
-
-gateway:
-  envoy:
-    routes:
-      ingress:
-        timeout: 600s
-        per_try_timeout: 300s
-gatewayRoute:
-  annotations:
-    haproxy.router.openshift.io/timeout: "600s"
-```
-
-### XLarge Profile
-
-```yaml
-resources:
-  kruize:
-    requests: { cpu: "1000m" }
-    limits:   { cpu: "2000m" }
-  rosProcessor:
-    requests: { memory: "2Gi" }
-    limits:   { memory: "4Gi" }
-  application:
-    requests: { memory: "2Gi" }
-    limits:   { memory: "4Gi" }
-
-costManagement:
-  listener:
-    replicas: 3
-    resources:
-      requests: { memory: "2Gi" }
-      limits:   { memory: "4Gi" }
-  celeryWorker:
-    workers:
-      ocp:
-        replicas: 3
-        resources:
-          requests: { cpu: "1000m" }
-          limits:   { cpu: "2000m", memory: "4Gi" }
-      summary:
-        replicas: 3
-        resources:
-          requests: { cpu: "1000m" }
-          limits:   { cpu: "2000m" }
-
-ros:
-  processor:
-    replicas: 3
-
-ingress:
-  upload:
-    maxSize: "500MB"
-    maxMemory: "128MB"
-
-gateway:
-  envoy:
-    routes:
-      ingress:
-        timeout: 600s
-        per_try_timeout: 300s
-gatewayRoute:
-  annotations:
-    haproxy.router.openshift.io/timeout: "600s"
-```
+For a soft recommendation on how these overlays map to a future Cost
+Management OpenShift Operator CRD, see
+[operator-profile-crd-mapping.md](./operator-profile-crd-mapping.md).
 
 ---
 
@@ -631,7 +472,9 @@ gatewayRoute:
 - [FINDINGS.md](./FINDINGS.md) — detailed product findings and evidence
 - [TEST-MATRIX.md](./TEST-MATRIX.md) — test coverage matrix
 - [OBSERVABILITY.md](./OBSERVABILITY.md) — metrics collection infrastructure
+- [Profile overlays](../../cost-onprem/) — `values-{small,medium,large,xlarge}.yaml`
+- [Operator CRD mapping](./operator-profile-crd-mapping.md) — soft recommendation for a future operator
 
 ---
 
-_Based on FLPATH-4036 / COST-7567 performance testing. Last updated: 2026-07-23._
+_Based on FLPATH-4036 / COST-7567 performance testing. Last updated: 2026-07-27._

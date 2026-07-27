@@ -14,6 +14,8 @@ Stress profiles (P99/Max) and soak tests pending.
 | [TEST-MATRIX.md](TEST-MATRIX.md) | Complete test matrix with all permutations and parameters |
 | [FINDINGS.md](FINDINGS.md) | Product issues discovered during testing (Jira-ready summaries) |
 | [sizing-guide.md](sizing-guide.md) | Resource sizing recommendations validated through testing |
+| [operator-profile-crd-mapping.md](operator-profile-crd-mapping.md) | Soft recommendation: Helm profiles → future operator CRD |
+| [cost-onprem/values-*.yaml](../../cost-onprem/) | Helm values overlays per sizing profile (COST-7618) |
 | [OBSERVABILITY.md](OBSERVABILITY.md) | Metrics collection, S3 archival, and report generation |
 | [cost-onprem-group-by-investigation.md](cost-onprem-group-by-investigation.md) | API group_by dimension limit investigation |
 
