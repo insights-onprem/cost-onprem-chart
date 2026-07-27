@@ -186,6 +186,8 @@ jobs:
           # Sizing profile (COST-7618)
           run_case         "--sizing-profile medium"                   "--sizing-profile medium"                  "Full deployment"       true    true   false  false
           run_case         "--sizing-profile large"                    "--sizing-profile large"                   "Full deployment"       true    true   false  false
+          run_case         "--perf-only --sizing-profile medium"       "--perf-only --sizing-profile medium"      "Performance-only"      false   false  true   false
+          run_case         "--skip-deploy --sizing-profile large"      "--skip-deploy --sizing-profile large"     "Tests-only"            false   true   false  false
 
           # Chart version flags
           run_case         "--devel"                                   "--devel"                                  "Full deployment"       true    true   false  false

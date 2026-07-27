@@ -592,9 +592,62 @@ deploy_s4() {
     log_info "Storage credentials secret: cost-onprem-storage-credentials (in ${NAMESPACE})"
 }
 
+apply_sizing_profile() {
+    local release="${HELM_RELEASE_NAME:-cost-onprem}"
+    local namespace="${NAMESPACE:-cost-onprem}"
+    local sizing_file="${PROJECT_ROOT}/cost-onprem/values-${SIZING_PROFILE}.yaml"
+
+    if [[ ! -f "${sizing_file}" ]]; then
+        log_error "Sizing profile '${SIZING_PROFILE}' not found at: ${sizing_file}"
+        log_error "Valid profiles: small, medium, large, xlarge"
+        exit 1
+    fi
+
+    log_step "Applying sizing profile '${SIZING_PROFILE}' to existing deployment"
+
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log_info "DRY RUN: Would run helm upgrade ${release} --reuse-values -f ${sizing_file}"
+        return 0
+    fi
+
+    local chart_ref
+    if [[ "${USE_LOCAL_CHART:-false}" == "true" ]]; then
+        chart_ref="${PROJECT_ROOT}/cost-onprem"
+    else
+        chart_ref="${release}"
+    fi
+
+    if ! helm upgrade "${release}" "${chart_ref}" \
+            --reuse-values \
+            --namespace "${namespace}" \
+            -f "${sizing_file}" \
+            --wait --timeout 5m 2>&1; then
+        log_error "Failed to apply sizing profile '${SIZING_PROFILE}'"
+        return 1
+    fi
+
+    log_success "Sizing profile '${SIZING_PROFILE}' applied"
+
+    # Restart gateway so Envoy picks up timeout changes (PERF-FINDING-020)
+    local gw_deploy="${release}-gateway"
+    if oc rollout restart deployment "${gw_deploy}" -n "${namespace}" 2>/dev/null; then
+        if oc rollout status deployment "${gw_deploy}" -n "${namespace}" --timeout=2m 2>/dev/null; then
+            log_success "Gateway restarted (Envoy config reloaded)"
+        else
+            log_warning "Gateway rollout did not stabilize — Envoy may still use old timeouts"
+        fi
+    fi
+}
+
 deploy_helm_chart() {
     if [[ "${SKIP_HELM}" == "true" ]]; then
-        log_warning "Skipping Cost On-Prem Helm chart installation (--skip-helm)"
+        # When deploy is skipped but --sizing-profile is set, apply the overlay
+        # to the existing release so the cluster matches the requested profile.
+        if [[ -n "${SIZING_PROFILE}" ]]; then
+            apply_sizing_profile
+        else
+            log_warning "Skipping Cost On-Prem Helm chart installation (--skip-helm)"
+        fi
         return 0
     fi
 
