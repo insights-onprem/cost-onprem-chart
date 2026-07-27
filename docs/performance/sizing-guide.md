@@ -297,7 +297,7 @@ Large/xlarge profiles should increase to 600s for bulk uploads.
 | Profile | HAProxy Timeout | Envoy Route Timeout | Envoy Per-Try Timeout |
 |---------|-----------------|---------------------|----------------------|
 | Small | 180s (default) | 180s (default) | 60s (default) |
-| Medium | 180s (default) | 180s (default) | 60s (default) |
+| Medium | 180s (default) | 180s (default) | 180s |
 | Large | 600s | 600s | 300s |
 | XLarge | 600s | 600s | 300s |
 
