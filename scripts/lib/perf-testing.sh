@@ -401,6 +401,7 @@ run_performance_tests() {
                 db)        perf_args+=("--perf-db") ;;
                 kafka)     perf_args+=("--perf-kafka") ;;
                 celery)    perf_args+=("--perf-celery") ;;
+                stress)    perf_args+=("--perf-stress") ;;
             esac
         done
     fi

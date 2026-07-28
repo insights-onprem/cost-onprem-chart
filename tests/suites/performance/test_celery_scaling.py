@@ -32,6 +32,8 @@ from .helpers import (
     PerfResultCollector,
     PerfTimer,
     generate_and_upload_data,
+    get_oomkill_events,
+    get_pod_restart_counts,
 )
 from .k8s_helpers import (
     capture_pg_stats,
@@ -92,46 +94,6 @@ def _wait_for_pod_metrics(
     return result
 
 
-def get_oomkill_events(namespace: str, label: str) -> List[Dict[str, str]]:
-    """Check for OOMKilled containers in pods matching *label*."""
-    result = run_oc_command(
-        ["get", "pods", "-n", namespace,
-         "-l", label,
-         "-o", "jsonpath={range .items[*]}{.metadata.name}|"
-               "{range .status.containerStatuses[*]}"
-               "{.lastState.terminated.reason}{end}{'\\n'}{end}"],
-        check=False,
-    )
-    events = []
-    if result.returncode == 0:
-        for line in result.stdout.strip().splitlines():
-            if "OOMKilled" in line:
-                pod_name = line.split("|", 1)[0]
-                events.append({
-                    "pod": pod_name,
-                    "reason": "OOMKilled",
-                })
-    return events
-
-
-def get_pod_restart_counts(namespace: str, label: str) -> Dict[str, int]:
-    """Get restart counts for pods matching a label."""
-    result = run_oc_command(
-        ["get", "pods", "-n", namespace, "-l", label,
-         "-o", "jsonpath={range .items[*]}{.metadata.name} "
-               "{range .status.containerStatuses[*]}{.restartCount}{end}{'\\n'}{end}"],
-        check=False,
-    )
-    counts = {}
-    if result.returncode == 0:
-        for line in result.stdout.strip().splitlines():
-            parts = line.split()
-            if len(parts) >= 2:
-                try:
-                    counts[parts[0]] = int(parts[1])
-                except ValueError:
-                    pass
-    return counts
 
 
 # ---------------------------------------------------------------------------
