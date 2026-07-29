@@ -182,7 +182,7 @@ apply_perf_profile_config() {
             --set "jwtAuth.envoy.ingressTimeout=${ingress_timeout}" \
             --set "jwtAuth.envoy.ingressPerTryTimeout=${ingress_per_try_timeout}" \
             --set "gatewayRoute.annotations.haproxy\\.router\\.openshift\\.io/timeout=${haproxy_timeout}" \
-            --wait --timeout 5m 2>&1; then
+            --wait --timeout 10m 2>&1; then
         log_warning "helm upgrade for profile config failed — continuing with oc scale only; resource limits may not match profile"
     else
         log_success "Resource/timeout overrides applied"
