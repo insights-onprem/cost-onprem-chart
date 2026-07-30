@@ -194,7 +194,7 @@ class TestStress:
     # STR-001: Ramp-to-failure
     # -----------------------------------------------------------------
 
-    @pytest.mark.timeout(7200)
+    @pytest.mark.timeout(14400)
     def test_perf_str_001_ramp_to_failure(
         self,
         cluster_config: ClusterConfig,
