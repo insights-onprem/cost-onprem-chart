@@ -31,6 +31,8 @@ class PerfCleanupTracker:
             # Cleanup happens automatically after test
     """
 
+    CLEANUP_TIMEOUT_S = int(os.environ.get("PERF_CLEANUP_TIMEOUT", "900"))
+
     def __init__(self, namespace: str, helm_release: str):
         self.namespace = namespace
         self.helm_release = helm_release
@@ -190,6 +192,12 @@ class PerfCleanupTracker:
     def cleanup(self, rh_identity_header: str):
         """Clean up all tracked resources.
 
+        The entire cleanup is capped at CLEANUP_TIMEOUT_S (default 900s /
+        15 min, configurable via PERF_CLEANUP_TIMEOUT env var).  If the
+        timeout fires, remaining resources are skipped and a warning is
+        emitted.  This prevents hung cleanup from blocking the pipeline
+        (see xlarge stress run #97 where cleanup hung for 30+ minutes).
+
         Emits a RuntimeWarning if any cleanup operations fail, so test
         output surfaces dirty state without failing the test itself.
         """
@@ -205,11 +213,19 @@ class PerfCleanupTracker:
         if not self.resources:
             return
 
-        print(f"\n[PERF CLEANUP] Cleaning {len(self.resources)} tracked resources...")
+        deadline = time.time() + self.CLEANUP_TIMEOUT_S
+        total = len(self.resources)
+        print(f"\n[PERF CLEANUP] Cleaning {total} tracked resources "
+              f"(timeout: {self.CLEANUP_TIMEOUT_S}s)...")
 
         # Wait for the ROS processor to consume any pending Kafka events
         # before deleting sources (PERF-FINDING-013).
         self._wait_for_ros_drain()
+
+        if time.time() >= deadline:
+            print(f"[PERF CLEANUP] Timeout reached during ros-drain, skipping resource deletion")
+            self.resources.clear()
+            return
 
         ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")
         db_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=database")
@@ -217,8 +233,17 @@ class PerfCleanupTracker:
         koku_api_url = build_koku_api_url(self.helm_release, self.namespace)
 
         failures: List[str] = []
+        cleaned = 0
 
         for resource in self.resources:
+            if time.time() >= deadline:
+                remaining = total - cleaned
+                msg = (f"Cleanup timeout ({self.CLEANUP_TIMEOUT_S}s) reached after "
+                       f"{cleaned}/{total} resources — {remaining} skipped")
+                print(f"\n[PERF CLEANUP] {msg}")
+                failures.append(msg)
+                break
+
             if resource.source_id and ingress_pod:
                 try:
                     if delete_source(
@@ -252,17 +277,20 @@ class PerfCleanupTracker:
                     print(f"  {msg}")
                     failures.append(msg)
 
-        self._cleanup_s3_data(failures)
+            cleaned += 1
+
+        if time.time() < deadline:
+            self._cleanup_s3_data(failures)
 
         self.resources.clear()
 
         if failures:
-            print(f"[PERF CLEANUP] Completed with {len(failures)} failure(s)")
+            print(f"[PERF CLEANUP] Completed with {len(failures)} issue(s) ({cleaned}/{total} cleaned)")
             warnings.warn(
-                f"Performance test cleanup had {len(failures)} failure(s): "
+                f"Performance test cleanup had {len(failures)} issue(s): "
                 + "; ".join(failures[:3]),
                 RuntimeWarning,
                 stacklevel=2,
             )
         else:
-            print("[PERF CLEANUP] Complete")
+            print(f"[PERF CLEANUP] Complete ({cleaned}/{total})")

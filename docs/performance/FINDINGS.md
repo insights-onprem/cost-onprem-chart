@@ -809,6 +809,44 @@ everything.
 
 ---
 
+## Stress Testing Findings (COST-7627 + COST-7600)
+
+### PERF-FINDING-036: Stress Ramp Breaking Points Scale with Profile
+
+**Status**: Validated (medium, large, xlarge)
+**Severity**: Informational
+**Category**: Capacity planning
+
+**Tests**: `PERF-STR-001` (ramp-to-failure), `PERF-STR-002` (backlog recovery)
+
+**Breaking points by profile** (with `listener-cpu=max`):
+
+| Profile | Last Good Step | Breaking Point | Reason |
+|---------|---------------|---------------|--------|
+| Medium | 50 sources | 75 sources | Step time exceeded MAX_STEP_TIME |
+| Large | 75 sources | 100 sources | Step time exceeded MAX_STEP_TIME |
+| XLarge | 100 sources | 150 sources | pytest timeout (processing still ongoing, not failure) |
+
+**Key observations**:
+- System never crashed or OOMed at any profile — breaking point is always
+  "processing too slow", not "component failure".
+- API remained responsive (4-10ms p50) throughout all ramp steps.
+- Backlog recovery (STR-002) passed cleanly at all profiles — queues drain
+  and API latencies return to baseline after overload stops.
+- XLarge step 8 (150 sources) was still processing when the 2h pytest timeout
+  fired — the system was making progress, just slowly.
+
+**Suite split**: The `stress` suite was split into `stress_ramp` (STR-001) and
+`stress_recovery` (STR-002) to allow running them independently. STR-001 is
+the heavyweight long-running test; STR-002 is shorter and can reuse STR-001
+results or fall back to defaults.
+
+**Cleanup timeout**: Resource cleanup is now capped at `PERF_CLEANUP_TIMEOUT`
+(default 900s / 15 min) to prevent pipeline hangs. During xlarge runs with
+300+ tracked resources, cleanup was observed to hang indefinitely.
+
+---
+
 ## Environment Issues
 
 ### PERF-FINDING-010: ODF Default Resources Exhaust Cluster Memory
@@ -872,9 +910,10 @@ results are maintained in the [Sizing Guide](sizing-guide.md#performance-baselin
 | FINDING-033 | OCP workers survive at 256Mi — OOM floor at 128-256Mi | [COST-7598](https://redhat.atlassian.net/browse/COST-7598) | Validated (medium + large + xlarge) |
 | FINDING-034 | Multi-replica Kruize confirms single-replica recommendation | [COST-7598](https://redhat.atlassian.net/browse/COST-7598) | Validated (medium + large + xlarge) |
 | FINDING-035 | Chart defaults pass small; medium needs worker/ingress scaling, not listener CPU | [COST-7599](https://redhat.atlassian.net/browse/COST-7599) | Validated (VTC-001a complete) |
+| FINDING-036 | Stress ramp breaking points scale with profile; system never crashes | [COST-7627](https://redhat.atlassian.net/browse/COST-7627), [COST-7600](https://redhat.atlassian.net/browse/COST-7600) | Validated (medium + large + xlarge) |
 
 **Parent epic**: [COST-7567](https://redhat.atlassian.net/browse/COST-7567) (CoP Performance Tuning & Hardware Sizing Guidelines)
 
 ---
 
-_Last Updated: 2026-07-23_
+_Last Updated: 2026-07-30_

@@ -9,11 +9,19 @@ Test IDs:
 - PERF-STR-002: Backlog recovery (sustained overload then drain)
 
 Usage:
-    # Via deploy script (recommended)
+    # Both tests (recommended)
     ./scripts/deploy-test-cost-onprem.sh --perf-only --perf-profile medium --perf-suite stress
+
+    # Ramp only (long-running, heavyweight)
+    ./scripts/deploy-test-cost-onprem.sh --perf-only --perf-profile medium --perf-suite stress_ramp
+
+    # Recovery only (shorter, uses STR-001 results or defaults)
+    ./scripts/deploy-test-cost-onprem.sh --perf-only --perf-profile medium --perf-suite stress_recovery
 
     # Direct pytest
     PERF_PROFILE=medium pytest -m "performance and stress" tests/suites/performance/
+    PERF_PROFILE=medium pytest -m "performance and stress_ramp" tests/suites/performance/
+    PERF_PROFILE=medium pytest -m "performance and stress_recovery" tests/suites/performance/
 
 Environment Variables:
     STRESS_RAMP_STEPS: Comma-separated source counts (default: 5,10,20,30,50,75,100)
@@ -194,6 +202,7 @@ class TestStress:
     # STR-001: Ramp-to-failure
     # -----------------------------------------------------------------
 
+    @pytest.mark.stress_ramp
     @pytest.mark.timeout(14400)
     def test_perf_str_001_ramp_to_failure(
         self,
@@ -460,6 +469,7 @@ class TestStress:
     # STR-002: Backlog recovery
     # -----------------------------------------------------------------
 
+    @pytest.mark.stress_recovery
     @pytest.mark.timeout(3600)
     def test_perf_str_002_backlog_recovery(
         self,

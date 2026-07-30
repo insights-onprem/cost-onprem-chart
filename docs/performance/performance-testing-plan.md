@@ -450,6 +450,20 @@ histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="koku-api
 - [x] Jenkins CI integration (`insights_onprem.groovy` with `PERF_PROFILE` and `PERF_SUITE` params)
 - [x] Self-contained HTML run reports and JSON summaries
 - [x] S3 result archival to shared MinIO
+- [x] Stress ramp-to-failure + backlog recovery (`test_stress.py`, COST-7627 + COST-7600)
+
+### Stress Test Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `STRESS_RAMP_STEPS` | `5,10,20,30,50,75,100` | Comma-separated source counts per ramp step |
+| `STRESS_MAX_STEP_TIME` | `1800` | Absolute max seconds per step before declaring failure |
+| `STRESS_STEP_TIMEOUT_BASE` | `120` | Base timeout per step (seconds) |
+| `STRESS_STEP_TIMEOUT_PER_SOURCE` | `60` | Additional seconds per source |
+| `STRESS_RECOVERY_SOURCE_COUNT` | `0` | Sources for recovery test; 0 = auto from STR-001 |
+| `STRESS_RECOVERY_DURATION_S` | `300` | Overload duration for STR-002 (seconds) |
+| `PERF_CLEANUP_TIMEOUT` | `900` | Max seconds for post-test resource cleanup (prevents hangs) |
+| `METRICS_MAX_DURATION` | `14400` | Max seconds for metrics collector (auto-set from `JOB_TIMEOUT_HOURS` in Jenkins) |
 
 ### Validated Profiles
 
@@ -470,7 +484,9 @@ histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="koku-api
 | `test_scale.py` | 5 | Multi-cluster scale (SCALE-001 through SCALE-005) |
 | `test_ros.py` | 4 | ROS/Kruize performance (ROS-001 through ROS-004) |
 | `test_soak.py` | 4 | Soak stability (SOAK-001 through SOAK-004, opt-in) |
+| `test_stress.py` | 2 | Stress ramp-to-failure + backlog recovery (STR-001, STR-002) |
 | `profiles.py` | — | Profile definitions + NISE YAML generation |
+| `tracker.py` | — | Resource cleanup tracker with configurable timeout |
 | `conftest.py` | — | Fixtures, cleanup, data generation |
 | `verify_infrastructure.py` | — | Pre-run infrastructure validation |
 
@@ -489,6 +505,11 @@ PERF_PROFILE=medium pytest -m performance tests/suites/performance/
 # Specific suite
 PERF_PROFILE=xlarge pytest -m "performance and ingestion" tests/suites/performance/
 
+# Stress tests — all, ramp only, or recovery only
+./scripts/deploy-test-cost-onprem.sh --perf-only --perf-profile medium --perf-suite stress
+./scripts/deploy-test-cost-onprem.sh --perf-only --perf-profile medium --perf-suite stress_ramp
+./scripts/deploy-test-cost-onprem.sh --perf-only --perf-profile medium --perf-suite stress_recovery
+
 # Via Jenkins
 # Job: flightpath-insights-onprem (RUN_PERF_TESTS=true, PERF_PROFILE=xlarge, PERF_SUITE=all)
 ```
@@ -500,7 +521,7 @@ PERF_PROFILE=xlarge pytest -m "performance and ingestion" tests/suites/performan
 | ID | Criteria | Status | Evidence |
 |----|----------|--------|----------|
 | SC-1 | Sizing table | **Done** | [sizing-guide.md](./sizing-guide.md) — small through xlarge validated |
-| SC-2 | Cluster count limits | **Partial** | XLarge (23 clusters) validated; stress profiles (33+) not yet tested |
+| SC-2 | Cluster count limits | **Done** | XLarge (23 clusters) validated; stress ramp tested at medium (75), large (100), xlarge (100+) concurrent sources |
 | SC-3 | Bottleneck analysis | **Done** | [FINDINGS.md](./FINDINGS.md) — 13 findings documented with severity and evidence |
 | SC-4 | Processing window | **Partial** | XLarge completes in ~2h; need to validate against 6-hour SLA formally |
 | SC-5 | Soak test | **Not started** | Tests exist but require `SOAK_TESTS=true` and dedicated 7-day run window |
@@ -508,7 +529,7 @@ PERF_PROFILE=xlarge pytest -m "performance and ingestion" tests/suites/performan
 ## Next Steps
 
 1. [x] Run medium profile for a clean validated baseline (target: 0 failures) — 28/28 api+ingestion, 4/4 ros passed
-2. [ ] Execute stress_p99 profile (33 clusters) to find the actual breaking point
+2. [x] Execute stress ramp-to-failure across medium, large, xlarge — breaking points identified (75, 100, 100+ sources)
 3. [ ] Execute 7-day soak test (SC-5) — requires dedicated cluster time
 4. [x] Publish sizing profile overlays + operator mapping draft (COST-7618) — see `cost-onprem/values-*.yaml` and `operator-profile-crd-mapping.md`
 5. [x] File tickets for untracked findings — FLPATH-4428 (013), FLPATH-4429 (020), FLPATH-4430 (022), FLPATH-4431 (024)

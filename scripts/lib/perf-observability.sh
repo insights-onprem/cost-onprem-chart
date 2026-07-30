@@ -111,7 +111,8 @@ start_metrics_collection() {
     log_info "    results/  - Test results JSON"
     log_info "    reports/  - JUnit XML, HTML report"
 
-    "${collect_script}" --continuous "${METRICS_INTERVAL}" &
+    local max_dur="${METRICS_MAX_DURATION:-14400}"
+    "${collect_script}" --continuous "${METRICS_INTERVAL}" --max-duration "${max_dur}" &
     METRICS_COLLECTOR_PID=$!
 
     log_success "Metrics collection started (PID: ${METRICS_COLLECTOR_PID})"
