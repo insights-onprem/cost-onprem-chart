@@ -156,7 +156,7 @@ costManagement:
 
     image:
       repository: quay.io/redhat-services-prod/cost-mgmt-dev-tenant/koku
-      tag: "d8055ac"
+      tag: "986b528"
       pullPolicy: IfNotPresent
 
     replicas: 1
@@ -665,7 +665,7 @@ database:
 rbac:
   image:
     repository: quay.io/redhat-services-prod/hcc-accessmanagement-tenant/insights-rbac
-    tag: "73870d8"
+    tag: "4fabf53"
     pullPolicy: IfNotPresent
 
   api:
