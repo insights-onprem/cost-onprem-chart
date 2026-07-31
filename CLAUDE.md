@@ -112,7 +112,7 @@ before tests run.
 # Performance tests only (skip deploy)
 ./scripts/deploy-test-cost-onprem.sh --perf-only --perf-profile medium
 
-# Specific perf suite(s): api, ros, ingestion, scale, soak
+# Specific perf suite(s): api, ros, ingestion, scale, soak, valkey, db, kafka, celery, stress, stress_ramp, stress_recovery
 ./scripts/deploy-test-cost-onprem.sh --perf-only --perf-suite ros,api
 ```
 
@@ -127,6 +127,8 @@ to node max for perf runs.
 - `scripts/lib/perf-observability.sh` — Metrics collection + S3 upload
 - `tests/suites/performance/profiles.py` — Data generation profiles (cluster/node/pod counts)
 - `tests/suites/performance/conftest.py` — Fixtures, cleanup tracker, cluster info
+- `tests/suites/performance/test_stress.py` — Stress ramp-to-failure + backlog recovery (STR-001, STR-002)
+- `tests/suites/performance/tracker.py` — Resource cleanup tracker with configurable timeout
 
 ---
 

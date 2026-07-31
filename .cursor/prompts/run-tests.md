@@ -64,12 +64,13 @@ The `apply_perf_profile_config()` function automatically adjusts the live cluste
 # Performance-only against existing deployment
 ./scripts/deploy-test-cost-onprem.sh --namespace cost-onprem --perf-only
 
-# With a specific profile (baseline, small, medium, large)
+# With a specific profile (baseline, small, medium, large, xlarge)
 ./scripts/deploy-test-cost-onprem.sh --perf-only --perf-profile medium
 
-# Run specific perf suite(s): api, ros, ingestion, scale, soak
+# Run specific perf suite(s): api, ros, ingestion, scale, soak, valkey, db, kafka, celery, stress, stress_ramp, stress_recovery
 ./scripts/deploy-test-cost-onprem.sh --perf-only --perf-suite ros
 ./scripts/deploy-test-cost-onprem.sh --perf-only --perf-suite api,ingestion
+./scripts/deploy-test-cost-onprem.sh --perf-only --perf-suite stress_ramp
 ```
 
 #### Profile Scaling Matrix
