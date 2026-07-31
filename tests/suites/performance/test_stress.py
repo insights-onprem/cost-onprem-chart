@@ -530,10 +530,30 @@ class TestStress:
         batch_num = 0
         all_sources: List[Dict[str, Any]] = []
 
-        # Start API probe during overload + recovery
+        # Start API probe during overload phase (informational only)
         session2 = create_authenticated_session(keycloak_config)
-        api_probe_recovery = APIProbeThread(session2, gateway_url, self.namespace, poll_interval=5.0)
-        api_probe_recovery.start()
+        api_probe_overload = APIProbeThread(session2, gateway_url, self.namespace, poll_interval=5.0)
+        api_probe_overload.start()
+
+        def _upload_batch(sources_batch, batch_start, batch_end):
+            """Upload a batch of sources concurrently."""
+            def _upload_one(source_info):
+                try:
+                    jwt_token = self._get_fresh_token()
+                    return generate_and_upload_data(
+                        source_info["cluster_id"],
+                        source_info["source_name"],
+                        batch_start, batch_end,
+                        ingress_url, jwt_token,
+                        profile_name="baseline",
+                    )
+                except Exception as e:
+                    return {"error": str(e), "cluster_id": source_info["cluster_id"]}
+
+            with ThreadPoolExecutor(max_workers=min(len(sources_batch), 20)) as executor:
+                futures = {executor.submit(_upload_one, s): s for s in sources_batch}
+                for future in as_completed(futures):
+                    future.result()
 
         try:
             while time.time() - overload_start < RECOVERY_DURATION_S:
@@ -567,24 +587,7 @@ class TestStress:
 
                 end_date = datetime.now(timezone.utc)
                 start_date = end_date - timedelta(days=7)
-
-                def upload_source(source_info):
-                    try:
-                        jwt_token = self._get_fresh_token()
-                        return generate_and_upload_data(
-                            source_info["cluster_id"],
-                            source_info["source_name"],
-                            start_date, end_date,
-                            ingress_url, jwt_token,
-                            profile_name="baseline",
-                        )
-                    except Exception as e:
-                        return {"error": str(e), "cluster_id": source_info["cluster_id"]}
-
-                with ThreadPoolExecutor(max_workers=min(load_count, 20)) as executor:
-                    futures = {executor.submit(upload_source, s): s for s in sources}
-                    for future in as_completed(futures):
-                        future.result()
+                _upload_batch(sources, start_date, end_date)
 
                 all_sources.extend(sources)
 
@@ -594,8 +597,10 @@ class TestStress:
                 print(f"  Batch {batch_num} uploaded. Queue depth: {total_queued}. "
                       f"Elapsed: {elapsed:.0f}/{RECOVERY_DURATION_S}s")
 
+            overload_api = api_probe_overload.stop()
             print(f"\n  Overload phase complete ({batch_num} batches, "
                   f"{len(all_sources)} total sources)")
+            print(f"  Overload API p95: {overload_api.get('report_baseline', {}).get('p95', '?')}s")
 
             # Recovery phase: stop uploading, monitor until healthy
             print(f"\n{'─'*60}")
@@ -633,12 +638,22 @@ class TestStress:
                 if line.strip()
             ]
 
-        finally:
-            recovery_api = api_probe_recovery.stop()
+            # Post-recovery API probe: measures latency *after* queues
+            # have drained, so the comparison against the quiescent baseline
+            # actually proves the API returned to normal.
+            session3 = create_authenticated_session(keycloak_config)
+            api_probe_post = APIProbeThread(session3, gateway_url, self.namespace, poll_interval=2.0)
+            api_probe_post.start()
+            time.sleep(30)
+            post_recovery_api = api_probe_post.stop()
+
+        except Exception:
+            api_probe_overload.stop()
+            raise
 
         # Evaluate recovery
         recovered = drain_result.get("drained", False)
-        recovery_p95 = recovery_api.get("report_baseline", {}).get("p95", 999)
+        recovery_p95 = post_recovery_api.get("report_baseline", {}).get("p95", 999)
         latency_ratio = recovery_p95 / baseline_p95 if baseline_p95 > 0 else 999
 
         print(f"\n{'='*72}")
@@ -647,7 +662,7 @@ class TestStress:
         print(f"Overload: {batch_num} batches, {len(all_sources)} sources")
         print(f"Queue drained: {recovered} ({drain_result.get('elapsed_s', '?')}s)")
         print(f"Recovery time: {recovery_time:.0f}s")
-        print(f"API p95 — baseline: {baseline_p95:.3f}s, recovery: {recovery_p95:.3f}s "
+        print(f"API p95 — baseline: {baseline_p95:.3f}s, post-recovery: {recovery_p95:.3f}s "
               f"(ratio: {latency_ratio:.1f}x)")
         print(f"New restarts: {total_new} {restart_delta if restart_delta else ''}")
         print(f"OOMKills: {len(oomkills)}")
@@ -657,6 +672,7 @@ class TestStress:
             recovered
             and not unhealthy_pods
             and not oomkills
+            and latency_ratio < 3.0
         )
         print(f"\nVerdict: {'RECOVERED' if healthy else 'NOT RECOVERED'}")
 
@@ -670,11 +686,13 @@ class TestStress:
             "queue_drain_s": drain_result.get("elapsed_s", 0),
             "baseline_p95": round(baseline_p95, 4),
             "recovery_p95": round(recovery_p95, 4),
+            "overload_p95": round(overload_api.get("report_baseline", {}).get("p95", 0), 4),
             "latency_ratio": round(latency_ratio, 2),
             "new_restarts": total_new,
             "oomkill_count": len(oomkills),
             "unhealthy_pods": unhealthy_pods,
-            "api_probe": recovery_api,
+            "api_probe_overload": overload_api,
+            "api_probe_post_recovery": post_recovery_api,
         }
         perf_result.passed = healthy
         perf_collector.add_result(perf_result)
