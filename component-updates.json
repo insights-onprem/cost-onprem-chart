@@ -1,44 +1,28 @@
 {
-  "last_check": "2026-07-28T08:14:32Z",
+  "last_check": "2026-08-01T08:03:42Z",
   "pending_updates": [
     {
-      "image": "quay.io/redhat-services-prod/insights-management-tenant/insights-ocp-resource-optimization/ros-ocp-backend",
-      "previous_tag": "410b86b",
-      "new_tag": "ae8c990",
-      "digest": "sha256:e0a2ea3d62204185ea0eeef09d56213440929ed5d530d3bb22d5ed8ece152eff",
-      "detected_at": "2026-07-28T08:14:32Z",
-      "reason": "updated"
-    },
-    {
       "image": "quay.io/redhat-services-prod/cost-mgmt-dev-tenant/koku",
-      "previous_tag": "d3c5bba",
-      "new_tag": "d8055ac",
-      "digest": "sha256:47b98c014b45dbbe82e08c9b10f3ce84a34dcd8ef27827408227fabd80a435c7",
-      "detected_at": "2026-07-28T08:14:32Z",
+      "previous_tag": "d8055ac",
+      "new_tag": "0e093f8",
+      "digest": "sha256:d2131a178ac02f926f4010e30b825b5b5dc3ff888f2d3f0acecf82e5347b113b",
+      "detected_at": "2026-08-01T08:03:42Z",
       "reason": "updated"
-    },
-    {
-      "image": "quay.io/redhat-services-prod/kruize-autotune-tenant/autotune",
-      "previous_tag": "5eeae99",
-      "new_tag": "d1f0140",
-      "digest": "sha256:cc5ca407293d405fb58204f6b2a48a656c3fbb5f20d03788cb07090778fd9dd7",
-      "detected_at": "2026-07-28T08:14:32Z",
-      "reason": "catch-up"
     },
     {
       "image": "quay.io/redhat-services-prod/hcc-accessmanagement-tenant/insights-rbac",
-      "previous_tag": "b34eb9a",
-      "new_tag": "73870d8",
-      "digest": "sha256:871974a1f8242c96a36a74fae0aa6687568fa7c8fdfce0c9764834194d7e6d1d",
-      "detected_at": "2026-07-28T08:14:32Z",
+      "previous_tag": "73870d8",
+      "new_tag": "2fcb805",
+      "digest": "sha256:ee1ae57d064149e25f4850145959f7eed5ae4595ea3ceea0cc076c28747f210d",
+      "detected_at": "2026-08-01T08:03:42Z",
       "reason": "updated"
     },
     {
       "image": "quay.io/insights-onprem/koku-ui-onprem",
-      "previous_tag": "b1d82e5291897be83be574a56acd63f4ac54464d",
-      "new_tag": "2f23c646581028bd385856b6713e6bf367baf953",
-      "digest": "sha256:7a02850aa5763693ef9d63a7617b58a4b38c12a11891496bfbb189bf1eb9e724",
-      "detected_at": "2026-07-28T08:14:32Z",
+      "previous_tag": "2f23c646581028bd385856b6713e6bf367baf953",
+      "new_tag": "bef9aa1db28642012a9c0b2d2d49f85e11aef116",
+      "digest": "sha256:6a1913acacddd0640e799cac8d1ff4999c87928e3ef0e1bafbce2fd45fb8d286",
+      "detected_at": "2026-08-01T08:03:42Z",
       "reason": "updated"
     }
   ]
