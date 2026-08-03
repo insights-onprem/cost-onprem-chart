@@ -94,6 +94,8 @@ COMPONENT_LABELS = [
 ]
 
 # Module-level state shared between STR-001 and STR-002.
+# Relies on pytest running methods in definition order within a class
+# (str_001 before str_002). STR-002 has a fallback chain if this is empty.
 _ramp_result: Dict[str, Any] = {}
 
 
@@ -166,7 +168,7 @@ def _check_stop_conditions(
         return f"Step took {step.step_time_s:.0f}s (max {MAX_STEP_TIME}s)"
 
     if queue_stall_detected:
-        return "Queue stall: depth grew monotonically for >5 minutes"
+        return "Queue stall: depth grew monotonically over last 5 samples"
 
     error_rate = step.upload_errors / max(step.source_count, 1)
     if error_rate > 0.05:
@@ -291,13 +293,13 @@ class TestStress:
                 upload_errors = []
                 upload_successes = []
 
-                def upload_source(source_info):
+                def _upload_one(source_info, s_date, e_date):
                     try:
                         jwt_token = self._get_fresh_token()
                         return generate_and_upload_data(
                             source_info["cluster_id"],
                             source_info["source_name"],
-                            start_date, end_date,
+                            s_date, e_date,
                             ingress_url, jwt_token,
                             profile_name="baseline",
                         )
@@ -306,7 +308,10 @@ class TestStress:
 
                 upload_start = time.time()
                 with ThreadPoolExecutor(max_workers=min(source_count, 20)) as executor:
-                    futures = {executor.submit(upload_source, s): s for s in sources}
+                    futures = {
+                        executor.submit(_upload_one, s, start_date, end_date): s
+                        for s in sources
+                    }
                     for future in as_completed(futures):
                         result = future.result()
                         if "error" in result:
@@ -560,6 +565,7 @@ class TestStress:
                 batch_num += 1
                 print(f"\n  Overload batch {batch_num}: uploading {load_count} sources...")
 
+                reg_start = time.time()
                 sources = []
                 for i in range(load_count):
                     cluster_id = generate_cluster_id()
@@ -584,17 +590,21 @@ class TestStress:
                         "source_name": source_name,
                         "source": source,
                     })
+                reg_time = time.time() - reg_start
 
                 end_date = datetime.now(timezone.utc)
                 start_date = end_date - timedelta(days=7)
+                upload_start = time.time()
                 _upload_batch(sources, start_date, end_date)
+                upload_time = time.time() - upload_start
 
                 all_sources.extend(sources)
 
                 depths = get_celery_queue_depths(self.namespace)
                 total_queued = sum(depths.values())
                 elapsed = time.time() - overload_start
-                print(f"  Batch {batch_num} uploaded. Queue depth: {total_queued}. "
+                print(f"  Batch {batch_num}: register {reg_time:.0f}s, upload {upload_time:.0f}s. "
+                      f"Queue depth: {total_queued}. "
                       f"Elapsed: {elapsed:.0f}/{RECOVERY_DURATION_S}s")
 
             overload_api = api_probe_overload.stop()
