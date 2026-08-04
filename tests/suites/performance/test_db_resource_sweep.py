@@ -590,7 +590,8 @@ class TestAPIUnderLoad:
 
         session = create_authenticated_session(self._keycloak_config)
         probe = APIProbeThread(
-            session, gateway_url, self.namespace, poll_interval=2.0
+            session, gateway_url, self.namespace, poll_interval=2.0,
+            keycloak_config=self._keycloak_config,
         )
         probe.start()
 

@@ -236,7 +236,8 @@ class TestStress:
 
         # Start background API probe for the entire ramp
         session = create_authenticated_session(keycloak_config)
-        api_probe = APIProbeThread(session, gateway_url, self.namespace, poll_interval=5.0)
+        api_probe = APIProbeThread(session, gateway_url, self.namespace,
+                                   poll_interval=5.0, keycloak_config=keycloak_config)
         api_probe.start()
 
         step_results: List[StepResult] = []
@@ -521,7 +522,8 @@ class TestStress:
 
         # Capture quiescent API baseline
         session = create_authenticated_session(keycloak_config)
-        api_probe_baseline = APIProbeThread(session, gateway_url, self.namespace, poll_interval=2.0)
+        api_probe_baseline = APIProbeThread(session, gateway_url, self.namespace,
+                                            poll_interval=2.0, keycloak_config=keycloak_config)
         api_probe_baseline.start()
         time.sleep(30)
         baseline_summary = api_probe_baseline.stop()
@@ -537,7 +539,8 @@ class TestStress:
 
         # Start API probe during overload phase (informational only)
         session2 = create_authenticated_session(keycloak_config)
-        api_probe_overload = APIProbeThread(session2, gateway_url, self.namespace, poll_interval=5.0)
+        api_probe_overload = APIProbeThread(session2, gateway_url, self.namespace,
+                                            poll_interval=5.0, keycloak_config=keycloak_config)
         api_probe_overload.start()
 
         def _upload_batch(sources_batch, batch_start, batch_end):
@@ -654,7 +657,8 @@ class TestStress:
             # have drained, so the comparison against the quiescent baseline
             # actually proves the API returned to normal.
             session3 = create_authenticated_session(keycloak_config)
-            api_probe_post = APIProbeThread(session3, gateway_url, self.namespace, poll_interval=2.0)
+            api_probe_post = APIProbeThread(session3, gateway_url, self.namespace,
+                                            poll_interval=2.0, keycloak_config=keycloak_config)
             api_probe_post.start()
             time.sleep(30)
             post_recovery_api = api_probe_post.stop()

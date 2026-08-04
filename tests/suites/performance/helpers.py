@@ -720,7 +720,8 @@ class APIProbeThread:
     Usage::
 
         session = create_authenticated_session(keycloak_config)
-        probe = APIProbeThread(session, gateway_url, namespace)
+        probe = APIProbeThread(session, gateway_url, namespace,
+                               keycloak_config=keycloak_config)
         probe.start()
         # ... do heavy work ...
         summary = probe.stop()   # returns percentile stats per endpoint
@@ -732,6 +733,7 @@ class APIProbeThread:
         gateway_url: str,
         namespace: str,
         poll_interval: float = 2.0,
+        keycloak_config=None,
     ):
         self.session = session
         self.namespace = namespace
@@ -739,6 +741,8 @@ class APIProbeThread:
         self.snapshots: List[APIProbeSnapshot] = []
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._keycloak_config = keycloak_config
+        self._token_refreshes = 0
 
         base = gateway_url.rstrip("/")
         self._urls = {
@@ -750,9 +754,25 @@ class APIProbeThread:
             "cost_models": f"{base}/api/cost-management/v1/cost-models/",
         }
 
+    def _refresh_token(self) -> bool:
+        """Refresh the session's JWT token. Returns True on success."""
+        if not self._keycloak_config:
+            return False
+        try:
+            from conftest import obtain_jwt_token
+            token = obtain_jwt_token(self._keycloak_config)
+            self.session.headers["Authorization"] = f"Bearer {token.access_token}"
+            self._token_refreshes += 1
+            print(f"[api-probe] Refreshed JWT token (refresh #{self._token_refreshes})")
+            return True
+        except Exception as e:
+            print(f"[api-probe] Token refresh failed: {e}")
+            return False
+
     def _probe_once(self) -> APIProbeSnapshot:
         snap = APIProbeSnapshot(timestamp=time.time())
         errors = 0
+        got_401 = False
 
         for attr, url in [
             ("report_baseline_s", self._urls["report_baseline"]),
@@ -766,11 +786,16 @@ class APIProbeThread:
                 setattr(snap, attr, latency)
                 if resp.status_code != 200:
                     errors += 1
+                    if resp.status_code == 401:
+                        got_401 = True
             except _requests.RequestException:
                 setattr(snap, attr, time.time() - start)
                 errors += 1
 
         snap.errors = errors
+
+        if got_401 and self._refresh_token():
+            snap.errors = 0
 
         depths = get_celery_queue_depths(self.namespace)
         snap.queue_depth = sum(depths.values())
@@ -783,11 +808,14 @@ class APIProbeThread:
                 snap = self._probe_once()
                 self.snapshots.append(snap)
 
+                err_str = ""
+                if snap.errors:
+                    err_str = f" errors={snap.errors}"
                 print(
                     f"[api-probe] report={snap.report_baseline_s:.3f}s "
                     f"group_by={snap.group_by_s:.3f}s "
                     f"cost_models={snap.cost_models_s:.3f}s "
-                    f"queue={snap.queue_depth} errors={snap.errors}"
+                    f"queue={snap.queue_depth}{err_str}"
                 )
             except Exception as e:
                 print(f"[api-probe] poll error: {e}")
