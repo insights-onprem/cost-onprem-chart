@@ -223,8 +223,11 @@ class PerfCleanupTracker:
         self._wait_for_ros_drain()
 
         if time.time() >= deadline:
-            print(f"[PERF CLEANUP] Timeout reached during ros-drain, skipping resource deletion")
+            msg = (f"Cleanup timeout ({self.CLEANUP_TIMEOUT_S}s) exhausted during "
+                   f"ros-drain — skipping {total} resource deletion(s)")
+            print(f"[PERF CLEANUP] {msg}")
             self.resources.clear()
+            warnings.warn(msg, RuntimeWarning, stacklevel=2)
             return
 
         ingress_pod = get_pod_by_label(self.namespace, "app.kubernetes.io/component=ingress")

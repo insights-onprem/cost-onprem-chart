@@ -30,9 +30,9 @@
 #   --perf-valkey       Run Valkey eviction correlation tests only
 #   --perf-db           Run PostgreSQL resource sweep tests only
 #   --perf-kafka        Run Kafka throughput/scaling tests only
-#   --perf-stress       Run stress ramp + recovery tests only
-#   --perf-stress-ramp  Run stress ramp-to-failure only (PERF-STR-001)
-#   --perf-stress-recovery  Run stress backlog recovery only (PERF-STR-002)
+#   --perf-stress          Run stress ramp + recovery tests only
+#   --perf-stress-ramp     Run stress ramp-to-failure only (PERF-STR-001)
+#   --perf-stress-recovery Run stress backlog recovery only (PERF-STR-002)
 #
 # Filter Options:
 #   --smoke             Run only smoke tests (quick validation)
@@ -143,9 +143,9 @@ show_help() {
     echo "  --perf-db         Run PostgreSQL resource sweep tests (PERF-DB-*)"
     echo "  --perf-kafka      Run Kafka throughput/scaling tests (PERF-KAF-*)"
     echo "  --perf-celery     Run Celery worker scaling tests (PERF-CEL-*)"
-    echo "  --perf-stress     Run stress ramp + recovery tests (PERF-STR-*)"
-    echo "  --perf-stress-ramp      Run stress ramp-to-failure only (PERF-STR-001)"
-    echo "  --perf-stress-recovery  Run stress backlog recovery only (PERF-STR-002)"
+    echo "  --perf-stress          Run stress ramp + recovery tests (PERF-STR-*)"
+    echo "  --perf-stress-ramp     Run stress ramp-to-failure only (PERF-STR-001)"
+    echo "  --perf-stress-recovery Run stress backlog recovery only (PERF-STR-002)"
     echo ""
     echo "UI Tests:"
     echo "  UI tests are included by default. Use --no-ui to exclude them."

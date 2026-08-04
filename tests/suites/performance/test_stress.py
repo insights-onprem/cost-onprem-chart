@@ -168,7 +168,7 @@ def _check_stop_conditions(
         return f"Step took {step.step_time_s:.0f}s (max {MAX_STEP_TIME}s)"
 
     if queue_stall_detected:
-        return "Queue stall: depth grew monotonically over last 5 samples"
+        return "Queue stall: depth strictly increasing over last 5 samples"
 
     error_rate = step.upload_errors / max(step.source_count, 1)
     if error_rate > 0.05:
@@ -380,11 +380,11 @@ class TestStress:
                 step.oomkill_events = _collect_oomkill_events(self.namespace)
                 step.step_time_s = time.time() - step_start
 
-                # Detect queue stall: depth grew monotonically over 5+ samples
+                # Detect queue stall: depth strictly increasing over 5+ samples
                 queue_stall = False
                 if len(queue_samples) >= 5:
                     tail = queue_samples[-5:]
-                    if all(tail[i] <= tail[i + 1] for i in range(len(tail) - 1)) and tail[-1] > 0:
+                    if all(tail[i] < tail[i + 1] for i in range(len(tail) - 1)):
                         queue_stall = True
 
                 # Check stop conditions
@@ -555,6 +555,8 @@ class TestStress:
                 except Exception as e:
                     return {"error": str(e), "cluster_id": source_info["cluster_id"]}
 
+            if not sources_batch:
+                return
             with ThreadPoolExecutor(max_workers=min(len(sources_batch), 20)) as executor:
                 futures = {executor.submit(_upload_one, s): s for s in sources_batch}
                 for future in as_completed(futures):
@@ -659,6 +661,8 @@ class TestStress:
 
         except Exception:
             api_probe_overload.stop()
+            if "api_probe_post" in locals():
+                api_probe_post.stop()
             raise
 
         # Evaluate recovery

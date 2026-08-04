@@ -665,11 +665,15 @@ def get_oomkill_events(namespace: str, label: str) -> List[Dict[str, str]]:
 
 
 def get_pod_restart_counts(namespace: str, label: str) -> Dict[str, int]:
-    """Get restart counts for pods matching a label."""
+    """Get total restart counts for pods matching a label.
+
+    Sums restart counts across all containers in each pod so multi-container
+    pods (e.g. database with pgbouncer sidecar) are counted correctly.
+    """
     result = run_oc_command(
         ["get", "pods", "-n", namespace, "-l", label,
          "-o", "jsonpath={range .items[*]}{.metadata.name} "
-               "{range .status.containerStatuses[*]}{.restartCount}{end}{'\\n'}{end}"],
+               "{range .status.containerStatuses[*]}{.restartCount}{\" \"}{end}{'\\n'}{end}"],
         check=False,
     )
     counts = {}
@@ -677,8 +681,9 @@ def get_pod_restart_counts(namespace: str, label: str) -> Dict[str, int]:
         for line in result.stdout.strip().splitlines():
             parts = line.split()
             if len(parts) >= 2:
+                pod_name = parts[0]
                 try:
-                    counts[parts[0]] = int(parts[1])
+                    counts[pod_name] = sum(int(c) for c in parts[1:])
                 except ValueError:
                     pass
     return counts
