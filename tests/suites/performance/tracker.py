@@ -148,7 +148,7 @@ class PerfCleanupTracker:
             print(f"  [s3-cleanup] Could not get S3 config: {e}")
             return None
 
-    def _cleanup_s3_data(self, failures: List[str]):
+    def _cleanup_s3_data(self, failures: List[str], deadline: float):
         """Clean up S3 data for all tracked clusters."""
         from cleanup import cleanup_s3_data
 
@@ -164,7 +164,14 @@ class PerfCleanupTracker:
         org_id = os.environ.get("ORG_ID", "6089719")
 
         total_deleted = 0
+        skipped = 0
         for cluster_id in cluster_ids:
+            if time.time() >= deadline:
+                skipped = len(cluster_ids) - total_deleted - skipped
+                msg = f"S3 cleanup timeout — {skipped} cluster(s) skipped"
+                print(f"  [s3-cleanup] {msg}")
+                failures.append(msg)
+                break
             try:
                 result = cleanup_s3_data(
                     endpoint=s3_config["endpoint"],
@@ -283,7 +290,7 @@ class PerfCleanupTracker:
             cleaned += 1
 
         if time.time() < deadline:
-            self._cleanup_s3_data(failures)
+            self._cleanup_s3_data(failures, deadline)
 
         self.resources.clear()
 

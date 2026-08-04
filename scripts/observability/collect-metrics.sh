@@ -178,8 +178,8 @@ query_prometheus() {
     local query="$1"
     local token
     token=$(get_prometheus_token)
-    
-    curl -s -k \
+
+    curl -s -k --connect-timeout 10 --max-time 30 \
         ${token:+-H "Authorization: Bearer $token"} \
         --data-urlencode "query=$query" \
         "$PROMETHEUS_URL/api/v1/query" 2>/dev/null
@@ -193,8 +193,8 @@ query_prometheus_range() {
     local step="${4:-15s}"
     local token
     token=$(get_prometheus_token)
-    
-    curl -s -k \
+
+    curl -s -k --connect-timeout 10 --max-time 60 \
         ${token:+-H "Authorization: Bearer $token"} \
         --data-urlencode "query=$query" \
         --data-urlencode "start=$start" \
