@@ -33,6 +33,7 @@
 #   --perf-stress          Run stress ramp + recovery tests only
 #   --perf-stress-ramp     Run stress ramp-to-failure only (PERF-STR-001)
 #   --perf-stress-recovery Run stress backlog recovery only (PERF-STR-002)
+#   --perf-rbac            Run RBAC authorization performance tests only
 #
 # Filter Options:
 #   --smoke             Run only smoke tests (quick validation)
@@ -146,6 +147,7 @@ show_help() {
     echo "  --perf-stress          Run stress ramp + recovery tests (PERF-STR-*)"
     echo "  --perf-stress-ramp     Run stress ramp-to-failure only (PERF-STR-001)"
     echo "  --perf-stress-recovery Run stress backlog recovery only (PERF-STR-002)"
+    echo "  --perf-rbac            Run RBAC authorization performance tests (PERF-RBAC-*)"
     echo ""
     echo "UI Tests:"
     echo "  UI tests are included by default. Use --no-ui to exclude them."
@@ -414,6 +416,11 @@ main() {
                 ;;
             --perf-stress-recovery)
                 pytest_markers+=("performance and stress_recovery")
+                include_ui=false
+                shift
+                ;;
+            --perf-rbac)
+                pytest_markers+=("performance and rbac_perf")
                 include_ui=false
                 shift
                 ;;

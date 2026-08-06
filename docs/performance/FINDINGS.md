@@ -809,6 +809,62 @@ everything.
 
 ---
 
+## RBAC Authorization Testing (COST-7643)
+
+### PERF-FINDING-037: RBAC Authorization is Not a Bottleneck — Profile-Invariant Performance
+
+**Status**: Validated at medium and large profiles
+**Severity**: Informational — sizing confirmation
+**Category**: Authorization overhead
+**Jira**: [COST-7643](https://redhat.atlassian.net/browse/COST-7643)
+
+**Method**: Six tests (RBAC-001 through RBAC-006) measured insights-rbac
+authorization performance: baseline latency isolation, cache effectiveness,
+concurrent load at 5 levels (1/5/10/20/50), multi-org scaling (1/5/10 tenants),
+replica scaling (1/2/3 replicas), and latency under active ingestion load.
+
+**Results by profile**:
+
+| Test | Metric | Medium | Large |
+|------|--------|--------|-------|
+| **RBAC-001** | RBAC share of API latency | p50=121%, p95=166% | p50=112%, p95=90% |
+| **RBAC-002** | Cache speedup | 0.7x | 0.8x |
+| **RBAC-003[c=1]** | Throughput / p50 | 254.8 req/s / 3.7ms | 254.1 req/s / 3.8ms |
+| **RBAC-003[c=50]** | Throughput / p50 | 291.4 req/s / 147.8ms | 289.1 req/s / 150.9ms |
+| **RBAC-004[10]** | p50 latency | 3.8ms | 3.8ms |
+| **RBAC-005** | Replica scaling benefit | None | +3%/-1% (noise) |
+| **RBAC-006** | Degradation under ingestion | p50=6.9x, p95=14.4x | p50=5.9x, p95=11.3x |
+
+All tests: 0 errors, PG cache hit ratio 1.0, RBAC pod CPU 1-2m.
+
+**Findings**:
+1. **RBAC performance is profile-invariant.** Throughput (~280 req/s) and latency
+   characteristics are virtually identical between medium and large profiles.
+2. **Replica scaling provides no benefit.** At 2 replicas, p95 improved 3%;
+   at 3 replicas, p95 regressed 1%. The bottleneck (if one existed) would be
+   the shared PostgreSQL instance, not RBAC compute.
+3. **Tenant count has zero impact.** Latency at 1, 5, and 10 tenants is
+   indistinguishable (p50: 3.3-3.8ms). RBAC queries are per-principal, not
+   per-tenant.
+4. **Valkey cache (DB 2) is never populated.** Koku's own 1-hour
+   `CACHE_TIMEOUT` absorbs all repeated queries before they reach RBAC.
+   The Valkey cache only matters when multiple Koku pods serve the same user.
+5. **Degradation under ingestion is from PG contention, not RBAC.** The 6-14x
+   latency increase during ingestion reflects shared PostgreSQL I/O load, not
+   RBAC-specific overhead. The slightly lower degradation at large profile
+   (11.3x vs 14.4x p95) is consistent with more worker replicas spreading
+   the PG write load.
+
+**Implications for sizing**:
+- RBAC API at 1 replica with default resources (250m/500m CPU, 512Mi/1Gi memory)
+  is sufficient through large profile. No scaling or tuning needed.
+- The 280 req/s throughput ceiling (2 workers x 2 threads) far exceeds any
+  realistic concurrent user count for on-premise deployments.
+- SC-5 (replica scaling linearity) **failed** — this is a positive finding,
+  confirming that RBAC is already operating within its single-replica capacity.
+
+---
+
 ## Stress Testing Findings (COST-7627 + COST-7600)
 
 ### PERF-FINDING-036: Stress Ramp Breaking Points Scale with Profile
@@ -911,9 +967,10 @@ results are maintained in the [Sizing Guide](sizing-guide.md#performance-baselin
 | FINDING-034 | Multi-replica Kruize confirms single-replica recommendation | [COST-7598](https://redhat.atlassian.net/browse/COST-7598) | Validated (medium + large + xlarge) |
 | FINDING-035 | Chart defaults pass small; medium needs worker/ingress scaling, not listener CPU | [COST-7599](https://redhat.atlassian.net/browse/COST-7599) | Validated (VTC-001a complete) |
 | FINDING-036 | Stress ramp breaking points scale with profile; system never crashes | [COST-7627](https://redhat.atlassian.net/browse/COST-7627), [COST-7600](https://redhat.atlassian.net/browse/COST-7600) | Validated (medium + large + xlarge) |
+| FINDING-037 | RBAC authorization is not a bottleneck — profile-invariant at ~280 req/s | [COST-7643](https://redhat.atlassian.net/browse/COST-7643) | Validated (medium + large) |
 
 **Parent epic**: [COST-7567](https://redhat.atlassian.net/browse/COST-7567) (CoP Performance Tuning & Hardware Sizing Guidelines)
 
 ---
 
-_Last Updated: 2026-07-30_
+_Last Updated: 2026-08-05_

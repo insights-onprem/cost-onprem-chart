@@ -23,7 +23,6 @@ from e2e_helpers import get_koku_api_url
 from utils import (
     create_identity_header_custom,
     create_pod_session,
-    create_rh_identity_header,
 )
 
 
@@ -31,12 +30,6 @@ from utils import (
 def koku_api_url(cluster_config) -> str:
     """Get Koku API URL for all operations (unified deployment)."""
     return get_koku_api_url(cluster_config.helm_release_name, cluster_config.namespace)
-
-
-@pytest.fixture(scope="module")
-def rh_identity_header(org_id) -> str:
-    """Get X-Rh-Identity header value for the test org."""
-    return create_rh_identity_header(org_id)
 
 
 @pytest.fixture(scope="module")

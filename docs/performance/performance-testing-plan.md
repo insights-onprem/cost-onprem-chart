@@ -1,6 +1,6 @@
 # Cost On-Prem Performance Testing Plan
 
-**Date**: 2026-04-15 (updated 2026-06-25)  
+**Date**: 2026-04-15 (updated 2026-08-05)  
 **Status**: Execution — Small through XLarge profiles validated  
 **Epic**: [FLPATH-4036](https://redhat.atlassian.net/browse/FLPATH-4036) / [COST-7567](https://redhat.atlassian.net/browse/COST-7567) - CoP - Performance Tuning & Hardware Sizing Guidelines
 
@@ -451,6 +451,7 @@ histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="koku-api
 - [x] Self-contained HTML run reports and JSON summaries
 - [x] S3 result archival to shared MinIO
 - [x] Stress ramp-to-failure + backlog recovery (`test_stress.py`, COST-7627 + COST-7600)
+- [x] RBAC authorization performance (`test_rbac_perf.py`, COST-7643) — 6 tests validated at medium + large
 
 ### Stress Test Environment Variables
 
@@ -485,6 +486,7 @@ histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="koku-api
 | `test_ros.py` | 4 | ROS/Kruize performance (ROS-001 through ROS-004) |
 | `test_soak.py` | 4 | Soak stability (SOAK-001 through SOAK-004, opt-in) |
 | `test_stress.py` | 2 | Stress ramp-to-failure + backlog recovery (STR-001, STR-002) |
+| `test_rbac_perf.py` | 6 | RBAC authorization performance (RBAC-001 through RBAC-006) |
 | `profiles.py` | — | Profile definitions + NISE YAML generation |
 | `tracker.py` | — | Resource cleanup tracker with configurable timeout |
 | `conftest.py` | — | Fixtures, cleanup, data generation |
@@ -510,6 +512,9 @@ PERF_PROFILE=xlarge pytest -m "performance and ingestion" tests/suites/performan
 ./scripts/deploy-test-cost-onprem.sh --perf-only --perf-profile medium --perf-suite stress_ramp
 ./scripts/deploy-test-cost-onprem.sh --perf-only --perf-profile medium --perf-suite stress_recovery
 
+# RBAC authorization tests
+./scripts/deploy-test-cost-onprem.sh --perf-only --perf-profile medium --perf-suite rbac
+
 # Via Jenkins
 # Job: flightpath-insights-onprem (RUN_PERF_TESTS=true, PERF_PROFILE=xlarge, PERF_SUITE=all)
 ```
@@ -522,7 +527,7 @@ PERF_PROFILE=xlarge pytest -m "performance and ingestion" tests/suites/performan
 |----|----------|--------|----------|
 | SC-1 | Sizing table | **Done** | [sizing-guide.md](./sizing-guide.md) — small through xlarge validated |
 | SC-2 | Cluster count limits | **Done** | XLarge (23 clusters) validated; stress ramp tested at medium (75), large (100), xlarge (100+) concurrent sources |
-| SC-3 | Bottleneck analysis | **Done** | [FINDINGS.md](./FINDINGS.md) — 13 findings documented with severity and evidence |
+| SC-3 | Bottleneck analysis | **Done** | [FINDINGS.md](./FINDINGS.md) — 14 findings documented with severity and evidence |
 | SC-4 | Processing window | **Partial** | XLarge completes in ~2h; need to validate against 6-hour SLA formally |
 | SC-5 | Soak test | **Not started** | Tests exist but require `SOAK_TESTS=true` and dedicated 7-day run window |
 
@@ -533,3 +538,4 @@ PERF_PROFILE=xlarge pytest -m "performance and ingestion" tests/suites/performan
 3. [ ] Execute 7-day soak test (SC-5) — requires dedicated cluster time
 4. [x] Publish sizing profile overlays + operator mapping draft (COST-7618) — see `cost-onprem/values-*.yaml` and `operator-profile-crd-mapping.md`
 5. [x] File tickets for untracked findings — FLPATH-4428 (013), FLPATH-4429 (020), FLPATH-4430 (022), FLPATH-4431 (024)
+6. [x] RBAC authorization performance testing (COST-7643) — 6 tests, validated at medium + large, FINDING-037

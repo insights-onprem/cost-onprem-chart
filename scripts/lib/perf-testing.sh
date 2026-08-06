@@ -387,23 +387,29 @@ run_performance_tests() {
 
     local perf_args=()
     if [[ "${PERF_SUITE}" == "all" ]]; then
-        perf_args+=("--performance")
+        # "all" runs every suite EXCEPT stress and soak tests (which can
+        # take hours to days). Request those explicitly when needed.
+        # NOTE: When adding a new perf suite, add it here too.
+        perf_args+=("--perf-api" "--perf-ros" "--perf-ingestion" "--perf-scale"
+                    "--perf-valkey" "--perf-db" "--perf-kafka"
+                    "--perf-celery" "--perf-rbac")
     else
         IFS=',' read -ra suites <<< "${PERF_SUITE}"
         for suite in "${suites[@]}"; do
             case "${suite}" in
-                api)       perf_args+=("--perf-api") ;;
-                ros)       perf_args+=("--perf-ros") ;;
-                ingestion) perf_args+=("--perf-ingestion") ;;
-                scale)     perf_args+=("--perf-scale") ;;
-                soak)      perf_args+=("--perf-soak") ;;
-                valkey)    perf_args+=("--perf-valkey") ;;
-                db)        perf_args+=("--perf-db") ;;
-                kafka)     perf_args+=("--perf-kafka") ;;
-                celery)    perf_args+=("--perf-celery") ;;
-                stress)    perf_args+=("--perf-stress") ;;
-                stress_ramp)    perf_args+=("--perf-stress-ramp") ;;
-                stress_recovery) perf_args+=("--perf-stress-recovery") ;;
+                api)              perf_args+=("--perf-api") ;;
+                ros)              perf_args+=("--perf-ros") ;;
+                ingestion)        perf_args+=("--perf-ingestion") ;;
+                scale)            perf_args+=("--perf-scale") ;;
+                soak)             perf_args+=("--perf-soak") ;;
+                valkey)           perf_args+=("--perf-valkey") ;;
+                db)               perf_args+=("--perf-db") ;;
+                kafka)            perf_args+=("--perf-kafka") ;;
+                celery)           perf_args+=("--perf-celery") ;;
+                stress)           perf_args+=("--perf-stress") ;;
+                stress_ramp)      perf_args+=("--perf-stress-ramp") ;;
+                stress_recovery)  perf_args+=("--perf-stress-recovery") ;;
+                rbac)             perf_args+=("--perf-rbac") ;;
             esac
         done
     fi

@@ -98,7 +98,7 @@ resource limits, timeouts, upload sizes) via Helm upgrade + `oc scale` before te
 ./scripts/deploy-test-cost-onprem.sh --namespace cost-onprem --run-perf --perf-profile medium
 
 # Performance-only (skip deploy)
-# Suites: api, ros, ingestion, scale, soak, valkey, db, kafka, celery, stress, stress_ramp, stress_recovery
+# Suites: api, ros, ingestion, scale, soak, valkey, db, kafka, celery, stress, stress_ramp, stress_recovery, rbac
 ./scripts/deploy-test-cost-onprem.sh --perf-only --perf-profile medium --perf-suite ros,api
 ```
 

@@ -461,6 +461,10 @@ Management OpenShift Operator CRD, see
   for all workloads through medium profile when other resources are properly
   provisioned. Raising listener CPU improves bulk ingestion speed at large/xlarge
   but is not required for the pipeline to complete.
+- **RBAC authorization is not a sizing concern** (FINDING-037): insights-rbac
+  at 1 replica with default resources handles ~280 req/s with sub-5ms p50 latency.
+  Performance is profile-invariant (identical at medium and large). No replica
+  scaling or resource tuning needed.
 - **Stress profiles (P99, max) not yet validated**: Profiles beyond xlarge
   have not been tested.
 
@@ -477,4 +481,4 @@ Management OpenShift Operator CRD, see
 
 ---
 
-_Based on FLPATH-4036 / COST-7567 performance testing. Last updated: 2026-07-27._
+_Based on FLPATH-4036 / COST-7567 performance testing. Last updated: 2026-08-05._

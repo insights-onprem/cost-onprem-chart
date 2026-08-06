@@ -47,7 +47,7 @@ set -euo pipefail
 #   --include-ui              Include UI tests (requires Playwright system dependencies)
 #   --run-perf                Run performance tests after deployment (FLPATH-4036)
 #   --perf-profile PROFILE    Performance profile: baseline, small, medium, large (default: baseline)
-#   --perf-suite SUITES       Performance suite(s): all, api, ros, ingestion, scale, soak, valkey, db, kafka, celery, stress, stress_ramp, stress_recovery
+#   --perf-suite SUITES       Performance suite(s): all, api, ros, ingestion, scale, soak, valkey, db, kafka, celery, stress, stress_ramp, stress_recovery, rbac
 #                             Comma-separated for multiple (e.g., ros,ingestion). Default: all
 #   --perf-only               Run only performance tests (skip deployment and chart tests)
 #   --skip-profile-config     Skip apply_perf_profile_config() — test with chart defaults only
@@ -1227,8 +1227,8 @@ main() {
         IFS=',' read -ra _suites <<< "${PERF_SUITE}"
         for _s in "${_suites[@]}"; do
             case "${_s}" in
-                api|ros|ingestion|scale|soak|valkey|db|kafka|celery|stress|stress_ramp|stress_recovery) ;;
-                *) log_error "Invalid --perf-suite value: ${_s} (valid: all, api, ros, ingestion, scale, soak, valkey, db, kafka, celery, stress, stress_ramp, stress_recovery)"
+                api|ros|ingestion|scale|soak|valkey|db|kafka|celery|stress|stress_ramp|stress_recovery|rbac) ;;
+                *) log_error "Invalid --perf-suite value: ${_s} (valid: all, api, ros, ingestion, scale, soak, valkey, db, kafka, celery, stress, stress_ramp, stress_recovery, rbac)"
                    exit 1 ;;
             esac
         done

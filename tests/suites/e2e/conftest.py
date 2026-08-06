@@ -10,24 +10,13 @@ import requests
 
 from conftest import ClusterConfig
 from e2e_helpers import get_koku_api_url
-from utils import create_identity_header_custom, create_pod_session, create_rh_identity_header
+from utils import create_identity_header_custom, create_pod_session
 
 
 @pytest.fixture(scope="module")
 def koku_api_url(cluster_config: ClusterConfig) -> str:
     """Get Koku API URL for E2E tests (unified deployment)."""
     return get_koku_api_url(cluster_config.helm_release_name, cluster_config.namespace)
-
-
-@pytest.fixture(scope="module")
-def rh_identity_header(org_id: str) -> str:
-    """Admin X-Rh-Identity header for existing E2E tests.
-
-    Uses is_org_admin=True which grants cost-management:*:* through the
-    admin_default RBAC group. This keeps existing tests working without
-    modification.
-    """
-    return create_rh_identity_header(org_id)
 
 
 @pytest.fixture(scope="module")
