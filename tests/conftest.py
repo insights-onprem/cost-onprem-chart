@@ -80,7 +80,13 @@ class ClusterConfig:
     helm_release_name: str
     keycloak_namespace: str
     platform: str = "openshift"
+    # "helm" (default) or "operator" — CostManagementServiceConfig-managed deploys.
+    deployment_mode: str = "helm"
     project_root: str = field(default_factory=lambda: os.path.dirname(os.path.dirname(__file__)))
+
+    @property
+    def is_operator(self) -> bool:
+        return self.deployment_mode.lower() == "operator"
 
 
 @dataclass
@@ -169,6 +175,7 @@ def cluster_config() -> ClusterConfig:
         helm_release_name=os.environ.get("HELM_RELEASE_NAME", "cost-onprem"),
         keycloak_namespace=os.environ.get("KEYCLOAK_NAMESPACE", "keycloak"),
         platform=os.environ.get("PLATFORM", "openshift"),
+        deployment_mode=os.environ.get("DEPLOYMENT_MODE", "helm"),
     )
 
 
@@ -767,6 +774,10 @@ def s3_config(cluster_config: ClusterConfig) -> Optional[S3Config]:
         "koku-storage-credentials",  # Legacy name
         f"{cluster_config.helm_release_name}-object-storage-credentials",  # Object storage credentials
     ]
+    # Operator BYOI often sets objectStorage.secretName to a custom Secret.
+    extra_secret = os.environ.get("STORAGE_SECRET_NAME", "").strip()
+    if extra_secret:
+        storage_secret_patterns.insert(0, extra_secret)
 
     access_key = None
     secret_key = None
