@@ -47,6 +47,8 @@
 #   NAMESPACE              Target namespace (default: cost-onprem)
 #   HELM_RELEASE_NAME      Helm release name (default: cost-onprem)
 #   KEYCLOAK_NAMESPACE     Keycloak namespace (default: keycloak)
+#   DEPLOYMENT_MODE        helm (default) or operator — excludes helm suite when operator
+#   STORAGE_SECRET_NAME    Optional override for S3 credentials Secret discovery
 #   PYTHON                 Python interpreter (default: python3)
 #
 # Examples:
@@ -535,6 +537,38 @@ main() {
         # Export for run_pytest to use for HTML report
         export PERF_REPORTS_DIR="$perf_reports_dir"
         log_info "Performance test reports will be saved to: ${perf_reports_dir}/"
+    fi
+
+    # Operator-managed deploys: chart lint/template suites do not apply.
+    if [[ "${DEPLOYMENT_MODE:-helm}" == "operator" ]]; then
+        local requested_helm=false
+        for _m in "${pytest_markers[@]+"${pytest_markers[@]}"}"; do
+            if [[ "$_m" == "helm" ]]; then
+                requested_helm=true
+                break
+            fi
+        done
+        if [[ "$requested_helm" != "true" ]]; then
+            local has_marker=false
+            local new_args=()
+            local i=0
+            while [[ $i -lt ${#pytest_args[@]} ]]; do
+                if [[ "${pytest_args[$i]}" == "-m" ]]; then
+                    has_marker=true
+                    new_args+=("-m" "(${pytest_args[$((i+1))]}) and not helm")
+                    i=$((i+2))
+                else
+                    new_args+=("${pytest_args[$i]}")
+                    i=$((i+1))
+                fi
+            done
+            if [[ "$has_marker" == "true" ]]; then
+                pytest_args=("${new_args[@]}")
+            else
+                pytest_args+=("-m" "not helm")
+            fi
+            log_info "DEPLOYMENT_MODE=operator: excluding helm suite"
+        fi
     fi
 
     # Add any extra arguments
