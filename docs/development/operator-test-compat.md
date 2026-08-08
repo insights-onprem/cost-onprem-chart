@@ -59,11 +59,13 @@ so no override is needed.
 
 ### Bundled vs BYOI infra
 
-Kafka/object storage are external in the operator model. Infra tests that assume
-in-namespace Kafka may need:
+Kafka/object storage are external in the operator model. Deploy AMQ Streams with
+`./scripts/deploy-kafka.sh` (not Redpanda). Infra tests look for
+`strimzi.io/kind=Kafka` pods:
 
 ```bash
-export KAFKA_NAMESPACE=cost-byoi-infra
+export KAFKA_NAMESPACE=kafka
+# Bootstrap (default): cost-onprem-kafka-kafka-bootstrap.kafka.svc:9092
 ```
 
 ## Operator bug found during this run
