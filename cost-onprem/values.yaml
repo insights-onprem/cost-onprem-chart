@@ -156,7 +156,7 @@ costManagement:
 
     image:
       repository: quay.io/redhat-services-prod/cost-mgmt-dev-tenant/koku
-      tag: "03b958b"
+      tag: "f6cc00b"
       pullPolicy: IfNotPresent
 
     replicas: 1
@@ -665,7 +665,7 @@ database:
 rbac:
   image:
     repository: quay.io/redhat-services-prod/hcc-accessmanagement-tenant/insights-rbac
-    tag: "d7eb8b4"
+    tag: "c4fb899"
     pullPolicy: IfNotPresent
 
   api:
@@ -1083,7 +1083,7 @@ ui:
   app:
     image:
       repository: quay.io/insights-onprem/koku-ui-onprem
-      tag: "5b58ba60b443d631b6a85a37af8f725652b0d6fc"
+      tag: "9981627831001c71bfa77d9cf6d78ed02a375b26"
       pullPolicy: IfNotPresent
     port: 8080
     resources:
