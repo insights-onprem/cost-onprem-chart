@@ -1,45 +1,29 @@
 {
-  "last_check": "2026-08-13T07:12:35Z",
+  "last_check": "2026-08-17T06:33:42Z",
   "pending_updates": [
     {
-      "image": "quay.io/redhat-services-prod/insights-management-tenant/insights-ocp-resource-optimization/ros-ocp-backend",
-      "previous_tag": "ae8c990",
-      "new_tag": "841483b",
-      "digest": "sha256:5747cfda7efcf69d057e114ca895439b494c08a6d531b0198d92ee2b680e39f4",
-      "detected_at": "2026-08-13T07:12:35Z",
+      "image": "quay.io/redhat-services-prod/cost-mgmt-dev-tenant/koku",
+      "previous_tag": "03b958b",
+      "new_tag": "f6cc00b",
+      "digest": "sha256:94a6d10c94928589022da6c7a14e6523849de50c824f4e916ea83c4d82762efe",
+      "detected_at": "2026-08-17T06:33:42Z",
       "reason": "catch-up"
     },
     {
-      "image": "quay.io/redhat-services-prod/cost-mgmt-dev-tenant/koku",
-      "previous_tag": "d8055ac",
-      "new_tag": "03b958b",
-      "digest": "sha256:1bcc021b8ac265133b79ad00080a7a3fa856d78be8a144b56cf9065476403a7a",
-      "detected_at": "2026-08-13T07:12:35Z",
-      "reason": "updated"
-    },
-    {
-      "image": "quay.io/redhat-services-prod/kruize-autotune-tenant/autotune",
-      "previous_tag": "d1f0140",
-      "new_tag": "91e9c85",
-      "digest": "sha256:75f8563e51274a1aeb44a5ae721c1258c8514f91612f8f19448453c83362b5a1",
-      "detected_at": "2026-08-13T07:12:35Z",
-      "reason": "updated"
-    },
-    {
       "image": "quay.io/redhat-services-prod/hcc-accessmanagement-tenant/insights-rbac",
-      "previous_tag": "73870d8",
-      "new_tag": "d7eb8b4",
-      "digest": "sha256:fe6cf84c394ed51da2e363df8c56e3fe13e79c53ff097108f5ff9ac4726f17ea",
-      "detected_at": "2026-08-13T07:12:35Z",
-      "reason": "updated"
+      "previous_tag": "d7eb8b4",
+      "new_tag": "c4fb899",
+      "digest": "sha256:33712284503a245ec5e203d54179dbdafd723a8d3d356f9a0b8573d262438c1f",
+      "detected_at": "2026-08-17T06:33:42Z",
+      "reason": "catch-up"
     },
     {
       "image": "quay.io/insights-onprem/koku-ui-onprem",
-      "previous_tag": "2f23c646581028bd385856b6713e6bf367baf953",
-      "new_tag": "5b58ba60b443d631b6a85a37af8f725652b0d6fc",
-      "digest": "sha256:f7a77173898a41dc4836d5bed310bde369826e5a8a6443e7bde352105b4f1de6",
-      "detected_at": "2026-08-13T07:12:35Z",
-      "reason": "updated"
+      "previous_tag": "5b58ba60b443d631b6a85a37af8f725652b0d6fc",
+      "new_tag": "9981627831001c71bfa77d9cf6d78ed02a375b26",
+      "digest": "sha256:c30337606a65a28a9ec97373512299e1f80a68e8132fd950da096fa0fb2a6fdb",
+      "detected_at": "2026-08-17T06:33:42Z",
+      "reason": "catch-up"
     }
   ]
 }
