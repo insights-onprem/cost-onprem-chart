@@ -726,7 +726,16 @@ spec:
       echo "DYNACONF_ONPREM_CLIENT_ID: \${DYNACONF_ONPREM_CLIENT_ID}"
       echo "DYNACONF_ONPREM_OAUTH_URL: \${DYNACONF_ONPREM_OAUTH_URL}"
       echo ""
-      
+
+      # IQE NISE subprocess hardcodes verify=/tmp/router-ca.crt (not REQUESTS_CA_BUNDLE).
+      if [ -f /etc/pki/tls/certs/ca-bundle.crt ]; then
+        cp /etc/pki/tls/certs/ca-bundle.crt /tmp/router-ca.crt
+        echo "Created /tmp/router-ca.crt for NISE TLS"
+      else
+        echo "WARNING: CA bundle not mounted; NISE uploads will fail"
+      fi
+      echo ""
+
       echo "Running IQE tests with marker: ${IQE_MARKER}"
       # --force-default-user is required because the cost_onprem config's Jinja templates
       # don't evaluate correctly (main.get('ONPREM_*') returns None since DYNACONF_ONPREM_*

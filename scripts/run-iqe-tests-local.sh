@@ -576,7 +576,10 @@ setup_ssl_certs() {
     export REQUESTS_CA_BUNDLE="$ca_bundle_file"
     export SSL_CERT_FILE="$ca_bundle_file"
     export CURL_CA_BUNDLE="$ca_bundle_file"
-    
+
+    # IQE NISE subprocess hardcodes verify=/tmp/router-ca.crt (not REQUESTS_CA_BUNDLE).
+    cp "$ca_bundle_file" /tmp/router-ca.crt
+
     log "✓ SSL certificates configured"
     log_verbose "  CA bundle: $ca_bundle_file"
 }
