@@ -12,6 +12,7 @@ from utils import check_pod_ready, run_oc_command
 
 @pytest.mark.cost_management
 @pytest.mark.component
+@pytest.mark.operator
 class TestKokuListenerHealth:
     """Tests for Koku listener health."""
 
@@ -45,6 +46,7 @@ class TestKokuListenerHealth:
 
 @pytest.mark.cost_management
 @pytest.mark.component
+@pytest.mark.operator
 class TestMASUHealth:
     """Tests for MASU worker health."""
 

@@ -71,6 +71,7 @@ def _generate_fake_jwt() -> str | None:
 
 @pytest.mark.auth
 @pytest.mark.integration
+@pytest.mark.operator
 class TestGatewayJWTAuthentication:
     """Tests for JWT authentication on the centralized API gateway.
 

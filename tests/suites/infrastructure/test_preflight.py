@@ -17,6 +17,7 @@ from utils import (
 @pytest.mark.infrastructure
 @pytest.mark.component
 @pytest.mark.smoke
+@pytest.mark.operator
 class TestPodHealth:
     """Tests for pod health status."""
 
@@ -62,6 +63,7 @@ class TestPodHealth:
 
 @pytest.mark.infrastructure
 @pytest.mark.component
+@pytest.mark.operator
 class TestDatabaseConnectivity:
     """Tests for database connectivity."""
 
@@ -110,6 +112,7 @@ class TestDatabaseConnectivity:
 
 @pytest.mark.infrastructure
 @pytest.mark.component
+@pytest.mark.operator
 class TestS3Connectivity:
     """Tests for S3/Object storage connectivity."""
 

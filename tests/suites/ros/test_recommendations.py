@@ -29,6 +29,7 @@ class TestRecommendationsAPI:
     """Tests for ROS recommendations API accessibility."""
 
     @pytest.mark.smoke
+    @pytest.mark.operator
     def test_ros_api_pod_ready(self, cluster_config):
         """Verify ROS API pod is ready."""
         assert check_pod_ready(
@@ -302,6 +303,7 @@ class TestROSProcessor:
     """Tests for ROS Processor service health."""
 
     @pytest.mark.smoke
+    @pytest.mark.operator
     def test_ros_processor_pod_ready(self, cluster_config):
         """Verify ROS Processor pod is ready."""
         assert check_pod_ready(

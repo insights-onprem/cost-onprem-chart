@@ -16,6 +16,7 @@ class TestKruizeHealth:
     """Tests for Kruize service health."""
 
     @pytest.mark.smoke
+    @pytest.mark.operator
     def test_kruize_pod_ready(self, cluster_config):
         """Verify Kruize pod is ready."""
         assert check_pod_ready(

@@ -17,6 +17,7 @@ from utils import (
 
 @pytest.mark.infrastructure
 @pytest.mark.component
+@pytest.mark.operator
 class TestDatabaseSchema:
     """Tests for database schema validation."""
 
@@ -65,6 +66,7 @@ class TestDatabaseSchema:
 
 @pytest.mark.infrastructure
 @pytest.mark.component
+@pytest.mark.operator
 class TestDatabaseMigrations:
     """Tests for database migration status."""
 
@@ -198,6 +200,7 @@ class TestDatabaseMigrations:
 
 @pytest.mark.infrastructure
 @pytest.mark.component
+@pytest.mark.operator
 class TestHiveWorkaround:
     """Tests for FLPATH-3265: Hive database workaround removal.
     
@@ -307,6 +310,7 @@ class TestHiveWorkaround:
 
 @pytest.mark.infrastructure
 @pytest.mark.component
+@pytest.mark.operator
 class TestKruizeDatabase:
     """Tests for Kruize database schema."""
 

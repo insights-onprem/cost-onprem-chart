@@ -58,6 +58,7 @@ class TestUIOAuthFlow:
             pytest.skip("UI route not found")
         return f"https://{host}"
 
+    @pytest.mark.operator
     def test_ui_pod_running(self, cluster_config):
         """Verify UI pod is running."""
         result = run_oc_command([
@@ -91,6 +92,7 @@ class TestUIOAuthFlow:
             if re.search(pattern, logs):
                 pytest.fail(f"TLS error found in oauth-proxy logs: {pattern}")
 
+    @pytest.mark.operator
     def test_password_grant_token_acquisition(
         self,
         keycloak_config,
@@ -125,6 +127,7 @@ class TestUIOAuthFlow:
         token_data = response.json()
         assert "access_token" in token_data, "No access_token in response"
 
+    @pytest.mark.operator
     def test_jwt_contains_required_claims(
         self,
         keycloak_config,
@@ -173,6 +176,7 @@ class TestUIOAuthFlow:
 
 @pytest.mark.auth
 @pytest.mark.integration
+@pytest.mark.operator
 class TestOrgAdminRealmRole:
     """Verify that Keycloak assigns the org-admin realm role correctly.
 

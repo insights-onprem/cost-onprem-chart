@@ -261,6 +261,7 @@ except Exception as e:
 
 @pytest.mark.infrastructure
 @pytest.mark.component
+@pytest.mark.operator
 class TestS3Endpoint:
     """Tests for S3 endpoint availability."""
     
@@ -289,6 +290,7 @@ class TestS3Endpoint:
 
 @pytest.mark.infrastructure
 @pytest.mark.integration
+@pytest.mark.operator
 class TestS3Connectivity:
     """Tests for S3 connectivity from within the cluster."""
     
@@ -355,6 +357,7 @@ def _resolve_bucket_name(
 
 @pytest.mark.infrastructure
 @pytest.mark.integration
+@pytest.mark.operator
 class TestS3Buckets:
     """Tests for required S3 buckets."""
 
@@ -441,6 +444,7 @@ class TestS3Buckets:
 
 @pytest.mark.infrastructure
 @pytest.mark.component
+@pytest.mark.operator
 class TestS3DataPaths:
     """Tests for S3 data path structure."""
     
@@ -518,6 +522,7 @@ except Exception as e:
 
 @pytest.mark.infrastructure
 @pytest.mark.component
+@pytest.mark.operator
 class TestS3DeployedConfig:
     """Validate that the deployed aws-config ConfigMap is consistent with the S3 backend.
 

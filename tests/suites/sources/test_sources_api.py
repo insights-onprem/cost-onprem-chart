@@ -324,6 +324,7 @@ class TestSourcesExternalFiltering:
 @pytest.mark.sources
 @pytest.mark.interpod
 @pytest.mark.component
+@pytest.mark.operator
 class TestKokuSourcesHealth:
     """Tests for Koku API health and sources endpoint availability."""
 
@@ -418,6 +419,7 @@ class TestApplicationsEndpoint:
 @pytest.mark.interpod
 @pytest.mark.auth
 @pytest.mark.component
+@pytest.mark.operator
 class TestAuthenticationErrors:
     """Tests for authentication error handling in Sources API."""
 

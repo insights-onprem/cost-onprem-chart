@@ -18,6 +18,7 @@ from conftest import KeycloakConfig, ClusterConfig, decode_jwt_payload, obtain_u
 
 @pytest.mark.auth
 @pytest.mark.integration
+@pytest.mark.operator
 class TestOrgAdminIdentityPropagation:
     """Verify that Envoy correctly propagates is_org_admin through the gateway."""
 

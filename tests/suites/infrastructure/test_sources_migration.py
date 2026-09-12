@@ -11,6 +11,7 @@ from utils import check_service_exists, check_deployment_exists, run_oc_command
 
 @pytest.mark.infrastructure
 @pytest.mark.component
+@pytest.mark.operator
 class TestKokuSourcesIntegration:
     """Tests to verify Koku provides sources functionality."""
 

@@ -14,6 +14,7 @@ from utils import check_pod_ready, run_oc_command
 @pytest.mark.e2e
 @pytest.mark.integration
 @pytest.mark.smoke
+@pytest.mark.operator
 class TestE2ESmoke:
     """Quick smoke tests for E2E validation."""
 

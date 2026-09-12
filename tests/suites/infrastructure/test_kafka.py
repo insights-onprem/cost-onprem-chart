@@ -172,6 +172,7 @@ def check_listener_kafka_connection(namespace: str, listener_pod: str) -> dict:
 
 @pytest.mark.infrastructure
 @pytest.mark.component
+@pytest.mark.operator
 class TestKafkaCluster:
     """Tests for Kafka cluster health."""
     
@@ -229,6 +230,7 @@ class TestKafkaCluster:
 
 @pytest.mark.infrastructure
 @pytest.mark.component
+@pytest.mark.operator
 class TestKafkaTopics:
     """Tests for required Kafka topics."""
     
@@ -272,6 +274,7 @@ class TestKafkaTopics:
 
 @pytest.mark.infrastructure
 @pytest.mark.integration
+@pytest.mark.operator
 class TestKafkaListener:
     """Tests for Kafka listener pod and connectivity."""
 
@@ -355,6 +358,7 @@ class TestKafkaListener:
 
 @pytest.mark.infrastructure
 @pytest.mark.integration
+@pytest.mark.operator
 class TestKafkaConsumerGroups:
     """Tests for Kafka consumer groups."""
 

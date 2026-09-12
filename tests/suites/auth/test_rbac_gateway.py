@@ -161,6 +161,7 @@ def gateway_rbac_iam_user_jwt(
 
 @pytest.mark.auth
 @pytest.mark.integration
+@pytest.mark.operator
 class TestRBACGateway:
     """RBAC enforcement on routes reached through the Envoy gateway."""
 
@@ -338,6 +339,7 @@ class TestRBACGateway:
 
 @pytest.mark.auth
 @pytest.mark.integration
+@pytest.mark.operator
 def test_rbac_migration_job_completed(cluster_config):
     """RBAC Helm hook migration job finished successfully (cluster sanity)."""
     gateway_route = f"{cluster_config.helm_release_name}-api"
@@ -379,6 +381,7 @@ def test_rbac_migration_job_completed(cluster_config):
 
 @pytest.mark.auth
 @pytest.mark.integration
+@pytest.mark.operator
 class TestRBACSecurityBoundaries:
     """Security boundary tests for RBAC authorization enforcement.
 

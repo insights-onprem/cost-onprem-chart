@@ -9,6 +9,7 @@ import requests
 @pytest.mark.auth
 @pytest.mark.component
 @pytest.mark.smoke
+@pytest.mark.operator
 class TestKeycloakConnectivity:
     """Tests for Keycloak connectivity."""
 
@@ -51,6 +52,7 @@ class TestKeycloakConnectivity:
 
 @pytest.mark.auth
 @pytest.mark.component
+@pytest.mark.operator
 class TestJWTTokenAcquisition:
     """Tests for JWT token acquisition."""
 
