@@ -1,44 +1,44 @@
 {
-  "last_check": "2026-08-13T07:12:35Z",
+  "last_check": "2026-10-24T09:58:53Z",
   "pending_updates": [
     {
       "image": "quay.io/redhat-services-prod/insights-management-tenant/insights-ocp-resource-optimization/ros-ocp-backend",
-      "previous_tag": "ae8c990",
-      "new_tag": "841483b",
-      "digest": "sha256:5747cfda7efcf69d057e114ca895439b494c08a6d531b0198d92ee2b680e39f4",
-      "detected_at": "2026-08-13T07:12:35Z",
+      "previous_tag": "841483b",
+      "new_tag": "8054d7f",
+      "digest": "sha256:266a5899366dc383a21f0ae72ecadb5403a8f9882250d109d0919ce1c4a001b5",
+      "detected_at": "2026-10-24T09:58:53Z",
       "reason": "catch-up"
     },
     {
       "image": "quay.io/redhat-services-prod/cost-mgmt-dev-tenant/koku",
-      "previous_tag": "d8055ac",
-      "new_tag": "03b958b",
-      "digest": "sha256:1bcc021b8ac265133b79ad00080a7a3fa856d78be8a144b56cf9065476403a7a",
-      "detected_at": "2026-08-13T07:12:35Z",
+      "previous_tag": "03b958b",
+      "new_tag": "921c9cc",
+      "digest": "sha256:3f03e6a2de7f1265ef222c1cbb05629e177ffaf478bae50649261375e8dc823a",
+      "detected_at": "2026-10-24T09:58:53Z",
       "reason": "updated"
     },
     {
       "image": "quay.io/redhat-services-prod/kruize-autotune-tenant/autotune",
-      "previous_tag": "d1f0140",
-      "new_tag": "91e9c85",
-      "digest": "sha256:75f8563e51274a1aeb44a5ae721c1258c8514f91612f8f19448453c83362b5a1",
-      "detected_at": "2026-08-13T07:12:35Z",
-      "reason": "updated"
+      "previous_tag": "91e9c85",
+      "new_tag": "915a053",
+      "digest": "sha256:f8ff0a9455025fd8e33bd3084fe6151f3d6fd784b461026d05e3e4a63c917875",
+      "detected_at": "2026-10-24T09:58:53Z",
+      "reason": "catch-up"
     },
     {
       "image": "quay.io/redhat-services-prod/hcc-accessmanagement-tenant/insights-rbac",
-      "previous_tag": "73870d8",
-      "new_tag": "d7eb8b4",
-      "digest": "sha256:fe6cf84c394ed51da2e363df8c56e3fe13e79c53ff097108f5ff9ac4726f17ea",
-      "detected_at": "2026-08-13T07:12:35Z",
-      "reason": "updated"
+      "previous_tag": "d7eb8b4",
+      "new_tag": "b4081c1",
+      "digest": "sha256:c1864dc63fc28c22ce72621857c16d19bc62e7e6fcaa1df155bfb69e58829e06",
+      "detected_at": "2026-10-24T09:58:53Z",
+      "reason": "catch-up"
     },
     {
       "image": "quay.io/insights-onprem/koku-ui-onprem",
-      "previous_tag": "2f23c646581028bd385856b6713e6bf367baf953",
-      "new_tag": "5b58ba60b443d631b6a85a37af8f725652b0d6fc",
-      "digest": "sha256:f7a77173898a41dc4836d5bed310bde369826e5a8a6443e7bde352105b4f1de6",
-      "detected_at": "2026-08-13T07:12:35Z",
+      "previous_tag": "5b58ba60b443d631b6a85a37af8f725652b0d6fc",
+      "new_tag": "acd0fdd40126cb8f3f9da6a191ecad05e83d5725",
+      "digest": "sha256:b977518f564da35fc051e94dc6bfb02eb743d20aebe04bcf19d4fe1c96ebd3ec",
+      "detected_at": "2026-10-24T09:58:53Z",
       "reason": "updated"
     }
   ]
